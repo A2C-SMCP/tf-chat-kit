@@ -41,3 +41,4 @@ chat-ui-antd -> chat-react -> chat-runtime -> chat-protocol
 
 - [项目章程](docs/project-charter.md)
 - [架构决策记录](docs/adr/README.md)
+- [V1 建设与 TFRobotFront 迁移 Epic](docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md)
