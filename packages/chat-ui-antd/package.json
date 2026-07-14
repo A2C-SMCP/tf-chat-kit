@@ -1,0 +1,30 @@
+{
+  "name": "@tf/chat-ui-antd",
+  "version": "0.1.0",
+  "description": "Composable Ant Design chat UI and default renderers",
+  "license": "UNLICENSED",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@tf/chat-react": "workspace:^"
+  },
+  "peerDependencies": {
+    "antd": ">=5.23.4 <6.0.0",
+    "react": ">=18.2.0 <19.0.0"
+  },
+  "publishConfig": {
+    "access": "restricted"
+  }
+}

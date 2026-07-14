@@ -1,0 +1,50 @@
+{
+  "name": "tf-chat-kit",
+  "version": "0.0.0",
+  "private": true,
+  "description": "TFRobot host-agnostic chat packages",
+  "license": "UNLICENSED",
+  "type": "module",
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": ">=24 <25",
+    "pnpm": ">=10 <11"
+  },
+  "scripts": {
+    "build": "tsc -b --pretty false",
+    "check": "pnpm run check:workspace && pnpm run check:boundaries && pnpm run lint && pnpm run format:check && pnpm run typecheck && pnpm run test && pnpm run pack:check",
+    "check:boundaries": "depcruise packages --config dependency-cruiser.config.mjs",
+    "check:workspace": "node scripts/check-workspace.mjs",
+    "clean": "node scripts/clean-workspace.mjs",
+    "format": "prettier --write \"package.json\" \"pnpm-workspace.yaml\" \"tsconfig*.json\" \"eslint.config.mjs\" \"dependency-cruiser.config.mjs\" \"vitest.config.ts\" \"packages/**/*.{json,ts}\" \"scripts/**/*.mjs\" \"tests/**/*.ts\" \".changeset/**/*.{json,md}\" \"docs/engineering-baseline.md\" \".cnb.yml\"",
+    "format:check": "prettier --check \"package.json\" \"pnpm-workspace.yaml\" \"tsconfig*.json\" \"eslint.config.mjs\" \"dependency-cruiser.config.mjs\" \"vitest.config.ts\" \"packages/**/*.{json,ts}\" \"scripts/**/*.mjs\" \"tests/**/*.ts\" \".changeset/**/*.{json,md}\" \"docs/engineering-baseline.md\" \".cnb.yml\"",
+    "lint": "eslint . --max-warnings=0",
+    "pack:check": "node scripts/verify-packed-artifacts.mjs",
+    "pack:workspace": "node scripts/pack-workspace.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false",
+    "changeset": "changeset",
+    "changeset:status": "changeset status",
+    "version-packages": "changeset version",
+    "release": "changeset publish"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "0.18.5",
+    "@changesets/cli": "2.31.0",
+    "@eslint/js": "9.39.5",
+    "@types/node": "24.13.3",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "antd": "5.29.3",
+    "dependency-cruiser": "18.1.0",
+    "eslint": "9.39.5",
+    "globals": "17.7.0",
+    "prettier": "3.9.5",
+    "publint": "0.3.21",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.64.0",
+    "vitest": "4.1.10"
+  }
+}

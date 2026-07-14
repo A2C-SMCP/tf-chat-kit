@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "types": [],
+    "tsBuildInfoFile": "../../.artifacts/tsbuildinfo/chat-gateway-tfrobot.tsbuildinfo"
+  },
+  "references": [{ "path": "../chat-protocol" }],
+  "include": ["src/**/*.ts"]
+}

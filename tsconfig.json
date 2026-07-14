@@ -1,0 +1,11 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/chat-protocol" },
+    { "path": "./packages/chat-runtime" },
+    { "path": "./packages/chat-gateway-tfrobot" },
+    { "path": "./packages/chat-react" },
+    { "path": "./packages/chat-ui-antd" },
+    { "path": "./packages/chat-testing" }
+  ]
+}

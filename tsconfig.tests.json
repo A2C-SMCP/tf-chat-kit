@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "lib": ["ES2022"],
+    "noEmit": true,
+    "rootDir": ".",
+    "sourceMap": false,
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["scripts/**/*.mjs", "tests/**/*.ts", "vitest.config.ts"]
+}

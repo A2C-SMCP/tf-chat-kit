@@ -1,0 +1,23 @@
+{
+  "name": "@tf/chat-protocol",
+  "version": "0.1.0",
+  "description": "Host-agnostic chat models, validation contracts, and gateway ports",
+  "license": "UNLICENSED",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "restricted"
+  }
+}

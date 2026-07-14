@@ -1,0 +1,10 @@
+packages:
+  - packages/*
+
+linkWorkspacePackages: true
+preferWorkspacePackages: true
+saveWorkspaceProtocol: true
+strictPeerDependencies: true
+
+onlyBuiltDependencies:
+  - esbuild

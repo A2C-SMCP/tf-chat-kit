@@ -4,7 +4,7 @@ TFRobot 聊天能力的可复用模块。项目采用 Headless Runtime、宿主�
 
 ## 当前状态
 
-项目处于架构定义阶段。当前仓库只包含项目章程和已接受的架构决策，不包含实现代码、工程配置或可发布产物。
+项目处于工程初始化阶段。六包 workspace、统一构建测试配置和本地 tarball 验证已经建立；聊天协议、Runtime、Gateway、React 与 UI 的公共 API 将由后续 Story 按依赖顺序实现。
 
 ## V1 承诺
 
@@ -41,4 +41,16 @@ chat-ui-antd -> chat-react -> chat-runtime -> chat-protocol
 
 - [项目章程](docs/project-charter.md)
 - [架构决策记录](docs/adr/README.md)
+- [工程与发布基线](docs/engineering-baseline.md)
 - [V1 建设与 TFRobotFront 迁移 Epic](docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md)
+
+## 开发
+
+```bash
+corepack prepare pnpm@10.34.5 --activate
+pnpm install
+pnpm check
+```
+
+`pnpm check` 会执行架构边界、lint、格式、类型、测试、构建、tarball 检查，并在临时消费者中
+实际安装六个产物。宿主验证必须使用 tarball 或后续 Registry 版本，不得通过源码路径消费。

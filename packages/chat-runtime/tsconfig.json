@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "types": [],
+    "tsBuildInfoFile": "../../.artifacts/tsbuildinfo/chat-runtime.tsbuildinfo"
+  },
+  "references": [{ "path": "../chat-protocol" }],
+  "include": ["src/**/*.ts"]
+}
