@@ -4,6 +4,7 @@
   "description": "Composable Ant Design chat UI and default renderers",
   "license": "UNLICENSED",
   "type": "module",
+  "sideEffects": false,
   "files": [
     "dist"
   ],

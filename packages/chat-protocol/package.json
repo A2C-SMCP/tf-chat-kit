@@ -4,6 +4,7 @@
   "description": "Host-agnostic chat models, validation contracts, and gateway ports",
   "license": "UNLICENSED",
   "type": "module",
+  "sideEffects": false,
   "files": [
     "dist"
   ],

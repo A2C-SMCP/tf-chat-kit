@@ -50,7 +50,10 @@ chat-ui-antd -> chat-react -> chat-runtime -> chat-protocol
 corepack prepare pnpm@10.34.5 --activate
 pnpm install
 pnpm check
+pnpm pack:workspace
 ```
 
-`pnpm check` 会执行架构边界、lint、格式、类型、测试、构建、tarball 检查，并在临时消费者中
-实际安装六个产物。宿主验证必须使用 tarball 或后续 Registry 版本，不得通过源码路径消费。
+`pnpm check` 会执行架构边界、lint、格式、类型、测试、构建、tarball 内容与安全检查，并在临时
+TypeScript 消费者中实际安装、构建和运行六个产物。宿主验证必须使用 tarball 或后续 Registry
+版本，不得通过源码路径消费。
+`pnpm pack:workspace` 可从 clean workspace 直接构建并生成经过内容检查的六包 tarball。

@@ -4,6 +4,7 @@
   "description": "In-memory gateways, fixtures, and chat contract test utilities",
   "license": "UNLICENSED",
   "type": "module",
+  "sideEffects": false,
   "files": [
     "dist"
   ],

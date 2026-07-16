@@ -4,7 +4,7 @@
     "lib": ["ES2022"],
     "outDir": "./dist",
     "rootDir": "./src",
-    "types": ["node"],
+    "types": [],
     "tsBuildInfoFile": "../../.artifacts/tsbuildinfo/chat-testing.tsbuildinfo"
   },
   "references": [{ "path": "../chat-protocol" }, { "path": "../chat-runtime" }],

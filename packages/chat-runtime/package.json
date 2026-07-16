@@ -4,6 +4,7 @@
   "description": "Headless, instance-scoped chat runtime",
   "license": "UNLICENSED",
   "type": "module",
+  "sideEffects": false,
   "files": [
     "dist"
   ],
