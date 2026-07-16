@@ -179,6 +179,7 @@ try {
     "--ignore-scripts",
     "--config.strict-peer-dependencies=true",
   ]);
+  run("pnpm", ["--dir", consumerDirectory, "fetch", "--frozen-lockfile"]);
   run("pnpm", [
     "--dir",
     consumerDirectory,
