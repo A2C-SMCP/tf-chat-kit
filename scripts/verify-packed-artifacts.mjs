@@ -175,7 +175,16 @@ try {
     "--dir",
     consumerDirectory,
     "install",
+    "--lockfile-only",
+    "--ignore-scripts",
+    "--config.strict-peer-dependencies=true",
+  ]);
+  run("pnpm", [
+    "--dir",
+    consumerDirectory,
+    "install",
     "--offline",
+    "--frozen-lockfile",
     "--ignore-scripts",
     "--config.strict-peer-dependencies=true",
   ]);
