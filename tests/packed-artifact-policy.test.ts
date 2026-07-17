@@ -6,20 +6,23 @@ import {
 } from "../scripts/packed-artifact-policy.mjs";
 
 const sourceManifest = {
-  name: "@tf/chat-runtime",
+  name: "@tf/chat-testing",
   version: "0.1.0",
   license: "MIT",
   repository: {
     type: "git",
     url: "git+https://github.com/A2C-SMCP/tf-chat-kit.git",
-    directory: "packages/chat-runtime",
+    directory: "packages/chat-testing",
   },
   homepage: "https://github.com/A2C-SMCP/tf-chat-kit#readme",
   bugs: { url: "https://github.com/A2C-SMCP/tf-chat-kit/issues" },
   type: "module",
   sideEffects: false,
   files: ["dist"],
-  dependencies: { "@tf/chat-protocol": "workspace:^" },
+  dependencies: {
+    "@tf/chat-protocol": "workspace:^",
+    "@tf/chat-runtime": "workspace:^",
+  },
   publishConfig: {
     access: "public",
     registry: "https://registry.npmjs.org/",
@@ -40,7 +43,7 @@ type MutableArtifactInput = Omit<
 const validInput = (): MutableArtifactInput => {
   const packedManifest = expectedPackedManifest(sourceManifest);
   return {
-    packageName: "@tf/chat-runtime",
+    packageName: "@tf/chat-testing",
     sourceManifest,
     packedManifest,
     declaredFiles: [
@@ -64,6 +67,21 @@ const validInput = (): MutableArtifactInput => {
 describe("packed artifact policy", () => {
   it("accepts an exact packed manifest and safe text files", () => {
     expect(validatePackedArtifact(validInput())).toEqual([]);
+  });
+
+  it("accepts semantically identical manifest keys in a different order", () => {
+    const input = validInput();
+    input.packedManifest = Object.fromEntries(
+      Object.entries({
+        ...input.packedManifest,
+        dependencies: {
+          "@tf/chat-runtime": "^0.1.0",
+          "@tf/chat-protocol": "^0.1.0",
+        },
+      }).reverse(),
+    );
+
+    expect(validatePackedArtifact(input)).toEqual([]);
   });
 
   it("rejects unexpected packed dependencies", () => {

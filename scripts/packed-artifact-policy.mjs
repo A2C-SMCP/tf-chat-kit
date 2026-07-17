@@ -59,8 +59,26 @@ const artifactTextViews = (file) => {
   return [...new Set(views)];
 };
 
+/**
+ * JSON object key order has no package-manifest semantics and pnpm may emit a
+ * different order across platforms. Canonicalize objects while preserving
+ * arrays so the comparison remains exact for every field and value.
+ *
+ * @param {unknown} value
+ * @returns {unknown}
+ */
+const canonicalJson = (value) => {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, canonicalJson(entry)]),
+  );
+};
+
 /** @param {unknown} value */
-const stableJson = (value) => JSON.stringify(value);
+const stableJson = (value) => JSON.stringify(canonicalJson(value));
 
 /**
  * pnpm rewrites internal workspace ranges in the packed manifest. Build the
