@@ -247,11 +247,6 @@ const readCurrentChangelogs = async () =>
   );
 
 try {
-  execFileSync("pnpm", ["exec", "changeset", "status"], {
-    cwd: rootDirectory,
-    stdio: "inherit",
-  });
-
   const comparisonBase = resolveComparisonBase();
   const trackedChanges = lines(
     runGit(["diff", "--no-renames", "--name-only", comparisonBase, "--"]),
