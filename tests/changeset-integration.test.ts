@@ -81,7 +81,7 @@ async function createReleaseFixture(): Promise<ReleaseFixture> {
   });
   await writeFile(
     path.join(directory, ".changeset", "first-release.md"),
-    '---\n"@tf/chat-runtime": minor\n---\n\nCreate the first fixed-group release.\n',
+    '---\n"@turingfocus/chat-runtime": minor\n---\n\nCreate the first fixed-group release.\n',
   );
 
   for (const [packageDirectory, { name }] of packageEntries) {
@@ -224,7 +224,7 @@ describe("changeset release integration", () => {
     );
     const secondChangesetContent = [
       "---",
-      '"@tf/chat-ui-antd": minor',
+      '"@turingfocus/chat-ui-antd": minor',
       "---",
       "",
       "Add a second pending public change.",
@@ -275,7 +275,7 @@ describe("changeset release integration", () => {
     );
     const secondChangesetContent = [
       "---",
-      '"@tf/chat-ui-antd": minor',
+      '"@turingfocus/chat-ui-antd": minor',
       "---",
       "",
       "Add a second pending public change.",

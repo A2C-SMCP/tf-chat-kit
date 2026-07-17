@@ -4,12 +4,12 @@
   "commit": false,
   "fixed": [
     [
-      "@tf/chat-protocol",
-      "@tf/chat-runtime",
-      "@tf/chat-gateway-tfrobot",
-      "@tf/chat-react",
-      "@tf/chat-ui-antd",
-      "@tf/chat-testing"
+      "@turingfocus/chat-protocol",
+      "@turingfocus/chat-runtime",
+      "@turingfocus/chat-gateway-tfrobot",
+      "@turingfocus/chat-react",
+      "@turingfocus/chat-ui-antd",
+      "@turingfocus/chat-testing"
     ]
   ],
   "linked": [],

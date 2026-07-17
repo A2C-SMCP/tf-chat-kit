@@ -1,5 +1,5 @@
 {
-  "name": "@tf/chat-react",
+  "name": "@turingfocus/chat-react",
   "version": "0.1.0",
   "description": "Unstyled React bindings for the chat runtime",
   "license": "MIT",
@@ -28,7 +28,7 @@
     }
   },
   "dependencies": {
-    "@tf/chat-runtime": "workspace:^"
+    "@turingfocus/chat-runtime": "workspace:^"
   },
   "peerDependencies": {
     "react": ">=18.2.0 <19.0.0"

@@ -99,7 +99,7 @@ export function expectedPackedManifest(sourceManifest) {
     if (!dependencies || typeof dependencies !== "object") continue;
     const dependencyMap = /** @type {Record<string, unknown>} */ (dependencies);
     for (const [name, specifier] of Object.entries(dependencyMap)) {
-      if (name.startsWith("@tf/") && specifier === "workspace:^") {
+      if (name.startsWith("@turingfocus/") && specifier === "workspace:^") {
         dependencyMap[name] = `^${version}`;
       }
     }

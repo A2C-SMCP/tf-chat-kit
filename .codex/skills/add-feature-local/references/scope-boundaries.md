@@ -33,12 +33,12 @@ ADR-007 已明确把向后兼容的 command、可选模型字段、capability、
 
 | 包 | 可以做 | 不可以做 |
 | --- | --- | --- |
-| `@tf/chat-protocol` | 标准模型、运行时校验、Gateway 端口、command/capability 契约 | 状态管理、网络连接、React、DOM、Ant Design、服务端事件名 |
-| `@tf/chat-runtime` | 实例化 ChatClient、状态机、归并/去重、聊天命令、结构化错误 | Socket.IO、REST DTO、DOM、宿主路由、宿主 Store、全局单例 |
-| `@tf/chat-gateway-tfrobot` | TFRobotServer REST/Socket.IO、DTO 映射、重连、SessionProvider 使用 | UI、产品页面状态、登录流程、长期凭证存储 |
-| `@tf/chat-react` | Provider、hooks、React 生命周期和无样式接入 | Ant Design 视觉、服务端 DTO、Socket、宿主导航 |
-| `@tf/chat-ui-antd` | 通用聊天 UI、默认 renderer registry、可裁剪/懒加载 renderer | 认证持久化、网络连接、宿主页面工作流、强制所有宿主使用 Ant Design |
-| `@tf/chat-testing` | 内存 Gateway、fixtures、契约/消费者测试工具 | 生产网络行为、生产认证和宿主业务 mock 大杂烩 |
+| `@turingfocus/chat-protocol` | 标准模型、运行时校验、Gateway 端口、command/capability 契约 | 状态管理、网络连接、React、DOM、Ant Design、服务端事件名 |
+| `@turingfocus/chat-runtime` | 实例化 ChatClient、状态机、归并/去重、聊天命令、结构化错误 | Socket.IO、REST DTO、DOM、宿主路由、宿主 Store、全局单例 |
+| `@turingfocus/chat-gateway-tfrobot` | TFRobotServer REST/Socket.IO、DTO 映射、重连、SessionProvider 使用 | UI、产品页面状态、登录流程、长期凭证存储 |
+| `@turingfocus/chat-react` | Provider、hooks、React 生命周期和无样式接入 | Ant Design 视觉、服务端 DTO、Socket、宿主导航 |
+| `@turingfocus/chat-ui-antd` | 通用聊天 UI、默认 renderer registry、可裁剪/懒加载 renderer | 认证持久化、网络连接、宿主页面工作流、强制所有宿主使用 Ant Design |
+| `@turingfocus/chat-testing` | 内存 Gateway、fixtures、契约/消费者测试工具 | 生产网络行为、生产认证和宿主业务 mock 大杂烩 |
 
 ## 明确可以进入 Kit
 

@@ -22,7 +22,7 @@ ChatClient 对外提供以下能力类别，具体 TypeScript 签名在实现阶
 
 Runtime 管理 Conversation、Timeline、Run、Composer 和 capabilities 等聊天语义状态。内部可以选用 Store 或 reducer，但内部状态结构和状态管理库不属于公共 API。
 
-Runtime 不依赖 React、DOM、Socket.IO、Ant Design 或宿主路由。`@tf/chat-react` 只负责把 ChatClient 生命周期映射为 Provider 和 hooks。
+Runtime 不依赖 React、DOM、Socket.IO、Ant Design 或宿主路由。`@turingfocus/chat-react` 只负责把 ChatClient 生命周期映射为 Provider 和 hooks。
 
 ## 不变量
 

@@ -9,7 +9,7 @@
 
 ## 决策
 
-Gateway 在边界处执行运行时校验，并将数据转换为 `@tf/chat-protocol` 定义的标准模型。模型覆盖以下稳定语义：
+Gateway 在边界处执行运行时校验，并将数据转换为 `@turingfocus/chat-protocol` 定义的标准模型。模型覆盖以下稳定语义：
 
 - Conversation 与其标识、标题和时间信息。
 - Timeline 中的 Message、Agent Event 和系统状态项。

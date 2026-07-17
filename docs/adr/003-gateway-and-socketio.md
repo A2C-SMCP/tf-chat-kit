@@ -9,7 +9,7 @@ TFRobot 当前通过 REST 获取部分数据，并通过 Socket.IO 传递实时�
 
 ## 决策
 
-在 `@tf/chat-protocol` 定义宿主无关的 Chat Gateway 端口，在 `@tf/chat-gateway-tfrobot` 提供当前 TFRobotServer 实现。
+在 `@turingfocus/chat-protocol` 定义宿主无关的 Chat Gateway 端口，在 `@turingfocus/chat-gateway-tfrobot` 提供当前 TFRobotServer 实现。
 
 TFRobot Gateway 按实例负责：
 

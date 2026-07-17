@@ -1,5 +1,5 @@
 {
-  "name": "@tf/chat-runtime",
+  "name": "@turingfocus/chat-runtime",
   "version": "0.1.0",
   "description": "Headless, instance-scoped chat runtime",
   "license": "MIT",
@@ -28,7 +28,7 @@
     }
   },
   "dependencies": {
-    "@tf/chat-protocol": "workspace:^"
+    "@turingfocus/chat-protocol": "workspace:^"
   },
   "publishConfig": {
     "access": "public",

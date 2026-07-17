@@ -65,22 +65,22 @@ const BUGS_URL = "https://github.com/A2C-SMCP/tf-chat-kit/issues";
 /** @type {Readonly<Record<string, PackageRule>>} */
 export const PACKAGE_POLICY = Object.freeze({
   "chat-protocol": {
-    name: "@tf/chat-protocol",
+    name: "@turingfocus/chat-protocol",
     internalDependencies: [],
     allowedNodeBuiltins: [],
     peerDependencies: {},
     allowedExternalDependencies: {},
   },
   "chat-runtime": {
-    name: "@tf/chat-runtime",
-    internalDependencies: ["@tf/chat-protocol"],
+    name: "@turingfocus/chat-runtime",
+    internalDependencies: ["@turingfocus/chat-protocol"],
     allowedNodeBuiltins: [],
     peerDependencies: {},
     allowedExternalDependencies: {},
   },
   "chat-gateway-tfrobot": {
-    name: "@tf/chat-gateway-tfrobot",
-    internalDependencies: ["@tf/chat-protocol"],
+    name: "@turingfocus/chat-gateway-tfrobot",
+    internalDependencies: ["@turingfocus/chat-protocol"],
     allowedNodeBuiltins: [],
     peerDependencies: {},
     allowedExternalDependencies: {
@@ -88,8 +88,8 @@ export const PACKAGE_POLICY = Object.freeze({
     },
   },
   "chat-react": {
-    name: "@tf/chat-react",
-    internalDependencies: ["@tf/chat-runtime"],
+    name: "@turingfocus/chat-react",
+    internalDependencies: ["@turingfocus/chat-runtime"],
     allowedNodeBuiltins: [],
     peerDependencies: { react: ">=18.2.0 <19.0.0" },
     allowedExternalDependencies: {
@@ -97,8 +97,8 @@ export const PACKAGE_POLICY = Object.freeze({
     },
   },
   "chat-ui-antd": {
-    name: "@tf/chat-ui-antd",
-    internalDependencies: ["@tf/chat-react"],
+    name: "@turingfocus/chat-ui-antd",
+    internalDependencies: ["@turingfocus/chat-react"],
     allowedNodeBuiltins: [],
     peerDependencies: {
       antd: ">=5.23.4 <6.0.0",
@@ -110,8 +110,11 @@ export const PACKAGE_POLICY = Object.freeze({
     },
   },
   "chat-testing": {
-    name: "@tf/chat-testing",
-    internalDependencies: ["@tf/chat-protocol", "@tf/chat-runtime"],
+    name: "@turingfocus/chat-testing",
+    internalDependencies: [
+      "@turingfocus/chat-protocol",
+      "@turingfocus/chat-runtime",
+    ],
     allowedNodeBuiltins: [],
     peerDependencies: {},
     allowedExternalDependencies: {},
@@ -217,7 +220,8 @@ const usesForbiddenSourceDependency = (
 ) => {
   if (specifier.startsWith("workspace:")) {
     return !(
-      allowInternalWorkspaceDependencies && dependency.startsWith("@tf/")
+      allowInternalWorkspaceDependencies &&
+      dependency.startsWith("@turingfocus/")
     );
   }
 
@@ -1520,7 +1524,7 @@ const validateSourceImports = (sourceFile, entry, policy, errors) => {
     }
 
     const dependency = packageNameFromSpecifier(specifier);
-    if (dependency.startsWith("@tf/")) {
+    if (dependency.startsWith("@turingfocus/")) {
       if (dependency === policy.name) continue;
       if (!policy.internalDependencies.includes(dependency)) {
         errors.push(
@@ -2283,7 +2287,7 @@ export function validateWorkspaceSnapshot(snapshot) {
       manifest,
     )) {
       if (typeof specifier !== "string") continue;
-      if (!dependency.startsWith("@tf/")) {
+      if (!dependency.startsWith("@turingfocus/")) {
         if (
           matchesDependencyRule(dependency, heavyRendererDependencyPatterns) &&
           entry.directory !== "chat-ui-antd"

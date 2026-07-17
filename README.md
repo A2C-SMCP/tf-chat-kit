@@ -18,14 +18,14 @@ V1 不承诺 Fluent UI、Web Component、AG-UI、账号登录系统或为每个�
 
 ## 初始包
 
-| 包                         | 职责                                        |
-| -------------------------- | ------------------------------------------- |
-| `@tf/chat-protocol`        | 标准聊天模型、运行时校验契约和 Gateway 端口 |
-| `@tf/chat-runtime`         | 实例化 ChatClient、状态机和聊天命令         |
-| `@tf/chat-gateway-tfrobot` | TFRobotServer REST 与 Socket.IO 适配        |
-| `@tf/chat-react`           | React Provider、hooks 和无样式接入层        |
-| `@tf/chat-ui-antd`         | Ant Design 成品 UI 与默认渲染器             |
-| `@tf/chat-testing`         | 内存 Gateway、fixtures 和契约测试工具       |
+| 包                                  | 职责                                        |
+| ----------------------------------- | ------------------------------------------- |
+| `@turingfocus/chat-protocol`        | 标准聊天模型、运行时校验契约和 Gateway 端口 |
+| `@turingfocus/chat-runtime`         | 实例化 ChatClient、状态机和聊天命令         |
+| `@turingfocus/chat-gateway-tfrobot` | TFRobotServer REST 与 Socket.IO 适配        |
+| `@turingfocus/chat-react`           | React Provider、hooks 和无样式接入层        |
+| `@turingfocus/chat-ui-antd`         | Ant Design 成品 UI 与默认渲染器             |
+| `@turingfocus/chat-testing`         | 内存 Gateway、fixtures 和契约测试工具       |
 
 核心依赖方向为：
 

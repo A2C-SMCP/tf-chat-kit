@@ -49,7 +49,7 @@ describe("workspace governance", () => {
   it("rejects changeset configuration drift from the approved fixed group", async () => {
     const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
     snapshot.changesetConfig = {
-      fixed: [["@tf/chat-runtime"]],
+      fixed: [["@turingfocus/chat-runtime"]],
       changelog: false,
     };
 
@@ -77,18 +77,18 @@ describe("workspace governance", () => {
     };
 
     const errors = validateWorkspaceSnapshot(snapshot);
-    expect(errors).toContain("@tf/chat-runtime: license must be MIT");
+    expect(errors).toContain("@turingfocus/chat-runtime: license must be MIT");
     expect(errors).toContain(
-      "@tf/chat-runtime: publishConfig.access must be public",
+      "@turingfocus/chat-runtime: publishConfig.access must be public",
     );
     expect(errors).toContain(
-      "@tf/chat-runtime: publishConfig.registry must be https://registry.npmjs.org/",
+      "@turingfocus/chat-runtime: publishConfig.registry must be https://registry.npmjs.org/",
     );
     expect(errors).toContainEqual(
       expect.stringContaining("repository.url must be"),
     );
     expect(errors).toContain(
-      "@tf/chat-runtime: repository.directory must be packages/chat-runtime",
+      "@turingfocus/chat-runtime: repository.directory must be packages/chat-runtime",
     );
   });
 
@@ -118,7 +118,9 @@ describe("workspace governance", () => {
     const protocol = snapshot.packages.find(
       ({ directory }) => directory === "chat-protocol",
     )!;
-    protocol.manifest.dependencies = { "@tf/chat-ui-antd": "workspace:^" };
+    protocol.manifest.dependencies = {
+      "@turingfocus/chat-ui-antd": "workspace:^",
+    };
 
     expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
       expect.stringContaining("internal dependencies must be"),
@@ -153,7 +155,7 @@ describe("workspace governance", () => {
 
       expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
         expect.stringContaining(
-          `@tf/${directory} source runtime import react is not allowed by package policy`,
+          `@turingfocus/${directory} source runtime import react is not allowed by package policy`,
         ),
       );
     },
@@ -169,7 +171,7 @@ describe("workspace governance", () => {
 
     expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
       expect.stringContaining(
-        "@tf/chat-react source runtime import antd is not allowed by package policy",
+        "@turingfocus/chat-react source runtime import antd is not allowed by package policy",
       ),
     );
   });
@@ -236,7 +238,7 @@ describe("workspace governance", () => {
         'export type { ComponentType } from "react";',
         'type LazyExotic = import("react").LazyExoticComponent<never>;',
         'import "monaco-editor/esm/vs/editor/editor.api.js";',
-        'import "@tf/chat-react";',
+        'import "@turingfocus/chat-react";',
         'import "./styles.js";',
         "export type { LazyExotic, ReactNode };",
       ].join("\n"),
@@ -319,8 +321,8 @@ describe("workspace governance", () => {
     [
       "reverse internal dependency",
       "chat-testing",
-      'require("@tf/chat-ui-antd");',
-      "source import @tf/chat-ui-antd is not allowed by package policy",
+      'require("@turingfocus/chat-ui-antd");',
+      "source import @turingfocus/chat-ui-antd is not allowed by package policy",
     ],
     [
       "React dependency",
@@ -488,7 +490,7 @@ describe("workspace governance", () => {
 
       expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
         expect.stringContaining(
-          `@tf/chat-runtime source runtime import ${specifier} uses a Node.js built-in that is not allowed by package policy`,
+          `@turingfocus/chat-runtime source runtime import ${specifier} uses a Node.js built-in that is not allowed by package policy`,
         ),
       );
     },
@@ -548,7 +550,7 @@ describe("workspace governance", () => {
   });
 
   it.each([
-    'import { createRequire as makeRequire } from "node:module";\nconst load = makeRequire(import.meta.url);\nload("@tf/chat-ui-antd");',
+    'import { createRequire as makeRequire } from "node:module";\nconst load = makeRequire(import.meta.url);\nload("@turingfocus/chat-ui-antd");',
     'import * as moduleApi from "node:module";\nmoduleApi.createRequire(import.meta.url);',
     'const { createRequire: makeRequire } = require("node:module");\nmakeRequire(import.meta.url);',
     'const makeRequire = require("node:module").createRequire;\nmakeRequire(import.meta.url);',
@@ -611,27 +613,27 @@ describe("workspace governance", () => {
   it.each([
     [
       "process rest binding",
-      'const { ...processApi } = process; processApi.getBuiltinModule("module").createRequire(import.meta.url)("@tf/chat-ui-antd");',
+      'const { ...processApi } = process; processApi.getBuiltinModule("module").createRequire(import.meta.url)("@turingfocus/chat-ui-antd");',
       "alias to the unshadowed process loading capability",
       'process.getBuiltinModule("module") is prohibited',
     ],
     [
       "process rest assignment",
-      'let processApi; ({ ...processApi } = process); processApi.getBuiltinModule("module").createRequire(import.meta.url)("@tf/chat-ui-antd");',
+      'let processApi; ({ ...processApi } = process); processApi.getBuiltinModule("module").createRequire(import.meta.url)("@turingfocus/chat-ui-antd");',
       "alias to the unshadowed process loading capability",
       'process.getBuiltinModule("module") is prohibited',
     ],
     [
       "module rest binding",
-      'const { ...moduleApi } = module; moduleApi.require("@tf/chat-ui-antd");',
+      'const { ...moduleApi } = module; moduleApi.require("@turingfocus/chat-ui-antd");',
       "alias to the unshadowed module loading capability",
-      "source import @tf/chat-ui-antd is not allowed",
+      "source import @turingfocus/chat-ui-antd is not allowed",
     ],
     [
       "module rest assignment",
-      'let moduleApi; ({ ...moduleApi } = module); moduleApi.require("@tf/chat-ui-antd");',
+      'let moduleApi; ({ ...moduleApi } = module); moduleApi.require("@turingfocus/chat-ui-antd");',
       "alias to the unshadowed module loading capability",
-      "source import @tf/chat-ui-antd is not allowed",
+      "source import @turingfocus/chat-ui-antd is not allowed",
     ],
   ])(
     "prohibits capability propagation through a %s",
@@ -669,10 +671,10 @@ describe("workspace governance", () => {
   );
 
   it.each([
-    'const member = "getBuiltinModule"; process[member]("module").createRequire(import.meta.url)("@tf/chat-ui-antd");',
-    'const loader = "require"; module[loader]("@tf/chat-ui-antd");',
-    'const member = "getBuiltinModule"; const get = process[member]; get("module").createRequire(import.meta.url)("@tf/chat-ui-antd");',
-    'const loader = "require"; const load = module[loader]; load("@tf/chat-ui-antd");',
+    'const member = "getBuiltinModule"; process[member]("module").createRequire(import.meta.url)("@turingfocus/chat-ui-antd");',
+    'const loader = "require"; module[loader]("@turingfocus/chat-ui-antd");',
+    'const member = "getBuiltinModule"; const get = process[member]; get("module").createRequire(import.meta.url)("@turingfocus/chat-ui-antd");',
+    'const loader = "require"; const load = module[loader]; load("@turingfocus/chat-ui-antd");',
   ])(
     "rejects non-static property access on confirmed loading capabilities: %s",
     async (content) => {
@@ -833,10 +835,10 @@ describe("workspace governance", () => {
     'globalThis.process.getBuiltinModule("module").createRequire(import.meta.url)("react");',
     'const processApi = (globalThis.process); processApi.getBuiltinModule("module").createRequire(import.meta.url)("react");',
     'const { process: processApi } = (globalThis); processApi.getBuiltinModule("module").createRequire(import.meta.url)("react");',
-    'const { process: { getBuiltinModule: get } } = globalThis; get("module").createRequire(import.meta.url)("@tf/chat-ui-antd");',
-    'const { process: { getBuiltinModule: get } } = global; get("module").createRequire(import.meta.url)("@tf/chat-ui-antd");',
-    'let get; ({ process: { getBuiltinModule: get } } = globalThis); get("module").createRequire(import.meta.url)("@tf/chat-ui-antd");',
-    'let get; ({ process: { getBuiltinModule: get } = {} } = globalThis); get("module").createRequire(import.meta.url)("@tf/chat-ui-antd");',
+    'const { process: { getBuiltinModule: get } } = globalThis; get("module").createRequire(import.meta.url)("@turingfocus/chat-ui-antd");',
+    'const { process: { getBuiltinModule: get } } = global; get("module").createRequire(import.meta.url)("@turingfocus/chat-ui-antd");',
+    'let get; ({ process: { getBuiltinModule: get } } = globalThis); get("module").createRequire(import.meta.url)("@turingfocus/chat-ui-antd");',
+    'let get; ({ process: { getBuiltinModule: get } = {} } = globalThis); get("module").createRequire(import.meta.url)("@turingfocus/chat-ui-antd");',
     'process.getBuiltinModule("module")["create" + "Require"](import.meta.url)("react");',
     'import { Module } from "node:module"; Module._load("react", null);',
     'import { runInThisContext } from "node:vm"; runInThisContext("import(\\"react\\")");',
@@ -946,7 +948,7 @@ describe("workspace governance", () => {
         "const load = g.process",
         '  .getBuiltinModule("module")',
         "  .createRequire(import.meta.url);",
-        'load("@tf/chat-ui-antd");',
+        'load("@turingfocus/chat-ui-antd");',
       ].join("\n"),
     );
 
@@ -958,7 +960,7 @@ describe("workspace governance", () => {
   });
 
   it.each([
-    'const get = Reflect.get(globalThis, "process").getBuiltinModule; export const load = () => get("module").createRequire(import.meta.url)("@tf/chat-ui-antd");',
+    'const get = Reflect.get(globalThis, "process").getBuiltinModule; export const load = () => get("module").createRequire(import.meta.url)("@turingfocus/chat-ui-antd");',
     'const descriptor = Object.getOwnPropertyDescriptor(globalThis, "process"); const get = descriptor?.value.getBuiltinModule; void get;',
     'const get = Reflect.get(process, "getBuiltinModule"); void get;',
     'const load = Reflect.get(module, "require"); void load;',
@@ -1000,7 +1002,7 @@ describe("workspace governance", () => {
       "chat-protocol",
       [
         '// import "next/router";',
-        '// require("@tf/chat-ui-antd");',
+        '// require("@turingfocus/chat-ui-antd");',
         "const documentation = 'import \"react\" from /Users/example/TFRobotFront';",
         'const examples = "createRequire eval Function require.resolve module.require";',
         "export { documentation, examples };",
@@ -1016,7 +1018,7 @@ describe("workspace governance", () => {
       ({ directory }) => directory === "chat-runtime",
     )!;
     runtime.manifest.dependencies ??= {};
-    runtime.manifest.dependencies["@tf/chat-protocol"] =
+    runtime.manifest.dependencies["@turingfocus/chat-protocol"] =
       "file:/Users/example/TFRobotFront/src/packages/chat-kit";
     snapshot.sourceFiles.push({
       path: "packages/chat-runtime/src/host-leak.ts",
@@ -1145,11 +1147,12 @@ describe("workspace governance", () => {
   it("rejects internal workspace dependencies in the root manifest", async () => {
     const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
     snapshot.rootManifest.devDependencies ??= {};
-    snapshot.rootManifest.devDependencies["@tf/chat-runtime"] = "workspace:*";
+    snapshot.rootManifest.devDependencies["@turingfocus/chat-runtime"] =
+      "workspace:*";
 
     expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
       expect.stringContaining(
-        "root: @tf/chat-runtime uses forbidden source/path dependency workspace:*",
+        "root: @turingfocus/chat-runtime uses forbidden source/path dependency workspace:*",
       ),
     );
   });
@@ -1177,9 +1180,9 @@ describe("workspace governance", () => {
     "npm pub",
     "pnpm publish --no-git-checks",
     "pnpm -w publish",
-    "pnpm --filter @tf/chat-runtime publish",
+    "pnpm --filter @turingfocus/chat-runtime publish",
     "pnpm dlx @changesets/cli publish",
-    "npm --workspace @tf/chat-runtime publish",
+    "npm --workspace @turingfocus/chat-runtime publish",
     "npm --location project publish",
     "npm --location=project publish",
     "npm --location project pub",
@@ -1284,7 +1287,7 @@ describe("workspace governance", () => {
 
     expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
       expect.stringContaining(
-        "@tf/chat-runtime: script release must not publish before the TFCK-13 release workflow",
+        "@turingfocus/chat-runtime: script release must not publish before the TFCK-13 release workflow",
       ),
     );
   });
@@ -1298,7 +1301,7 @@ describe("workspace governance", () => {
 
     expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
       expect.stringContaining(
-        "@tf/chat-runtime: script release must not publish before the TFCK-13 release workflow",
+        "@turingfocus/chat-runtime: script release must not publish before the TFCK-13 release workflow",
       ),
     );
   });
@@ -1319,7 +1322,7 @@ describe("workspace governance", () => {
 
     expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
       expect.stringContaining(
-        "@tf/chat-runtime: script release must not publish before the TFCK-13 release workflow",
+        "@turingfocus/chat-runtime: script release must not publish before the TFCK-13 release workflow",
       ),
     );
   });
@@ -1370,12 +1373,12 @@ describe("workspace governance", () => {
     const errors = validateWorkspaceSnapshot(snapshot);
     expect(errors).toContainEqual(
       expect.stringContaining(
-        "@tf/chat-react: external dependency react is not allowed by package policy in dependencies",
+        "@turingfocus/chat-react: external dependency react is not allowed by package policy in dependencies",
       ),
     );
     expect(errors).toContainEqual(
       expect.stringContaining(
-        "@tf/chat-ui-antd: external dependency antd is not allowed by package policy in dependencies",
+        "@turingfocus/chat-ui-antd: external dependency antd is not allowed by package policy in dependencies",
       ),
     );
   });

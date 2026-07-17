@@ -32,7 +32,7 @@ describe("Changesets fixed-group release planning", () => {
           {
             id: `${type}-runtime`,
             summary: `${type} runtime release`,
-            releases: [{ name: "@tf/chat-runtime", type }],
+            releases: [{ name: "@turingfocus/chat-runtime", type }],
           },
         ],
       });

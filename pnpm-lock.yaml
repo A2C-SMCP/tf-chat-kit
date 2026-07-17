@@ -79,7 +79,7 @@ importers:
 
   packages/chat-gateway-tfrobot:
     dependencies:
-      "@tf/chat-protocol":
+      "@turingfocus/chat-protocol":
         specifier: workspace:^
         version: link:../chat-protocol
 
@@ -87,7 +87,7 @@ importers:
 
   packages/chat-react:
     dependencies:
-      "@tf/chat-runtime":
+      "@turingfocus/chat-runtime":
         specifier: workspace:^
         version: link:../chat-runtime
       react:
@@ -96,22 +96,22 @@ importers:
 
   packages/chat-runtime:
     dependencies:
-      "@tf/chat-protocol":
+      "@turingfocus/chat-protocol":
         specifier: workspace:^
         version: link:../chat-protocol
 
   packages/chat-testing:
     dependencies:
-      "@tf/chat-protocol":
+      "@turingfocus/chat-protocol":
         specifier: workspace:^
         version: link:../chat-protocol
-      "@tf/chat-runtime":
+      "@turingfocus/chat-runtime":
         specifier: workspace:^
         version: link:../chat-runtime
 
   packages/chat-ui-antd:
     dependencies:
-      "@tf/chat-react":
+      "@turingfocus/chat-react":
         specifier: workspace:^
         version: link:../chat-react
       antd:

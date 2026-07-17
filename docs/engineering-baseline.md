@@ -2,7 +2,7 @@
 
 - 状态：Accepted for TFCK-2 implementation
 - 日期：2026-07-14
-- 适用范围：六个 `@tf/*` workspace 包的构建、测试、打包与开发验证
+- 适用范围：六个 `@turingfocus/*` workspace 包的构建、测试、打包与开发验证
 
 ## 工具链
 
@@ -23,24 +23,26 @@ DOM lib；React/UI 才启用 DOM 和 JSX。这样可以在工程层阻止浏览�
 
 ## Peer dependency 基线
 
-| 包                 | Peer       | 范围               | 消费者证据                                                 |
-| ------------------ | ---------- | ------------------ | ---------------------------------------------------------- |
-| `@tf/chat-react`   | React      | `>=18.2.0 <19.0.0` | Office 使用 React 18.2；TFRobotFront/Tauri 使用 React 18.3 |
-| `@tf/chat-ui-antd` | React      | `>=18.2.0 <19.0.0` | 与无样式 React 层保持一致                                  |
-| `@tf/chat-ui-antd` | Ant Design | `>=5.23.4 <6.0.0`  | Tauri 使用 5.23.4；TFRobotFront 使用 5.28.x                |
+| 包                          | Peer       | 范围               | 消费者证据                                                 |
+| --------------------------- | ---------- | ------------------ | ---------------------------------------------------------- |
+| `@turingfocus/chat-react`   | React      | `>=18.2.0 <19.0.0` | Office 使用 React 18.2；TFRobotFront/Tauri 使用 React 18.3 |
+| `@turingfocus/chat-ui-antd` | React      | `>=18.2.0 <19.0.0` | 与无样式 React 层保持一致                                  |
+| `@turingfocus/chat-ui-antd` | Ant Design | `>=5.23.4 <6.0.0`  | Tauri 使用 5.23.4；TFRobotFront 使用 5.28.x                |
 
 React 19 和 Ant Design 6 尚未经过目标宿主验证，不在 V1 支持矩阵中。扩大范围需要独立兼容
 验证，而不是直接放宽 peer range。
 
 ## GitHub 与 npm 官方 Registry
 
-源码仓库为公开的 `https://github.com/A2C-SMCP/tf-chat-kit`。六个 `@tf/*` package manifest
+源码仓库为公开的 `https://github.com/A2C-SMCP/tf-chat-kit`。六个 `@turingfocus/*` package manifest
 固定使用 `https://registry.npmjs.org/`、`public` access、MIT License 和与源码仓库精确匹配的
 repository metadata。
 
-正式发布前必须用认证态探针确认 Release Owner 对 `@tf` scope 的 public publish 权限。六个
-包名返回 E404 只表示当前不可见，不能证明调用者拥有 scope。TFCK-42 不执行正式发布；正式版本、
-dist-tag、兼容矩阵和回滚由 TFCK-13 负责。根脚本继续拒绝 `changeset publish`、`npm publish`、
+2026-07-17 的认证态探针已确认 `npm whoami` 为 `huruize`，且该账号是 `turingfocus`
+organization owner；`turingfocus:developers` 团队存在，当前尚无已发布包。正式发布前仍须重新
+验证登录身份、organization 权限和目标包状态；E404 只表示当前不可见，不能单独证明发布权限。
+TFCK-42 不执行正式发布；正式版本、dist-tag、兼容矩阵和回滚由 TFCK-13 负责。根脚本继续拒绝
+`changeset publish`、`npm publish`、
 `pnpm publish` 或 `yarn publish` 等绕过路径，直到 TFCK-13 建立受保护的发布 workflow。
 
 正式发布优先使用 npm Trusted Publishing 与 GitHub Actions OIDC。首次 bootstrap 如确需传统
@@ -75,7 +77,7 @@ pnpm override 与六包清单都禁止源码路径依赖；公共包外部依赖
 六个 changelog 及 package 目录触碰文件集合必须与重放结果逐字匹配，不允许手工部分消费。
 GitHub Pull Request 使用 base SHA 计算 merge-base，`main` push 使用 event `before` SHA 覆盖
 本次 push 的完整提交范围；workflow 必须 checkout 完整历史，缺失或非法事件基线时门禁直接失败。
-npm 发布身份未验证不影响本地 tarball 验证，但会阻塞 TFCK-42 和后续正式发布。
+npm organization 所有权已验证；Trusted Publishing 绑定与发布前权限复核仍由 TFCK-13 完成。
 
 `pnpm pack:workspace` 是独立可用的制品入口：它会先构建六包，再通过 `pnpm pack --json`
 逐包确认 tarball 包含 `dist/index.js`、`dist/index.d.ts` 和 `package.json`。`pack:check` 进一步实际

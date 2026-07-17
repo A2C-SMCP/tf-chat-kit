@@ -6,7 +6,7 @@ import {
 } from "../scripts/packed-artifact-policy.mjs";
 
 const sourceManifest = {
-  name: "@tf/chat-testing",
+  name: "@turingfocus/chat-testing",
   version: "0.1.0",
   license: "MIT",
   repository: {
@@ -20,8 +20,8 @@ const sourceManifest = {
   sideEffects: false,
   files: ["dist"],
   dependencies: {
-    "@tf/chat-protocol": "workspace:^",
-    "@tf/chat-runtime": "workspace:^",
+    "@turingfocus/chat-protocol": "workspace:^",
+    "@turingfocus/chat-runtime": "workspace:^",
   },
   publishConfig: {
     access: "public",
@@ -43,7 +43,7 @@ type MutableArtifactInput = Omit<
 const validInput = (): MutableArtifactInput => {
   const packedManifest = expectedPackedManifest(sourceManifest);
   return {
-    packageName: "@tf/chat-testing",
+    packageName: "@turingfocus/chat-testing",
     sourceManifest,
     packedManifest,
     declaredFiles: [
@@ -75,8 +75,8 @@ describe("packed artifact policy", () => {
       Object.entries({
         ...input.packedManifest,
         dependencies: {
-          "@tf/chat-runtime": "^0.1.0",
-          "@tf/chat-protocol": "^0.1.0",
+          "@turingfocus/chat-runtime": "^0.1.0",
+          "@turingfocus/chat-protocol": "^0.1.0",
         },
       }).reverse(),
     );

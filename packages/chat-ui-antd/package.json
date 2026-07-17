@@ -1,5 +1,5 @@
 {
-  "name": "@tf/chat-ui-antd",
+  "name": "@turingfocus/chat-ui-antd",
   "version": "0.1.0",
   "description": "Composable Ant Design chat UI and default renderers",
   "license": "MIT",
@@ -28,7 +28,7 @@
     }
   },
   "dependencies": {
-    "@tf/chat-react": "workspace:^"
+    "@turingfocus/chat-react": "workspace:^"
   },
   "peerDependencies": {
     "antd": ">=5.23.4 <6.0.0",

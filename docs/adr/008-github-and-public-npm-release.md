@@ -11,13 +11,15 @@ ADR-007 以 CNB 私有 Registry 和专有许可证为前提建立统一版本治
 通过 npm 官方 Registry 获取同一组可追踪版本。继续保留 CNB、`restricted` 与 `UNLICENSED`
 假设会使 CI、制品元数据和消费者安装路径彼此矛盾。
 
-公开 scoped 包还需要显式的发布访问级别、来源仓库和发布身份门禁。包名在 Registry 中尚未
-出现不能证明当前账号拥有 `@tf` scope；真实发布权限必须通过认证态探针确认。
+公开 scoped 包还需要显式的发布访问级别、来源仓库和发布身份门禁。认证态探针确认原计划的
+`@tf` scope 已由其他主体持有，当前 Release Owner 无发布权。2026-07-17 已创建 npm
+`turingfocus` organization，`npm whoami` 返回 `huruize`，且该账号是 organization owner；
+`turingfocus:developers` 团队已存在，当前尚无已发布包。
 
 ## 决策
 
 - 源码托管在公开的 `https://github.com/A2C-SMCP/tf-chat-kit`，默认分支为 `main`。
-- 六个 workspace 包继续使用 `@tf/*` scope、统一版本和 Changesets fixed group。
+- 六个 workspace 包使用 `@turingfocus/*` scope、统一版本和 Changesets fixed group。
 - 根仓库和六个包采用 MIT License。
 - 六包以 `public` access 发布到 `https://registry.npmjs.org/`；不使用 GitHub Packages 或 CNB
   Registry 作为正式来源。
@@ -39,7 +41,8 @@ ADR-007 的以下决策继续有效：六包统一版本、SemVer 分类、初�
 
 ## 发布门禁
 
-- 认证态探针确认 Release Owner 对 `@tf` scope 和目标包具备 public publish 权限。
+- 认证态探针确认 Release Owner 是 `turingfocus` organization owner；正式发布前必须重新验证
+  登录身份、organization 权限和目标包可发布状态。
 - 六个 package manifest 的 `license`、`repository`、`publishConfig.registry` 和
   `publishConfig.access` 与本 ADR 完全一致。
 - `pnpm check`、publint、Are the Types Wrong、tarball 内容检查和无认证消费者安装全部通过。
@@ -54,11 +57,14 @@ ADR-007 的以下决策继续有效：六包统一版本、SemVer 分类、初�
 - 公共源码和公共包使用同一 MIT 授权与可验证来源，第三方消费者不再依赖公司私有 Registry。
 - GitHub Actions 成为质量门事实源；CNB 配置和事件变量从活跃工程基线中移除。
 - 公开包扩大了供应链、安全披露和兼容沟通责任，但不改变宿主身份、路由和产品工作流边界。
-- `@tf` scope 权限是正式发布的外部门禁；未登录或 E404 不得被解释为已具备权限。
+- `turingfocus` organization 所有权已验证；Trusted Publishing 绑定和发布前权限复核仍是正式
+  发布门禁，未登录或 E404 不得被解释为已具备权限。
 
 ## 未采用方案
 
 - GitHub Packages：会让公开消费者配置额外 Registry，偏离 npm 官方源目标。
-- 改名为 `@a2c-smcp/*`：用户已确认继续使用 `@tf/*`，避免无业务收益的包名迁移。
+- 保持 `@tf/*`：该 scope 已由其他主体持有，当前 Release Owner 无法发布。
+- 改名为 `@a2c-smcp/*`：已有 `turingfocus` npm organization 更贴近公共包品牌，无需再引入
+  第二个 scope。
 - 保持源码私有但包公开：无法获得完整的公开 provenance 与源码审计链路。
 - 在 TFCK-42 直接执行正式首发：会绕过 TFCK-13 的宿主验证、兼容矩阵和回滚门禁。

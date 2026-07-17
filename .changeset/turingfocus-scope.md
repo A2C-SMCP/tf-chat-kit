@@ -7,4 +7,4 @@
 "@turingfocus/chat-testing": patch
 ---
 
-Adopt the MIT license, npm public registry metadata, and GitHub source provenance for all packages.
+Move the unpublished public package family to the verified `@turingfocus` npm organization.

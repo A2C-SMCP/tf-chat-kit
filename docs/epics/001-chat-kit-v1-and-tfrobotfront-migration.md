@@ -18,7 +18,7 @@
 结论：SPLIT
 Kit 责任：标准协议、ChatClient Runtime、TFRobot Gateway、React 接入、Ant Design 通用 UI、测试与发布物
 宿主责任：登录与凭证刷新策略、路由、页面布局、平台管理、Feature Flag、产品工作流和旧模块删除
-目标包：@tf/chat-protocol、@tf/chat-runtime、@tf/chat-gateway-tfrobot、@tf/chat-react、@tf/chat-ui-antd、@tf/chat-testing
+目标包：@turingfocus/chat-protocol、@turingfocus/chat-runtime、@turingfocus/chat-gateway-tfrobot、@turingfocus/chat-react、@turingfocus/chat-ui-antd、@turingfocus/chat-testing
 受影响宿主：TFRobotFront、Tauri、Office Add-in、受控第三方应用
 ADR：无需新增；本 Epic 落实 ADR-001～007。若实施中改变既有边界或 V1 承诺，再单独提出 ADR
 ```
@@ -143,19 +143,19 @@ Epic 完成时必须同时满足：
 TFRobotFront / Tauri                Office Add-in / custom React UI
           |                                      |
           v                                      v
-  @tf/chat-ui-antd                         @tf/chat-react
+  @turingfocus/chat-ui-antd                         @turingfocus/chat-react
           |                                      |
           +------------------+-------------------+
                              v
-                     @tf/chat-runtime
+                     @turingfocus/chat-runtime
                              |
                              v
-                     @tf/chat-protocol
+                     @turingfocus/chat-protocol
                              ^
                              |
-                @tf/chat-gateway-tfrobot
+                @turingfocus/chat-gateway-tfrobot
 
-          @tf/chat-testing -> protocol/runtime contracts
+          @turingfocus/chat-testing -> protocol/runtime contracts
 ```
 
 运行时数据路径：
@@ -215,7 +215,7 @@ TFRobotServer DTO / Socket event
 - 标出尚未证实的行为，例如同 eventId 多状态频率、流式增量语义和 MCP transformed 数据。
 - 对会话 CRUD、Ask User、附件/multipart、回放和各重型 renderer 逐项给出“纳入 V1 / 留宿主 / 延期并另行立项”，未经结论不得预设公共接口。
 
-### TK-03：实现 `@tf/chat-protocol`
+### TK-03：实现 `@turingfocus/chat-protocol`
 
 **结果**：宿主和 Runtime 只依赖稳定聊天语义，不依赖服务端 DTO。
 
@@ -227,7 +227,7 @@ TFRobotServer DTO / Socket event
 - 定义稳定标识、顺序和兼容规则；服务端新增可选字段不会导致旧客户端失败。
 - Protocol 不依赖 React、DOM、Socket.IO、Ant Design 或宿主代码。
 
-### TK-04：实现 `@tf/chat-testing` 与契约套件
+### TK-04：实现 `@turingfocus/chat-testing` 与契约套件
 
 **结果**：Runtime 可以脱离真实网络开发，所有 Gateway 实现接受同一行为验证。
 
@@ -238,7 +238,7 @@ TFRobotServer DTO / Socket event
 - 测试工具不包含生产凭证或生产网络行为。
 - 契约套件以实现工厂/测试适配器为入口，可由后续 Runtime 和 Gateway Story 直接接入；TK-04 不以 TK-05/TK-06 已实现为验收前提。
 
-### TK-05：实现实例化 `@tf/chat-runtime`
+### TK-05：实现实例化 `@turingfocus/chat-runtime`
 
 **结果**：ChatClient 成为唯一公共状态与命令入口。
 
@@ -252,7 +252,7 @@ TFRobotServer DTO / Socket event
 - Runtime 接入并通过 TK-04 中适用于状态与命令语义的契约套件。
 - Runtime 不导出内部 Store 形状，不依赖 React、DOM 或 Socket.IO。
 
-### TK-06：实现 `@tf/chat-gateway-tfrobot`
+### TK-06：实现 `@turingfocus/chat-gateway-tfrobot`
 
 **结果**：当前 TFRobotServer 契约被隔离在一个可替换适配器中。
 
@@ -265,7 +265,7 @@ TFRobotServer DTO / Socket event
 - 通过 SessionProvider 获取短期认证；Token、Cookie、admin key 不进入日志、错误或 raw。
 - 真实 Gateway 通过 TK-04 契约测试，并记录验证过的服务端基线。
 
-### TK-07：实现 `@tf/chat-react`
+### TK-07：实现 `@turingfocus/chat-react`
 
 **结果**：React 宿主可以无样式地消费 ChatClient。
 
@@ -277,7 +277,7 @@ TFRobotServer DTO / Socket event
 - 不依赖 Ant Design、TFRobotServer DTO、Socket.IO 或宿主 Store。
 - Office Add-in 可以只安装 Protocol/Runtime/React 构建自己的 UI。
 
-### TK-08：实现 `@tf/chat-ui-antd` V1 纵向切片
+### TK-08：实现 `@turingfocus/chat-ui-antd` V1 纵向切片
 
 **结果**：TFRobotFront 和 Tauri 获得可直接使用、可组合的默认聊天 UI。
 
@@ -309,7 +309,7 @@ TFRobotServer DTO / Socket event
 
 **验收**：
 
-- TFRobotFront 只通过 `@tf/*` 的版本化开发验证包、npm prerelease 或正式包接入，不引用本仓库源码；验证通过后由 TK-12 进入正式发布流程。
+- TFRobotFront 只通过 `@turingfocus/*` 的版本化开发验证包、npm prerelease 或正式包接入，不引用本仓库源码；验证通过后由 TK-12 进入正式发布流程。
 - 宿主注入 endpoint、SessionProvider、主题和必要回调；路由、平台选择与登录仍在宿主。
 - Feature Flag 支持旧/新路径切换和快速回滚，且不会产生双重 Socket 订阅。
 - 在真实 TFRobotServer 下验证历史、实时、发送、运行状态和中断。
@@ -414,12 +414,12 @@ TK-13                  -> TK-14
 
 ## 上下游依赖
 
-| 依赖方                 | 需要确认/交付                                                    | 阻塞范围            |
-| ---------------------- | ---------------------------------------------------------------- | ------------------- |
-| TFRobotServer          | 当前 REST/Socket 契约、认证字段、事件语义、错误码和测试环境      | TK-02、TK-06、TK-10 |
-| TFRobotFront           | Feature Flag、SessionProvider、主题/路由接入、旧基线与灰度计划   | TK-10、TK-13        |
-| Tauri 或 Office Add-in | 第二宿主选择、最小接入环境和 Host Integrator                     | TK-11、Epic 完成    |
-| GitHub/npm 发布        | `@tf` scope 权限、Trusted Publishing/OIDC、provenance 和回滚机制 | TK-12               |
+| 依赖方                 | 需要确认/交付                                                             | 阻塞范围            |
+| ---------------------- | ------------------------------------------------------------------------- | ------------------- |
+| TFRobotServer          | 当前 REST/Socket 契约、认证字段、事件语义、错误码和测试环境               | TK-02、TK-06、TK-10 |
+| TFRobotFront           | Feature Flag、SessionProvider、主题/路由接入、旧基线与灰度计划            | TK-10、TK-13        |
+| Tauri 或 Office Add-in | 第二宿主选择、最小接入环境和 Host Integrator                              | TK-11、Epic 完成    |
+| GitHub/npm 发布        | `@turingfocus` scope 权限、Trusted Publishing/OIDC、provenance 和回滚机制 | TK-12               |
 
 服务端破坏性变化必须由 Core Maintainers、Gateway Maintainers 和 Server Contract Reviewer 共同评审。不得在 Kit 中用 DTO 泄漏或跨层补丁绕过上游不确定性。
 
@@ -440,7 +440,7 @@ TK-13                  -> TK-14
 以下事项不阻塞 Epic 建立，但必须在对应 Story 开始前关闭：
 
 1. 确认 package manager、Node/TypeScript、React/Ant Design peer 版本和构建工具。
-2. 确认 GitHub 仓库、`@tf` scope public publish 权限和 GitHub Actions 发布身份。
+2. 确认 GitHub 仓库、`@turingfocus` scope public publish 权限和 GitHub Actions 发布身份。
 3. 冻结开始实现时的 TFRobotServer commit/version、测试环境和真实契约样本。
 4. 选择 TK-11 的真实第二宿主；默认优先已有接入计划的 Tauri 或 Office Add-in。
 5. 用生产数据确认 Tool 类型、同 eventId 多状态、流式增量和 MCP transformed 数据的真实频率。

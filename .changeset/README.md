@@ -1,10 +1,11 @@
 # Changesets
 
 Every public package change must include a changeset describing the SemVer impact. The six
-`@tf/*` packages form one fixed group and are versioned together, as required by ADR-008.
+`@turingfocus/*` packages form one fixed group and are versioned together, as required by ADR-008.
 
-Run `pnpm changeset` to add an entry. Formal publication is intentionally deferred to TFCK-13,
-after the npm `@tf` publishing identity and GitHub Actions trusted publisher are verified.
+Run `pnpm changeset` to add an entry. The `turingfocus` organization ownership is verified;
+formal publication remains deferred to TFCK-13 until the GitHub Actions trusted publisher and
+release protections are configured.
 
 `pnpm check:changesets` compares public package changes with the target branch and requires a new
 changeset with a release entry. A documented empty changeset is allowed only when the comparison

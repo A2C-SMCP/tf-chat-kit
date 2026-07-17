@@ -19,7 +19,7 @@ const runtimeSource = "packages/chat-runtime/src/index.ts";
 const releaseChangeset = {
   id: "calm-runtimes-change",
   summary: "Change runtime behavior.",
-  releases: [{ name: "@tf/chat-runtime", type: "minor" }],
+  releases: [{ name: "@turingfocus/chat-runtime", type: "minor" }],
 } as const;
 
 const documentedEmptyChangeset = {
@@ -41,7 +41,7 @@ const packageManifests = (version: string) =>
 const generatedChangelogs = Object.fromEntries(
   allPublicPackageNames.map((name) => [
     name,
-    name === "@tf/chat-runtime"
+    name === "@turingfocus/chat-runtime"
       ? `# ${name}\n\n## 0.2.0\n\n### Minor Changes\n\n- ${releaseChangeset.summary}\n`
       : `# ${name}\n\n## 0.2.0\n`,
   ]),
@@ -57,7 +57,7 @@ const fixedReleasePlan = (
     type,
     oldVersion: "0.1.0",
     newVersion,
-    changesets: name === "@tf/chat-runtime" ? [changesetId] : [],
+    changesets: name === "@turingfocus/chat-runtime" ? [changesetId] : [],
   })),
 });
 
@@ -120,7 +120,7 @@ describe("changeset governance", () => {
         isInitialWorkspaceBootstrap: false,
       }),
     ).toContain(
-      "new changeset releases must cover every changed public package; missing @tf/chat-ui-antd; changed packages: @tf/chat-ui-antd",
+      "new changeset releases must cover every changed public package; missing @turingfocus/chat-ui-antd; changed packages: @turingfocus/chat-ui-antd",
     );
   });
 
@@ -141,7 +141,7 @@ describe("changeset governance", () => {
         isInitialWorkspaceBootstrap: false,
       }),
     ).toContain(
-      "new changeset releases must cover every changed public package; missing @tf/chat-ui-antd; changed packages: @tf/chat-runtime, @tf/chat-ui-antd",
+      "new changeset releases must cover every changed public package; missing @turingfocus/chat-ui-antd; changed packages: @turingfocus/chat-runtime, @turingfocus/chat-ui-antd",
     );
   });
 
@@ -150,7 +150,7 @@ describe("changeset governance", () => {
       ...releaseChangeset,
       releases: [
         ...releaseChangeset.releases,
-        { name: "@tf/chat-ui-antd", type: "minor" as const },
+        { name: "@turingfocus/chat-ui-antd", type: "minor" as const },
       ],
     };
 
@@ -180,14 +180,14 @@ describe("changeset governance", () => {
           {
             id: "major-runtime",
             summary: "Break the runtime contract.",
-            releases: [{ name: "@tf/chat-runtime", type: "major" }],
+            releases: [{ name: "@turingfocus/chat-runtime", type: "major" }],
           },
         ],
         pendingChangesets: [
           {
             id: "major-runtime",
             summary: "Break the runtime contract.",
-            releases: [{ name: "@tf/chat-runtime", type: "major" }],
+            releases: [{ name: "@turingfocus/chat-runtime", type: "major" }],
           },
         ],
         pendingReleasePlan: fixedReleasePlan("major", "1.0.0", "major-runtime"),
@@ -204,7 +204,7 @@ describe("changeset governance", () => {
     const existingMajorChangeset = {
       id: "already-committed",
       summary: "Change the existing pending release to major.",
-      releases: [{ name: "@tf/chat-runtime", type: "major" }],
+      releases: [{ name: "@turingfocus/chat-runtime", type: "major" }],
     } as const;
 
     expect(
@@ -327,11 +327,11 @@ describe("changeset governance", () => {
         ...validConsumedRelease,
         currentChangelogs: {
           ...generatedChangelogs,
-          "@tf/chat-runtime": "",
+          "@turingfocus/chat-runtime": "",
         },
       }),
     ).toContain(
-      "consumed changeset release output for @tf/chat-runtime CHANGELOG.md must exactly match Changesets output",
+      "consumed changeset release output for @turingfocus/chat-runtime CHANGELOG.md must exactly match Changesets output",
     );
   });
 
@@ -344,13 +344,13 @@ describe("changeset governance", () => {
         ),
         currentChangelogs: {
           ...generatedChangelogs,
-          "@tf/chat-testing": "",
+          "@turingfocus/chat-testing": "",
         },
       }),
     ).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          "@tf/chat-testing CHANGELOG.md must exactly match Changesets output",
+          "@turingfocus/chat-testing CHANGELOG.md must exactly match Changesets output",
         ),
         expect.stringContaining(
           "must exactly match Changesets fixed-group output files",
@@ -365,11 +365,11 @@ describe("changeset governance", () => {
         ...validConsumedRelease,
         currentChangelogs: {
           ...generatedChangelogs,
-          "@tf/chat-runtime": `# @tf/chat-runtime\n\n## 0.2.0\n\n### Minor Changes\n\n- Different change.\n\n## 0.1.0\n\n- ${releaseChangeset.summary}\n`,
+          "@turingfocus/chat-runtime": `# @turingfocus/chat-runtime\n\n## 0.2.0\n\n### Minor Changes\n\n- Different change.\n\n## 0.1.0\n\n- ${releaseChangeset.summary}\n`,
         },
       }),
     ).toContain(
-      "consumed changeset release output for @tf/chat-runtime CHANGELOG.md must exactly match Changesets output",
+      "consumed changeset release output for @turingfocus/chat-runtime CHANGELOG.md must exactly match Changesets output",
     );
   });
 
@@ -379,11 +379,11 @@ describe("changeset governance", () => {
         ...validConsumedRelease,
         currentChangelogs: {
           ...generatedChangelogs,
-          "@tf/chat-runtime": `${generatedChangelogs["@tf/chat-runtime"]}Manual note.\n`,
+          "@turingfocus/chat-runtime": `${generatedChangelogs["@turingfocus/chat-runtime"]}Manual note.\n`,
         },
       }),
     ).toContain(
-      "consumed changeset release output for @tf/chat-runtime CHANGELOG.md must exactly match Changesets output",
+      "consumed changeset release output for @turingfocus/chat-runtime CHANGELOG.md must exactly match Changesets output",
     );
   });
 
@@ -438,7 +438,7 @@ describe("changeset governance", () => {
           {
             id: "no-runtime-release",
             summary: "Do not release runtime.",
-            releases: [{ name: "@tf/chat-runtime", type: "none" }],
+            releases: [{ name: "@turingfocus/chat-runtime", type: "none" }],
           },
         ],
         isInitialWorkspaceBootstrap: false,

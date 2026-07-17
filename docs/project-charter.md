@@ -54,7 +54,7 @@ V1 在逻辑能力上支持以下宿主：
 ## TFRobotServer 兼容关系
 
 - V1 以开始实现时的当前 TFRobotServer 契约为基线，不要求服务端先完成协议版本化。
-- `@tf/chat-gateway-tfrobot` 将 REST DTO 和 Socket.IO 事件转换为稳定模型，Runtime 不直接解释服务端事件名。
+- `@turingfocus/chat-gateway-tfrobot` 将 REST DTO 和 Socket.IO 事件转换为稳定模型，Runtime 不直接解释服务端事件名。
 - 每次发布维护 Chat Kit 版本、服务端基线和宿主验证结果组成的兼容矩阵。
 - 向后兼容的新增字段或事件由 Gateway 和 fallback 机制吸收；语义破坏必须进入显式版本决策。
 

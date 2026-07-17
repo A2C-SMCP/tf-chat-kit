@@ -19,9 +19,9 @@ TFRobot 聊天不仅展示文本消息，还包含 Browser、Editor、Preview、
 
 Renderer 不得直接访问 Socket、SessionProvider、服务端 DTO 或宿主全局 Store。
 
-`@tf/chat-ui-antd` 提供通用消息和首批默认事件渲染器。Monaco、xterm 等重型依赖只在对应事件实际展示时加载。宿主可以覆盖默认 renderer、增加自定义 renderer 或不注册某种能力；未注册和未知事件统一使用 fallback。
+`@turingfocus/chat-ui-antd` 提供通用消息和首批默认事件渲染器。Monaco、xterm 等重型依赖只在对应事件实际展示时加载。宿主可以覆盖默认 renderer、增加自定义 renderer 或不注册某种能力；未注册和未知事件统一使用 fallback。
 
-Office Add-in 和需要非 Ant Design 视觉的第三方应用通过 `@tf/chat-react` 构建自己的 UI。V1 不承诺 Fluent UI 包，也不把 renderer registry 放入 Runtime。
+Office Add-in 和需要非 Ant Design 视觉的第三方应用通过 `@turingfocus/chat-react` 构建自己的 UI。V1 不承诺 Fluent UI 包，也不把 renderer registry 放入 Runtime。
 
 ## 错误边界
 
