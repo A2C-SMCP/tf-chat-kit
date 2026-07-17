@@ -1,0 +1,141 @@
+{
+  "schemaVersion": 1,
+  "baselineId": "tfck-3/chat-player-performance/v1",
+  "evidenceStatus": "historical-anchor",
+  "recordedAt": "2026-04-15",
+  "importedAt": "2026-07-17",
+  "measurementPlan": {
+    "owner": "TFCK-37",
+    "timing": "after-v1-development-before-default-cutover",
+    "blockingForTfck3": false,
+    "blockingForDefaultCutover": true
+  },
+  "source": {
+    "repository": "TFRobotFront",
+    "artifactCommit": "7b81f4a5e57810a52337b18018308caa209e73a9",
+    "measuredApplicationCommit": "61dec0023a5675725398c471f5ce07269a699ff7",
+    "currentInspectedCommit": "af3b4e2fa8d7a94c458d7c0812435ad17df0eb2e",
+    "canonicalPath": "docs/chat-kit/perf-baseline-v1"
+  },
+  "environment": {
+    "machine": "Apple M2 Ultra",
+    "memoryGiB": 192,
+    "os": "macOS 26.2 (25C56)",
+    "node": "20.19.1",
+    "pnpm": "10.19.0",
+    "playwright": "1.57.0",
+    "cpuThrottling": "none",
+    "networkThrottling": "none",
+    "display": null
+  },
+  "scenarios": [
+    {
+      "id": "initial-populated-timeline",
+      "fixture": "52 Socket events emitted as one burst",
+      "metrics": {
+        "fcpMs": 1812,
+        "clickToSettledMs": 5057,
+        "commitCount": 65,
+        "firstCommitActualDurationMs": 32.7,
+        "firstCommitBaseDurationMs": 39.2,
+        "maxCommitActualDurationMs": 36.1,
+        "totalActualDurationMs": 641
+      },
+      "qualification": "Approximation of populated-list rendering; excludes REST history latency."
+    },
+    {
+      "id": "large-list-scroll",
+      "fixture": "52-item mixed timeline",
+      "metrics": {
+        "frameSampleCount": 192,
+        "averageFrameMs": 21.7849,
+        "averageFps": 45.903,
+        "p95FrameMs": 37,
+        "longestFrameMs": 425.9,
+        "commitCount": 146,
+        "totalActualDurationMs": 760.9
+      },
+      "qualification": "Single headed run on a high-end machine."
+    },
+    {
+      "id": "realtime-progressive-update",
+      "fixture": "Synthetic fallback: 80 updates at 25 ms",
+      "metrics": {
+        "wallClockMs": 4621,
+        "commitCount": 124,
+        "averageInterCommitMs": 21.49,
+        "commitsPerSecond": 26.834,
+        "totalActualDurationMs": 1106.1
+      },
+      "qualification": "Deterministic synthetic cadence; the attempted real recording only echoed the prompt."
+    },
+    {
+      "id": "conversation-switch",
+      "fixture": "Populated conversation to populated conversation",
+      "metrics": {
+        "wallClockMs": 2773,
+        "commitCount": 163,
+        "totalActualDurationMs": 911.9,
+        "siderItemCount": 6
+      },
+      "qualification": "Uses a real local conversation list and mocked Socket population."
+    }
+  ],
+  "requiredDimensions": [
+    {
+      "id": "first-render",
+      "status": "approximation",
+      "scenarioIds": ["initial-populated-timeline"],
+      "gapId": "TFCK-37-RERUN-01"
+    },
+    {
+      "id": "history-pagination",
+      "status": "missing",
+      "scenarioIds": [],
+      "gapId": "TFCK-37-PAGE-01"
+    },
+    {
+      "id": "large-list-updates",
+      "status": "measured",
+      "scenarioIds": ["initial-populated-timeline", "large-list-scroll"]
+    },
+    {
+      "id": "realtime-updates",
+      "status": "approximation",
+      "scenarioIds": ["realtime-progressive-update"],
+      "gapId": "TFCK-37-STREAM-01"
+    },
+    {
+      "id": "conversation-switch",
+      "status": "approximation",
+      "scenarioIds": ["conversation-switch"],
+      "gapId": "TFCK-37-RERUN-01"
+    }
+  ],
+  "gaps": [
+    {
+      "id": "TFCK-37-PAGE-01",
+      "blocking": false,
+      "deferredTo": "TFCK-37",
+      "description": "No history-pagination measurement exists."
+    },
+    {
+      "id": "TFCK-37-RERUN-01",
+      "blocking": false,
+      "deferredTo": "TFCK-37",
+      "description": "The current inspected Front revision has not been rerun."
+    },
+    {
+      "id": "TFCK-37-STREAM-01",
+      "blocking": false,
+      "deferredTo": "TFCK-37",
+      "description": "Realtime cadence is synthetic rather than a redacted real recording."
+    },
+    {
+      "id": "TFCK-37-ENV-01",
+      "blocking": false,
+      "deferredTo": "TFCK-37",
+      "description": "Display details and a representative lower-end target environment are missing."
+    }
+  ]
+}
