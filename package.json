@@ -3,7 +3,15 @@
   "version": "0.0.0",
   "private": true,
   "description": "TFRobot host-agnostic chat packages",
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/A2C-SMCP/tf-chat-kit.git"
+  },
+  "homepage": "https://github.com/A2C-SMCP/tf-chat-kit#readme",
+  "bugs": {
+    "url": "https://github.com/A2C-SMCP/tf-chat-kit/issues"
+  },
   "type": "module",
   "packageManager": "pnpm@10.34.5",
   "engines": {
@@ -17,8 +25,8 @@
     "check:changesets": "node scripts/check-changesets.mjs",
     "check:workspace": "node scripts/check-workspace.mjs",
     "clean": "node scripts/clean-workspace.mjs",
-    "format": "prettier --write \"package.json\" \"pnpm-workspace.yaml\" \"tsconfig*.json\" \"eslint.config.mjs\" \"dependency-cruiser.config.mjs\" \"vitest.config.ts\" \"packages/**/*.{json,ts}\" \"scripts/**/*.mjs\" \"tests/**/*.ts\" \".changeset/**/*.{json,md}\" \"docs/engineering-baseline.md\" \".cnb.yml\"",
-    "format:check": "prettier --check \"package.json\" \"pnpm-workspace.yaml\" \"tsconfig*.json\" \"eslint.config.mjs\" \"dependency-cruiser.config.mjs\" \"vitest.config.ts\" \"packages/**/*.{json,ts}\" \"scripts/**/*.mjs\" \"tests/**/*.ts\" \".changeset/**/*.{json,md}\" \"docs/engineering-baseline.md\" \".cnb.yml\"",
+    "format": "prettier --write \"package.json\" \"pnpm-workspace.yaml\" \"tsconfig*.json\" \"eslint.config.mjs\" \"dependency-cruiser.config.mjs\" \"vitest.config.ts\" \"packages/**/*.{json,ts}\" \"scripts/**/*.mjs\" \"tests/**/*.ts\" \".changeset/**/*.{json,md}\" \"README.md\" \"docs/project-charter.md\" \"docs/engineering-baseline.md\" \"docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md\" \"docs/adr/{README,007-versioning-and-release,008-github-and-public-npm-release}.md\" \".github/workflows/*.yml\"",
+    "format:check": "prettier --check \"package.json\" \"pnpm-workspace.yaml\" \"tsconfig*.json\" \"eslint.config.mjs\" \"dependency-cruiser.config.mjs\" \"vitest.config.ts\" \"packages/**/*.{json,ts}\" \"scripts/**/*.mjs\" \"tests/**/*.ts\" \".changeset/**/*.{json,md}\" \"README.md\" \"docs/project-charter.md\" \"docs/engineering-baseline.md\" \"docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md\" \"docs/adr/{README,007-versioning-and-release,008-github-and-public-npm-release}.md\" \".github/workflows/*.yml\"",
     "lint": "eslint . --max-warnings=0",
     "pack:check": "node scripts/verify-packed-artifacts.mjs",
     "pack:workspace": "node scripts/pack-workspace.mjs",

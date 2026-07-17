@@ -7,6 +7,7 @@ import { PACKAGE_POLICY } from "./workspace-policy.mjs";
 import { validatePackedArtifact } from "./packed-artifact-policy.mjs";
 
 const rootDirectory = process.cwd();
+const approvedLicense = await readFile(path.join(rootDirectory, "LICENSE"));
 
 /**
  * @param {string} command
@@ -116,6 +117,7 @@ try {
       packedManifest,
       declaredFiles: packedPackage.files,
       extractedFiles,
+      expectedFileContents: { LICENSE: approvedLicense },
     });
     if (errors.length > 0) throw new Error(errors.join("\n"));
     await rm(extractedPackageDirectory, { recursive: true, force: true });

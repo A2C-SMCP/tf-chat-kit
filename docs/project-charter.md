@@ -10,12 +10,12 @@
 
 V1 在逻辑能力上支持以下宿主：
 
-| 宿主 | V1 交付方式 |
-| --- | --- |
-| TFRobotFront | React 接入层和 Ant Design 成品 UI，作为首个生产验证宿主 |
-| Tauri 客户端 | React 接入层和 Ant Design 成品 UI |
-| Office Add-in | Protocol、Runtime 和 React 接入层；宿主自行实现 UI |
-| 受控第三方应用 | 通过私有包使用 Protocol、Runtime、React 接入层或 Ant Design UI |
+| 宿主          | V1 交付方式                                                                              |
+| ------------- | ---------------------------------------------------------------------------------------- |
+| TFRobotFront  | React 接入层和 Ant Design 成品 UI，作为首个生产验证宿主                                  |
+| Tauri 客户端  | React 接入层和 Ant Design 成品 UI                                                        |
+| Office Add-in | Protocol、Runtime 和 React 接入层；宿主自行实现 UI                                       |
+| 第三方应用    | 通过 npm 官方 Registry 的公开 MIT 包使用 Protocol、Runtime、React 接入层或 Ant Design UI |
 
 “支持”表示核心契约不包含 Next.js、TFRobotFront Store、页面路由或全局浏览器状态等单宿主假设。它不表示 V1 为每种宿主交付独立视觉适配器。
 
@@ -33,7 +33,7 @@ V1 在逻辑能力上支持以下宿主：
 - 不提供 Fluent UI 成品包。
 - 不提供 Web Component 或 iframe 嵌入形态。
 - 不接入或实现 AG-UI。
-- 不发布公开互联网 npm SDK。
+- 不承诺为公开包提供账号登录、托管服务或每个宿主的产品级集成。
 - 不负责用户登录、账号体系、机器人配置三态或宿主页面导航。
 - 不在首批建设中预拆 Browser、Editor、Shell 等独立 renderer 包。
 
@@ -41,13 +41,13 @@ V1 在逻辑能力上支持以下宿主：
 
 首批文档采用角色责任，不指定未经确认的个人姓名。
 
-| 角色 | 责任 |
-| --- | --- |
-| Core Maintainers | 维护 Protocol、Runtime、共享 React/UI、架构边界和公共 API |
-| Gateway Maintainers | 跟踪 TFRobotServer 契约，维护映射、重连和兼容矩阵 |
-| Host Integrators | 维护各宿主的认证注入、路由、布局和集成测试 |
-| Release Owner | 管理统一版本、变更记录、CNB 发布和回滚信息 |
-| Server Contract Reviewer | 评审会影响消息、事件、认证或连接语义的服务端变化 |
+| 角色                     | 责任                                                                        |
+| ------------------------ | --------------------------------------------------------------------------- |
+| Core Maintainers         | 维护 Protocol、Runtime、共享 React/UI、架构边界和公共 API                   |
+| Gateway Maintainers      | 跟踪 TFRobotServer 契约，维护映射、重连和兼容矩阵                           |
+| Host Integrators         | 维护各宿主的认证注入、路由、布局和集成测试                                  |
+| Release Owner            | 管理统一版本、变更记录、GitHub Actions、npm 公开发布、provenance 和回滚信息 |
+| Server Contract Reviewer | 评审会影响消息、事件、认证或连接语义的服务端变化                            |
 
 同一人员可以承担多个角色，但每次发布必须能够识别当次 Release Owner 和受影响宿主的 Host Integrator。
 

@@ -96,6 +96,7 @@ export function expectedPackedManifest(sourceManifest) {
  *   packedManifest: Record<string, unknown>;
  *   declaredFiles: readonly string[];
  *   extractedFiles: readonly { path: string; content?: string; bytes?: Uint8Array }[];
+ *   expectedFileContents?: Readonly<Record<string, Uint8Array>>;
  * }} input
  * @returns {string[]}
  */
@@ -105,6 +106,7 @@ export function validatePackedArtifact({
   packedManifest,
   declaredFiles,
   extractedFiles,
+  expectedFileContents = {},
 }) {
   /** @type {string[]} */
   const errors = [];
@@ -123,6 +125,20 @@ export function validatePackedArtifact({
     errors.push(
       `${packageName}: extracted tarball files must exactly match pnpm pack output; expected ${expectedFiles.join(", ")}; found ${actualFiles.join(", ")}`,
     );
+  }
+
+  for (const [filePath, expectedBytes] of Object.entries(
+    expectedFileContents,
+  )) {
+    const extractedFile = extractedFiles.find(({ path }) => path === filePath);
+    if (
+      extractedFile?.bytes === undefined ||
+      !Buffer.from(extractedFile.bytes).equals(Buffer.from(expectedBytes))
+    ) {
+      errors.push(
+        `${packageName}: ${filePath} must exactly match the approved repository file`,
+      );
+    }
   }
 
   for (const file of extractedFiles) {

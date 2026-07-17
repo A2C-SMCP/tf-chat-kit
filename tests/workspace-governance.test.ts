@@ -60,6 +60,50 @@ describe("workspace governance", () => {
     );
   });
 
+  it("rejects public package release metadata drift", async () => {
+    const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
+    const runtime = snapshot.packages.find(
+      ({ directory }) => directory === "chat-runtime",
+    )!;
+    runtime.manifest.license = "UNLICENSED";
+    runtime.manifest.publishConfig = {
+      access: "restricted",
+      registry: "https://npm.pkg.github.com/",
+    };
+    runtime.manifest.repository = {
+      type: "git",
+      url: "git+https://github.com/A2C-SMCP/not-tf-chat-kit.git",
+      directory: "packages/not-chat-runtime",
+    };
+
+    const errors = validateWorkspaceSnapshot(snapshot);
+    expect(errors).toContain("@tf/chat-runtime: license must be MIT");
+    expect(errors).toContain(
+      "@tf/chat-runtime: publishConfig.access must be public",
+    );
+    expect(errors).toContain(
+      "@tf/chat-runtime: publishConfig.registry must be https://registry.npmjs.org/",
+    );
+    expect(errors).toContainEqual(
+      expect.stringContaining("repository.url must be"),
+    );
+    expect(errors).toContain(
+      "@tf/chat-runtime: repository.directory must be packages/chat-runtime",
+    );
+  });
+
+  it("rejects root repository metadata drift", async () => {
+    const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
+    snapshot.rootManifest.license = "UNLICENSED";
+    snapshot.rootManifest.homepage = "https://example.com";
+
+    const errors = validateWorkspaceSnapshot(snapshot);
+    expect(errors).toContain("root license must be MIT");
+    expect(errors).toContainEqual(
+      expect.stringContaining("root: homepage must"),
+    );
+  });
+
   it("rejects a unified version outside the 0.x line", async () => {
     const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
     for (const entry of snapshot.packages) entry.manifest.version = "1.0.0";
@@ -317,7 +361,7 @@ describe("workspace governance", () => {
   it.each([
     [
       "ambient process variable",
-      'declare const process: { env: Record<string, string | undefined> }; export const token = process.env["CNB_TOKEN"];',
+      'declare const process: { env: Record<string, string | undefined> }; export const token = process.env["NPM_TOKEN"];',
       "node:process",
     ],
     [
@@ -337,7 +381,7 @@ describe("workspace governance", () => {
     ],
     [
       "declare global process variable",
-      'export {}; declare global { const process: { env: Record<string, string | undefined> } } export const token = process.env["CNB_TOKEN"];',
+      'export {}; declare global { const process: { env: Record<string, string | undefined> } } export const token = process.env["NPM_TOKEN"];',
       "node:process",
     ],
   ])(
@@ -355,13 +399,13 @@ describe("workspace governance", () => {
   );
 
   it.each([
-    ["chat-testing", "void process.env.CNB_TOKEN;", "node:process"],
+    ["chat-testing", "void process.env.NPM_TOKEN;", "node:process"],
     [
       "chat-runtime",
       'const bytes = Buffer.from("chat"); void bytes;',
       "node:buffer",
     ],
-    ["chat-runtime", "void globalThis.process.env.CNB_TOKEN;", "node:process"],
+    ["chat-runtime", "void globalThis.process.env.NPM_TOKEN;", "node:process"],
     ["chat-runtime", 'void globalThis.Buffer.from("chat");', "node:buffer"],
     ["chat-testing", "void __dirname;", "node:module"],
     ["chat-testing", "void __filename;", "node:module"],
@@ -1159,7 +1203,7 @@ describe("workspace governance", () => {
     "true\nnpm publish",
     "true\r\nnpm publish",
   ])(
-    "rejects a release command before Registry approval: %s",
+    "rejects a release command before the TFCK-13 workflow is approved: %s",
     async (command) => {
       const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
       snapshot.rootManifest.scripts ??= {};
@@ -1167,7 +1211,7 @@ describe("workspace governance", () => {
 
       expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
         expect.stringContaining(
-          "must not publish before the CNB Registry and release identity are approved",
+          "must not publish before the TFCK-13 release workflow and npm identity are approved",
         ),
       );
     },
@@ -1206,7 +1250,7 @@ describe("workspace governance", () => {
 
       expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
         expect.stringContaining(
-          "scripts must exactly match the approved Registry-disabled baseline",
+          "scripts must exactly match the approved publish-disabled baseline",
         ),
       );
     },
@@ -1225,13 +1269,13 @@ describe("workspace governance", () => {
 
       expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
         expect.stringContaining(
-          "scripts must exactly match the approved Registry-disabled baseline",
+          "scripts must exactly match the approved publish-disabled baseline",
         ),
       );
     },
   );
 
-  it("rejects package-level publish commands before Registry approval", async () => {
+  it("rejects package-level publish commands before TFCK-13", async () => {
     const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
     const runtime = snapshot.packages.find(
       ({ directory }) => directory === "chat-runtime",
@@ -1240,12 +1284,12 @@ describe("workspace governance", () => {
 
     expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
       expect.stringContaining(
-        "@tf/chat-runtime: script release must not publish before the CNB Registry",
+        "@tf/chat-runtime: script release must not publish before the TFCK-13 release workflow",
       ),
     );
   });
 
-  it("rejects package-level npm pub commands before Registry approval", async () => {
+  it("rejects package-level npm pub commands before TFCK-13", async () => {
     const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
     const runtime = snapshot.packages.find(
       ({ directory }) => directory === "chat-runtime",
@@ -1254,7 +1298,7 @@ describe("workspace governance", () => {
 
     expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
       expect.stringContaining(
-        "@tf/chat-runtime: script release must not publish before the CNB Registry",
+        "@tf/chat-runtime: script release must not publish before the TFCK-13 release workflow",
       ),
     );
   });
@@ -1275,7 +1319,7 @@ describe("workspace governance", () => {
 
     expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
       expect.stringContaining(
-        "@tf/chat-runtime: script release must not publish before the CNB Registry",
+        "@tf/chat-runtime: script release must not publish before the TFCK-13 release workflow",
       ),
     );
   });

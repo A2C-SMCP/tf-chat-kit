@@ -21,6 +21,9 @@ import ts from "typescript";
  *   sideEffects?: boolean | string[];
  *   exports?: Record<string, { types?: string; import?: string }>;
  *   publishConfig?: { access?: string; registry?: string };
+ *   repository?: { type?: string; url?: string; directory?: string };
+ *   homepage?: string;
+ *   bugs?: { url?: string };
  *   dependencies?: DependencyMap;
  *   devDependencies?: DependencyMap;
  *   optionalDependencies?: DependencyMap;
@@ -53,6 +56,11 @@ const heavyRendererDependencyPatterns = [
   /^xterm$/u,
   /^@xterm\//u,
 ];
+
+const PUBLIC_REGISTRY = "https://registry.npmjs.org/";
+const REPOSITORY_URL = "git+https://github.com/A2C-SMCP/tf-chat-kit.git";
+const HOMEPAGE_URL = "https://github.com/A2C-SMCP/tf-chat-kit#readme";
+const BUGS_URL = "https://github.com/A2C-SMCP/tf-chat-kit/issues";
 
 /** @type {Readonly<Record<string, PackageRule>>} */
 export const PACKAGE_POLICY = Object.freeze({
@@ -116,7 +124,7 @@ const CHANGESET_CONFIG_POLICY = Object.freeze({
   commit: false,
   fixed: [Object.values(PACKAGE_POLICY).map(({ name }) => name)],
   linked: [],
-  access: "restricted",
+  access: "public",
   baseBranch: "main",
   updateInternalDependencies: "patch",
   bumpVersionsWithWorkspaceProtocolOnly: true,
@@ -133,9 +141,9 @@ const ROOT_SCRIPT_POLICY = Object.freeze({
   "check:workspace": "node scripts/check-workspace.mjs",
   clean: "node scripts/clean-workspace.mjs",
   format:
-    'prettier --write "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "vitest.config.ts" "packages/**/*.{json,ts}" "scripts/**/*.mjs" "tests/**/*.ts" ".changeset/**/*.{json,md}" "docs/engineering-baseline.md" ".cnb.yml"',
+    'prettier --write "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "vitest.config.ts" "packages/**/*.{json,ts}" "scripts/**/*.mjs" "tests/**/*.ts" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/{README,007-versioning-and-release,008-github-and-public-npm-release}.md" ".github/workflows/*.yml"',
   "format:check":
-    'prettier --check "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "vitest.config.ts" "packages/**/*.{json,ts}" "scripts/**/*.mjs" "tests/**/*.ts" ".changeset/**/*.{json,md}" "docs/engineering-baseline.md" ".cnb.yml"',
+    'prettier --check "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "vitest.config.ts" "packages/**/*.{json,ts}" "scripts/**/*.mjs" "tests/**/*.ts" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/{README,007-versioning-and-release,008-github-and-public-npm-release}.md" ".github/workflows/*.yml"',
   lint: "eslint . --max-warnings=0",
   "pack:check": "node scripts/verify-packed-artifacts.mjs",
   "pack:workspace": "node scripts/pack-workspace.mjs",
@@ -2105,14 +2113,14 @@ const validatePublishScripts = (label, manifest, errors) => {
   for (const [name, command] of Object.entries(manifest.scripts ?? {})) {
     if (containsPublishCommand(command)) {
       errors.push(
-        `${label}: script ${name} must not publish before the CNB Registry and release identity are approved`,
+        `${label}: script ${name} must not publish before the TFCK-13 release workflow and npm identity are approved`,
       );
     }
   }
 };
 
 /**
- * Registry publication is deliberately unavailable in this Story. Treat the
+ * Formal publication is deliberately unavailable in this Story. Treat the
  * complete script map as configuration, not as shell source to interpret: any
  * new or changed command requires an explicit policy review. This fail-closed
  * boundary also covers shell, corepack, task-runner, and package-manager
@@ -2126,9 +2134,32 @@ const validatePublishScripts = (label, manifest, errors) => {
 const validateApprovedScripts = (label, manifest, expected, errors) => {
   if (!sameEntries(manifest.scripts ?? {}, expected)) {
     errors.push(
-      `${label}: scripts must exactly match the approved Registry-disabled baseline`,
+      `${label}: scripts must exactly match the approved publish-disabled baseline`,
     );
   }
+};
+
+/**
+ * @param {string} label
+ * @param {PackageManifest} manifest
+ * @param {string | undefined} directory
+ * @param {string[]} errors
+ */
+const validateRepositoryMetadata = (label, manifest, directory, errors) => {
+  if (manifest.repository?.type !== "git")
+    errors.push(`${label}: repository.type must be git`);
+  if (manifest.repository?.url !== REPOSITORY_URL)
+    errors.push(`${label}: repository.url must be ${REPOSITORY_URL}`);
+  if (directory === undefined) {
+    if (manifest.repository?.directory !== undefined)
+      errors.push(`${label}: root repository must not declare a directory`);
+  } else if (manifest.repository?.directory !== directory) {
+    errors.push(`${label}: repository.directory must be ${directory}`);
+  }
+  if (manifest.homepage !== HOMEPAGE_URL)
+    errors.push(`${label}: homepage must be ${HOMEPAGE_URL}`);
+  if (manifest.bugs?.url !== BUGS_URL)
+    errors.push(`${label}: bugs.url must be ${BUGS_URL}`);
 };
 
 /**
@@ -2161,6 +2192,9 @@ export function validateWorkspaceSnapshot(snapshot) {
   if (snapshot.rootManifest.packageManager !== "pnpm@10.34.5") {
     errors.push("root packageManager must be pinned to pnpm@10.34.5");
   }
+  if (snapshot.rootManifest.license !== "MIT")
+    errors.push("root license must be MIT");
+  validateRepositoryMetadata("root", snapshot.rootManifest, undefined, errors);
   validateApprovedScripts(
     "root",
     snapshot.rootManifest,
@@ -2201,16 +2235,20 @@ export function validateWorkspaceSnapshot(snapshot) {
       errors.push(`${label}: package name must be ${policy.name}`);
     if (manifest.private === true)
       errors.push(`${label}: publishable workspace packages cannot be private`);
-    if (manifest.license !== "UNLICENSED")
-      errors.push(`${label}: license must be UNLICENSED`);
-    if (manifest.publishConfig?.access !== "restricted") {
-      errors.push(`${label}: publishConfig.access must be restricted`);
-    }
-    if (manifest.publishConfig?.registry) {
+    if (manifest.license !== "MIT")
+      errors.push(`${label}: license must be MIT`);
+    if (manifest.publishConfig?.access !== "public")
+      errors.push(`${label}: publishConfig.access must be public`);
+    if (manifest.publishConfig?.registry !== PUBLIC_REGISTRY)
       errors.push(
-        `${label}: registry must not be guessed before the CNB artifact repository exists`,
+        `${label}: publishConfig.registry must be ${PUBLIC_REGISTRY}`,
       );
-    }
+    validateRepositoryMetadata(
+      label,
+      manifest,
+      `packages/${entry.directory}`,
+      errors,
+    );
     if (!manifest.files?.includes("dist"))
       errors.push(`${label}: package files must include dist`);
     if (

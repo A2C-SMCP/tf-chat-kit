@@ -38,6 +38,7 @@ describe("workspace packaging", () => {
     for (const packedPackage of manifest.packages) {
       expect(packedPackage.files).toEqual(
         expect.arrayContaining([
+          "LICENSE",
           "package.json",
           "dist/index.js",
           "dist/index.d.ts",

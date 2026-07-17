@@ -2,7 +2,16 @@
   "name": "@tf/chat-testing",
   "version": "0.1.0",
   "description": "In-memory gateways, fixtures, and chat contract test utilities",
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/A2C-SMCP/tf-chat-kit.git",
+    "directory": "packages/chat-testing"
+  },
+  "homepage": "https://github.com/A2C-SMCP/tf-chat-kit#readme",
+  "bugs": {
+    "url": "https://github.com/A2C-SMCP/tf-chat-kit/issues"
+  },
   "type": "module",
   "sideEffects": false,
   "files": [
@@ -23,6 +32,7 @@
     "@tf/chat-runtime": "workspace:^"
   },
   "publishConfig": {
-    "access": "restricted"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }

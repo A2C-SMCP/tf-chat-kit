@@ -73,7 +73,7 @@ async function createReleaseFixture(): Promise<ReleaseFixture> {
     commit: false,
     fixed: [packageEntries.map(([, { name }]) => name)],
     linked: [],
-    access: "restricted",
+    access: "public",
     baseBranch: "main",
     updateInternalDependencies: "patch",
     bumpVersionsWithWorkspaceProtocolOnly: true,
@@ -164,7 +164,7 @@ describe("changeset release integration", () => {
           ...process.env,
           CHANGESET_BASE_REF: fixture.baseCommit,
           CI: "false",
-          CNB: "false",
+          GITHUB_ACTIONS: "false",
         },
       });
 
@@ -185,8 +185,11 @@ describe("changeset release integration", () => {
         cwd: fixture.directory,
         stdio: ["ignore", "pipe", "pipe"],
       });
+      await mkdir(path.join(fixture.directory, ".github", "workflows"), {
+        recursive: true,
+      });
       await writeFile(
-        path.join(fixture.directory, ".cnb.yml"),
+        path.join(fixture.directory, ".github", "workflows", "ci.yml"),
         "unexpected: release-side edit\n",
       );
       runGit(fixture.directory, ["add", "--all"]);
@@ -199,7 +202,7 @@ describe("changeset release integration", () => {
           ...process.env,
           CHANGESET_BASE_REF: fixture.baseCommit,
           CI: "false",
-          CNB: "false",
+          GITHUB_ACTIONS: "false",
         },
       });
 
@@ -250,7 +253,7 @@ describe("changeset release integration", () => {
           ...process.env,
           CHANGESET_BASE_REF: comparisonBase,
           CI: "false",
-          CNB: "false",
+          GITHUB_ACTIONS: "false",
         },
       });
 
@@ -304,7 +307,7 @@ describe("changeset release integration", () => {
           ...process.env,
           CHANGESET_BASE_REF: comparisonBase,
           CI: "false",
-          CNB: "false",
+          GITHUB_ACTIONS: "false",
         },
       });
 
@@ -350,7 +353,7 @@ describe("changeset release integration", () => {
           ...process.env,
           CHANGESET_BASE_REF: comparisonBase,
           CI: "false",
-          CNB: "false",
+          GITHUB_ACTIONS: "false",
         },
       });
 

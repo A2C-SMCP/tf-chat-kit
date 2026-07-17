@@ -24,40 +24,38 @@ const requireCommitSha = (value, variable) => {
 };
 
 /**
- * Select the authoritative comparison base exposed by CNB. Returning undefined
- * means the caller is running outside CNB and may use its local Git fallback.
+ * Select the authoritative comparison base exposed by GitHub Actions. Returning
+ * undefined means the caller is running outside GitHub Actions and may use its
+ * local Git fallback.
  *
  * @param {NodeJS.ProcessEnv} environment
  * @returns {ComparisonBase | undefined}
  */
-export function selectCnbComparisonBase(environment) {
-  if (environment["CNB"] !== "true") return undefined;
+export function selectGithubComparisonBase(environment) {
+  if (environment["GITHUB_ACTIONS"] !== "true") return undefined;
 
-  const event = environment["CNB_EVENT"];
-  if (event === "push" || event === "commit.add") {
+  const event = environment["GITHUB_EVENT_NAME"];
+  if (event === "push") {
     const beforeSha = requireCommitSha(
-      environment["CNB_BEFORE_SHA"],
-      "CNB_BEFORE_SHA",
+      environment["GITHUB_EVENT_BEFORE"],
+      "GITHUB_EVENT_BEFORE",
     );
     return {
       ref: zeroSha.test(beforeSha) ? EMPTY_TREE_SHA : beforeSha,
       strategy: "direct",
-      source: "CNB_BEFORE_SHA",
+      source: "GITHUB_EVENT_BEFORE",
     };
   }
 
-  if (event === "pull_request") {
+  if (event === "pull_request" || event === "pull_request_target") {
     return {
-      ref: requireCommitSha(
-        environment["CNB_PULL_REQUEST_TARGET_SHA"],
-        "CNB_PULL_REQUEST_TARGET_SHA",
-      ),
+      ref: requireCommitSha(environment["GITHUB_BASE_SHA"], "GITHUB_BASE_SHA"),
       strategy: "merge-base",
-      source: "CNB_PULL_REQUEST_TARGET_SHA",
+      source: "GITHUB_BASE_SHA",
     };
   }
 
   throw new Error(
-    `Unsupported CNB_EVENT for changeset coverage: ${event ?? "<missing>"}.`,
+    `Unsupported GITHUB_EVENT_NAME for changeset coverage: ${event ?? "<missing>"}.`,
   );
 }

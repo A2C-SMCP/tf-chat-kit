@@ -38,16 +38,16 @@ ADR：无需新增；本 Epic 落实 ADR-001～007。若实施中改变既有边
 
 旧实现已经证明业务链路可用，但职责混合明显：
 
-| 证据 | 当前职责混合 | 本 Epic 的处理 |
-| --- | --- | --- |
-| `src/components/chat-player/player/ChatPlayerContent.tsx`（806 行） | UI 内直接加载历史、获取 Socket 配置、连接 Socket、解析 DTO、归并消息/事件、管理播放和布局 | 通信移入 Gateway，归并移入 Runtime，React/UI 只消费标准状态和命令 |
-| `src/components/chat-player/player/input/ChatInputComponent.tsx`（1043 行） | 文本发送、附件上传、文件序列化、知识库同步、无上限轮询、中断和 UI 状态混在一起 | V1 只提取文本发送与中断；附件公共语义另行评审，知识库/文件产品流程留在宿主 |
-| `src/components/chat-player/sider/ChatSider.tsx`（482 行） | 会话分页/CRUD、平台选择、Ant Design 交互和宿主 API 直接耦合 | 会话命令可进入 Gateway/Runtime；平台管理和宿主提示策略留在 TFRobotFront |
-| `src/api/socket/SocketClientManager.ts` | 以 URL 为键缓存全局 Socket 单例和认证上下文 | 改为每 Gateway/ChatClient 实例独立持有和释放 |
-| `src/context/ChatPlayerContext.tsx` | 聊天语义、滚动、分栏、播放和连接 UI 状态共用一个 Context | Runtime 只管理稳定聊天状态；布局/滚动等留在 React/UI |
-| `src/api/dto/conversation/*.ts` | 服务端 DTO 直接成为 UI 模型，Tool 类型依靠返回形状嗅探 | Gateway 边界校验并转为标准模型，未知类型进入 fallback |
-| `src/components/chat-player/player/event-detail/EventDetailWrapper.tsx` | 依赖 Next.js dynamic/Image、宿主 Theme、服务端 Tool DTO 和 Ant Design | renderer 只接收标准事件、清理后的 raw 和受控命令；重依赖在 `ui-antd` 内懒加载 |
-| `src/store/chat/input.ts` | 会话草稿与附件状态通过 Zustand persist 写入浏览器存储 | 不把宿主持久化策略或认证材料带入 Runtime 公共 API |
+| 证据                                                                        | 当前职责混合                                                                              | 本 Epic 的处理                                                                |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `src/components/chat-player/player/ChatPlayerContent.tsx`（806 行）         | UI 内直接加载历史、获取 Socket 配置、连接 Socket、解析 DTO、归并消息/事件、管理播放和布局 | 通信移入 Gateway，归并移入 Runtime，React/UI 只消费标准状态和命令             |
+| `src/components/chat-player/player/input/ChatInputComponent.tsx`（1043 行） | 文本发送、附件上传、文件序列化、知识库同步、无上限轮询、中断和 UI 状态混在一起            | V1 只提取文本发送与中断；附件公共语义另行评审，知识库/文件产品流程留在宿主    |
+| `src/components/chat-player/sider/ChatSider.tsx`（482 行）                  | 会话分页/CRUD、平台选择、Ant Design 交互和宿主 API 直接耦合                               | 会话命令可进入 Gateway/Runtime；平台管理和宿主提示策略留在 TFRobotFront       |
+| `src/api/socket/SocketClientManager.ts`                                     | 以 URL 为键缓存全局 Socket 单例和认证上下文                                               | 改为每 Gateway/ChatClient 实例独立持有和释放                                  |
+| `src/context/ChatPlayerContext.tsx`                                         | 聊天语义、滚动、分栏、播放和连接 UI 状态共用一个 Context                                  | Runtime 只管理稳定聊天状态；布局/滚动等留在 React/UI                          |
+| `src/api/dto/conversation/*.ts`                                             | 服务端 DTO 直接成为 UI 模型，Tool 类型依靠返回形状嗅探                                    | Gateway 边界校验并转为标准模型，未知类型进入 fallback                         |
+| `src/components/chat-player/player/event-detail/EventDetailWrapper.tsx`     | 依赖 Next.js dynamic/Image、宿主 Theme、服务端 Tool DTO 和 Ant Design                     | renderer 只接收标准事件、清理后的 raw 和受控命令；重依赖在 `ui-antd` 内懒加载 |
+| `src/store/chat/input.ts`                                                   | 会话草稿与附件状态通过 Zustand persist 写入浏览器存储                                     | 不把宿主持久化策略或认证材料带入 Runtime 公共 API                             |
 
 旧实现中的行为不是全部自动成为 V1 承诺。V1 固定范围以项目章程为准；未进入固定范围的能力必须先做公共性和迁移必要性评审。
 
@@ -57,7 +57,7 @@ ADR：无需新增；本 Epic 落实 ADR-001～007。若实施中改变既有边
 
 - TFRobotFront 用户：在迁移期间获得不低于旧纵向切片的聊天体验，并能安全回滚。
 - Tauri 与 Office Add-in 集成方：复用同一聊天协议和 Runtime，不依赖 TFRobotFront 或 Next.js。
-- 受控合作方：通过私有 Registry 使用明确版本、兼容基线和最小权限认证入口。
+- 第三方应用：通过 npm 官方公共 Registry 使用明确版本、兼容基线和最小权限认证入口。
 - 维护者：只在 Gateway 处理 TFRobotServer 差异，只在 Runtime 维护聊天状态语义。
 
 ### 业务结果
@@ -94,48 +94,48 @@ Epic 完成时必须同时满足：
 - React Provider/hooks 和无样式接入层。
 - Ant Design 会话/时间轴/输入/运行状态 UI，以及 renderer registry、文本/通用事件 renderer 和 unknown fallback。
 - 内存 Gateway、fixtures、跨 Gateway 契约测试和最小消费者。
-- TFRobotFront Feature Flag 接入、真实服务端验证、兼容矩阵和私有 Registry 发布流程。
+- TFRobotFront Feature Flag 接入、真实服务端验证、兼容矩阵和 npm 公开发布流程。
 
 ### 必须拆分的宿主工作
 
-| 能力 | Kit 部分 | TFRobotFront/其他宿主部分 |
-| --- | --- | --- |
-| 认证 | SessionProvider、认证错误、凭证清理 | 登录、刷新、账号切换、凭证持久化和跳转 |
-| 路由与布局 | 可组合组件、受控回调 | `/chat-player` 页面、菜单、导航和页面级布局 |
-| 平台/实例选择 | 可选过滤参数或 capability（确有稳定语义时） | 平台 CRUD、上次选择持久化和产品提示 |
+| 能力                            | Kit 部分                                            | TFRobotFront/其他宿主部分                       |
+| ------------------------------- | --------------------------------------------------- | ----------------------------------------------- |
+| 认证                            | SessionProvider、认证错误、凭证清理                 | 登录、刷新、账号切换、凭证持久化和跳转          |
+| 路由与布局                      | 可组合组件、受控回调                                | `/chat-player` 页面、菜单、导航和页面级布局     |
+| 平台/实例选择                   | 可选过滤参数或 capability（确有稳定语义时）         | 平台 CRUD、上次选择持久化和产品提示             |
 | 下载/打开资源（若后续版本纳入） | 经范围评审批准的标准资源模型和可选 host action port | 浏览器下载、Office/Tauri 文件系统权限和打开方式 |
-| Feature Flag | Kit 提供稳定公共入口 | 双轨开关、灰度范围、回滚和旧代码删除 |
-| 主题与品牌 | 主题 token/renderer 覆盖入口 | 宿主品牌、全局 ThemeProvider 和产品文案 |
+| Feature Flag                    | Kit 提供稳定公共入口                                | 双轨开关、灰度范围、回滚和旧代码删除            |
+| 主题与品牌                      | 主题 token/renderer 覆盖入口                        | 宿主品牌、全局 ThemeProvider 和产品文案         |
 
 ### 不进入本 Epic
 
 - 登录系统、账号体系、机器人配置三态和宿主页面导航。
 - Office Ribbon/Task Pane、Tauri 窗口/托盘/文件系统等平台产品能力。
-- 公开 npm、开源许可证、AG-UI、Web Component、iframe 和 Fluent UI 成品包。
+- AG-UI、Web Component、iframe 和 Fluent UI 成品包。
 - 为 Browser、Editor、Shell 预建独立发布包。
 - TFRobotFront 中“文件同步到知识库”“文件序列化后引用”等跨业务工作流。
 - 将旧附件序列化的无总时限轮询迁入 Kit；未来确需该能力时优先要求服务端事件推送，轮询方案必须单独审批。
 
 ## 旧能力迁移分类
 
-| 旧能力 | 结论 | V1 处理 |
-| --- | --- | --- |
-| 会话加载与切换 | `IN` | 进入 Gateway/Runtime；列表 UI 进入 `ui-antd` |
-| 会话创建、重命名、删除 | `DEFER`（公共能力候选） | 不属于章程固定的 V1 纵向切片；后续以向后兼容命令单独立项 |
-| 历史消息与事件混排 | `IN` | 由 Gateway 标准化、Runtime 排序归并 |
-| Socket 实时消息/事件 | `IN` | 进入按实例 Gateway，禁止暴露 Socket.IO 给 Runtime |
-| 文本发送 | `IN` | V1 必须交付 |
-| 运行状态与中断 | `IN` | V1 必须交付，覆盖 stale taskId |
-| 智能滚动、新消息计数、分栏宽度 | `IN` 到 React/UI，不进入 Runtime 公共状态 | `ui-antd` 提供默认行为，宿主可覆盖 |
-| 自动/手动事件回放 | `DEFER` | 先记录旧基线；不是 V1 纵向切片门禁，另行确认公共语义 |
-| Ask User 交互 | `IN` 候选 | 通过标准交互请求和受控 answer command 设计，不复用宿主事件对象 |
-| 文本/Markdown renderer | `IN` | 提供安全通用 renderer，容器策略与渲染逻辑分离 |
-| Browser/Editor/Preview/Shell/Download renderer | `IN` 到 `ui-antd` 内部候选 | 在真实事件契约明确后逐个迁移并懒加载，不拆独立包 |
-| Tool 返回形状嗅探 | `DEBT` | Gateway 做兼容映射；标准模型使用明确事件类型，未知类型 fallback |
-| 附件与 multipart 发送 | `DEFER / SPLIT` 候选 | TK-02 先确认公共语义和服务端边界；未完成评审前不预设标准模型、command 或 action port |
-| 文件序列化、同步 Memory | `OUT` | 留在宿主或相应业务模块，不扩张 Chat Runtime |
-| 平台选择与平台 CRUD | `OUT`（UI/产品流程） | 留在 TFRobotFront；仅在服务端契约需要时给 Gateway 注入过滤条件 |
-| 输入草稿 localStorage 持久化 | `OUT`（策略） | 宿主决定；Runtime 不隐式写浏览器存储 |
+| 旧能力                                         | 结论                                      | V1 处理                                                                              |
+| ---------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------ |
+| 会话加载与切换                                 | `IN`                                      | 进入 Gateway/Runtime；列表 UI 进入 `ui-antd`                                         |
+| 会话创建、重命名、删除                         | `DEFER`（公共能力候选）                   | 不属于章程固定的 V1 纵向切片；后续以向后兼容命令单独立项                             |
+| 历史消息与事件混排                             | `IN`                                      | 由 Gateway 标准化、Runtime 排序归并                                                  |
+| Socket 实时消息/事件                           | `IN`                                      | 进入按实例 Gateway，禁止暴露 Socket.IO 给 Runtime                                    |
+| 文本发送                                       | `IN`                                      | V1 必须交付                                                                          |
+| 运行状态与中断                                 | `IN`                                      | V1 必须交付，覆盖 stale taskId                                                       |
+| 智能滚动、新消息计数、分栏宽度                 | `IN` 到 React/UI，不进入 Runtime 公共状态 | `ui-antd` 提供默认行为，宿主可覆盖                                                   |
+| 自动/手动事件回放                              | `DEFER`                                   | 先记录旧基线；不是 V1 纵向切片门禁，另行确认公共语义                                 |
+| Ask User 交互                                  | `IN` 候选                                 | 通过标准交互请求和受控 answer command 设计，不复用宿主事件对象                       |
+| 文本/Markdown renderer                         | `IN`                                      | 提供安全通用 renderer，容器策略与渲染逻辑分离                                        |
+| Browser/Editor/Preview/Shell/Download renderer | `IN` 到 `ui-antd` 内部候选                | 在真实事件契约明确后逐个迁移并懒加载，不拆独立包                                     |
+| Tool 返回形状嗅探                              | `DEBT`                                    | Gateway 做兼容映射；标准模型使用明确事件类型，未知类型 fallback                      |
+| 附件与 multipart 发送                          | `DEFER / SPLIT` 候选                      | TK-02 先确认公共语义和服务端边界；未完成评审前不预设标准模型、command 或 action port |
+| 文件序列化、同步 Memory                        | `OUT`                                     | 留在宿主或相应业务模块，不扩张 Chat Runtime                                          |
+| 平台选择与平台 CRUD                            | `OUT`（UI/产品流程）                      | 留在 TFRobotFront；仅在服务端契约需要时给 Gateway 注入过滤条件                       |
+| 输入草稿 localStorage 持久化                   | `OUT`（策略）                             | 宿主决定；Runtime 不隐式写浏览器存储                                                 |
 
 ## 目标架构
 
@@ -172,16 +172,16 @@ TFRobotServer DTO / Socket event
 
 ## 交付工作流与子 Story
 
-| 编号 | Jira |
-| --- | --- |
-| TK-01 | [TFCK-2](https://turingfocus.atlassian.net/browse/TFCK-2) |
-| TK-02 | [TFCK-3](https://turingfocus.atlassian.net/browse/TFCK-3) |
-| TK-03 | [TFCK-4](https://turingfocus.atlassian.net/browse/TFCK-4) |
-| TK-04 | [TFCK-5](https://turingfocus.atlassian.net/browse/TFCK-5) |
-| TK-05 | [TFCK-6](https://turingfocus.atlassian.net/browse/TFCK-6) |
-| TK-06 | [TFCK-7](https://turingfocus.atlassian.net/browse/TFCK-7) |
-| TK-07 | [TFCK-8](https://turingfocus.atlassian.net/browse/TFCK-8) |
-| TK-08 | [TFCK-9](https://turingfocus.atlassian.net/browse/TFCK-9) |
+| 编号  | Jira                                                        |
+| ----- | ----------------------------------------------------------- |
+| TK-01 | [TFCK-2](https://turingfocus.atlassian.net/browse/TFCK-2)   |
+| TK-02 | [TFCK-3](https://turingfocus.atlassian.net/browse/TFCK-3)   |
+| TK-03 | [TFCK-4](https://turingfocus.atlassian.net/browse/TFCK-4)   |
+| TK-04 | [TFCK-5](https://turingfocus.atlassian.net/browse/TFCK-5)   |
+| TK-05 | [TFCK-6](https://turingfocus.atlassian.net/browse/TFCK-6)   |
+| TK-06 | [TFCK-7](https://turingfocus.atlassian.net/browse/TFCK-7)   |
+| TK-07 | [TFCK-8](https://turingfocus.atlassian.net/browse/TFCK-8)   |
+| TK-08 | [TFCK-9](https://turingfocus.atlassian.net/browse/TFCK-9)   |
 | TK-09 | [TFCK-10](https://turingfocus.atlassian.net/browse/TFCK-10) |
 | TK-10 | [TFCK-11](https://turingfocus.atlassian.net/browse/TFCK-11) |
 | TK-11 | [TFCK-12](https://turingfocus.atlassian.net/browse/TFCK-12) |
@@ -200,7 +200,7 @@ TFRobotServer DTO / Socket event
 - 能生成本地 tarball 或版本化开发验证包，供宿主在正式发布前验证，禁止用源码路径替代包消费。
 - React、Ant Design 和重型 renderer 依赖只出现在允许的包中。
 - CI 能拒绝反向依赖、宿主源码依赖、版本不一致和不可安装产物。
-- Registry endpoint 和 peer dependency 版本在实施前确认，不写入真实凭证。
+- GitHub 仓库、npm public 发布身份和 peer dependency 版本在实施前确认，不写入真实凭证。
 
 ### TK-02：冻结旧行为与 TFRobotServer 契约基线
 
@@ -309,7 +309,7 @@ TFRobotServer DTO / Socket event
 
 **验收**：
 
-- TFRobotFront 只通过 `@tf/*` 的版本化开发验证包或 Registry prerelease 接入，不引用本仓库源码；验证通过后由 TK-12 进入正式发布流程。
+- TFRobotFront 只通过 `@tf/*` 的版本化开发验证包、npm prerelease 或正式包接入，不引用本仓库源码；验证通过后由 TK-12 进入正式发布流程。
 - 宿主注入 endpoint、SessionProvider、主题和必要回调；路由、平台选择与登录仍在宿主。
 - Feature Flag 支持旧/新路径切换和快速回滚，且不会产生双重 Socket 订阅。
 - 在真实 TFRobotServer 下验证历史、实时、发送、运行状态和中断。
@@ -326,9 +326,9 @@ TFRobotServer DTO / Socket event
 - 消费者不需要 TFRobotFront Store、Router、Socket 管理器或全局浏览器状态。
 - 将发现的宿主假设修回公共边界，不在消费者中复制 Gateway 协议。
 
-### TK-12：私有发布、兼容矩阵与回滚
+### TK-12：npm 公开发布、兼容矩阵与回滚
 
-**结果**：产物可追踪地进入 CNB 私有 Registry。
+**结果**：产物从公开 GitHub 源码可追踪地进入 npm 官方公共 Registry。
 
 **验收**：
 
@@ -414,33 +414,33 @@ TK-13                  -> TK-14
 
 ## 上下游依赖
 
-| 依赖方 | 需要确认/交付 | 阻塞范围 |
-| --- | --- | --- |
-| TFRobotServer | 当前 REST/Socket 契约、认证字段、事件语义、错误码和测试环境 | TK-02、TK-06、TK-10 |
-| TFRobotFront | Feature Flag、SessionProvider、主题/路由接入、旧基线与灰度计划 | TK-10、TK-13 |
-| Tauri 或 Office Add-in | 第二宿主选择、最小接入环境和 Host Integrator | TK-11、Epic 完成 |
-| CNB Registry/CI | Registry endpoint、权限、secret 和回滚机制 | TK-12 |
+| 依赖方                 | 需要确认/交付                                                    | 阻塞范围            |
+| ---------------------- | ---------------------------------------------------------------- | ------------------- |
+| TFRobotServer          | 当前 REST/Socket 契约、认证字段、事件语义、错误码和测试环境      | TK-02、TK-06、TK-10 |
+| TFRobotFront           | Feature Flag、SessionProvider、主题/路由接入、旧基线与灰度计划   | TK-10、TK-13        |
+| Tauri 或 Office Add-in | 第二宿主选择、最小接入环境和 Host Integrator                     | TK-11、Epic 完成    |
+| GitHub/npm 发布        | `@tf` scope 权限、Trusted Publishing/OIDC、provenance 和回滚机制 | TK-12               |
 
 服务端破坏性变化必须由 Core Maintainers、Gateway Maintainers 和 Server Contract Reviewer 共同评审。不得在 Kit 中用 DTO 泄漏或跨层补丁绕过上游不确定性。
 
 ## 风险与缓解
 
-| 风险 | 缓解 |
-| --- | --- |
+| 风险                                        | 缓解                                                                  |
+| ------------------------------------------- | --------------------------------------------------------------------- |
 | 旧 DTO 弱类型和 Tool 形状嗅探被误当公共协议 | 先捕获真实契约；Gateway 兼容映射，标准模型显式类型 + unknown fallback |
-| 首个宿主驱动出 TFRobotFront 专用 API | 每个公共决策写宿主责任；TK-11 作为完成门禁 |
-| 全局 Socket 习惯导致账号/实例串扰 | 每实例 Gateway + 多实例契约测试 + dispose 测试 |
-| 一次性追求旧实现全部功能导致迁移失控 | 先固定纵向切片；其余按迁移分类逐项评审 |
-| 重 renderer 推高包体或破坏 SSR/非浏览器环境 | 只存在于 UI 包、懒加载、fallback、核心包无 DOM |
-| 双轨长期存在 | 默认切换和删除门禁写入 TK-13，双轨硬上限两个迭代 |
-| 附件序列化沿用无限轮询 | 不纳入 V1；优先服务端事件，任何轮询单独审批并设上限 |
+| 首个宿主驱动出 TFRobotFront 专用 API        | 每个公共决策写宿主责任；TK-11 作为完成门禁                            |
+| 全局 Socket 习惯导致账号/实例串扰           | 每实例 Gateway + 多实例契约测试 + dispose 测试                        |
+| 一次性追求旧实现全部功能导致迁移失控        | 先固定纵向切片；其余按迁移分类逐项评审                                |
+| 重 renderer 推高包体或破坏 SSR/非浏览器环境 | 只存在于 UI 包、懒加载、fallback、核心包无 DOM                        |
+| 双轨长期存在                                | 默认切换和删除门禁写入 TK-13，双轨硬上限两个迭代                      |
+| 附件序列化沿用无限轮询                      | 不纳入 V1；优先服务端事件，任何轮询单独审批并设上限                   |
 
 ## 开放决策
 
 以下事项不阻塞 Epic 建立，但必须在对应 Story 开始前关闭：
 
 1. 确认 package manager、Node/TypeScript、React/Ant Design peer 版本和构建工具。
-2. 确认 CNB Registry endpoint、包访问范围和 CI 发布身份。
+2. 确认 GitHub 仓库、`@tf` scope public publish 权限和 GitHub Actions 发布身份。
 3. 冻结开始实现时的 TFRobotServer commit/version、测试环境和真实契约样本。
 4. 选择 TK-11 的真实第二宿主；默认优先已有接入计划的 Tauri 或 Office Add-in。
 5. 用生产数据确认 Tool 类型、同 eventId 多状态、流式增量和 MCP transformed 数据的真实频率。

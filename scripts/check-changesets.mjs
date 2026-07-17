@@ -5,7 +5,7 @@ import path from "node:path";
 import parseChangeset from "@changesets/parse";
 import readChangesets from "@changesets/read";
 
-import { selectCnbComparisonBase } from "./changeset-base.mjs";
+import { selectGithubComparisonBase } from "./changeset-base.mjs";
 import { validateChangesetCoverage } from "./changeset-policy.mjs";
 import { generateConsumedReleaseOutput } from "./changeset-release-output.mjs";
 import { assembleWorkspaceReleasePlan } from "./changeset-release-plan.mjs";
@@ -82,16 +82,16 @@ const resolveHeadParent = () => {
 
 /** @returns {string} */
 function resolveComparisonBase() {
-  const cnbBase = selectCnbComparisonBase(process.env);
-  if (cnbBase) {
-    if (!treeExists(cnbBase.ref)) {
+  const githubBase = selectGithubComparisonBase(process.env);
+  if (githubBase) {
+    if (!treeExists(githubBase.ref)) {
       throw new Error(
-        `${cnbBase.source} does not exist in the checkout: ${cnbBase.ref}. Ensure CI fetches the comparison commit.`,
+        `${githubBase.source} does not exist in the checkout: ${githubBase.ref}. Ensure GitHub Actions checks out complete history.`,
       );
     }
-    return cnbBase.strategy === "merge-base"
-      ? runGit(["merge-base", cnbBase.ref, "HEAD"])
-      : cnbBase.ref;
+    return githubBase.strategy === "merge-base"
+      ? runGit(["merge-base", githubBase.ref, "HEAD"])
+      : githubBase.ref;
   }
 
   const explicitBase = process.env["CHANGESET_BASE_REF"];
@@ -106,7 +106,7 @@ function resolveComparisonBase() {
 
   if (process.env["CI"] === "true") {
     throw new Error(
-      "Non-CNB CI must set CHANGESET_BASE_REF to the target branch ref.",
+      "CI outside the supported GitHub Actions events must set CHANGESET_BASE_REF to the target branch ref.",
     );
   }
 

@@ -11,21 +11,21 @@ TFRobot 聊天能力的可复用模块。项目采用 Headless Runtime、宿主�
 - Protocol、Runtime 和 React 接入层支持 TFRobotFront、Office Add-in、Tauri 和受控第三方应用。
 - 提供 React + Ant Design 成品 UI。
 - Office Add-in 和第三方应用可以基于 React 接入层实现自己的 UI。
-- 通过 CNB 私有 Registry 向公司内部和获授权合作方发布。
+- 在公开的 `A2C-SMCP/tf-chat-kit` GitHub 仓库维护，并通过 npm 官方 Registry 公开发布 MIT 包。
 - 以当前 TFRobotServer 契约为兼容基线，由 Gateway 隔离服务端差异。
 
-V1 不承诺 Fluent UI、Web Component、AG-UI、公开 npm SDK 或账号登录系统。
+V1 不承诺 Fluent UI、Web Component、AG-UI、账号登录系统或为每个宿主提供独立视觉包。
 
 ## 初始包
 
-| 包 | 职责 |
-| --- | --- |
-| `@tf/chat-protocol` | 标准聊天模型、运行时校验契约和 Gateway 端口 |
-| `@tf/chat-runtime` | 实例化 ChatClient、状态机和聊天命令 |
-| `@tf/chat-gateway-tfrobot` | TFRobotServer REST 与 Socket.IO 适配 |
-| `@tf/chat-react` | React Provider、hooks 和无样式接入层 |
-| `@tf/chat-ui-antd` | Ant Design 成品 UI 与默认渲染器 |
-| `@tf/chat-testing` | 内存 Gateway、fixtures 和契约测试工具 |
+| 包                         | 职责                                        |
+| -------------------------- | ------------------------------------------- |
+| `@tf/chat-protocol`        | 标准聊天模型、运行时校验契约和 Gateway 端口 |
+| `@tf/chat-runtime`         | 实例化 ChatClient、状态机和聊天命令         |
+| `@tf/chat-gateway-tfrobot` | TFRobotServer REST 与 Socket.IO 适配        |
+| `@tf/chat-react`           | React Provider、hooks 和无样式接入层        |
+| `@tf/chat-ui-antd`         | Ant Design 成品 UI 与默认渲染器             |
+| `@tf/chat-testing`         | 内存 Gateway、fixtures 和契约测试工具       |
 
 核心依赖方向为：
 
@@ -54,6 +54,6 @@ pnpm pack:workspace
 ```
 
 `pnpm check` 会执行架构边界、lint、格式、类型、测试、构建、tarball 内容与安全检查，并在临时
-TypeScript 消费者中实际安装、构建和运行六个产物。宿主验证必须使用 tarball 或后续 Registry
-版本，不得通过源码路径消费。
+TypeScript 消费者中实际安装、构建和运行六个产物。宿主验证必须使用 tarball、npm prerelease
+或 npm 官方 Registry 的正式版本，不得通过源码路径消费。
 `pnpm pack:workspace` 可从 clean workspace 直接构建并生成经过内容检查的六包 tarball。

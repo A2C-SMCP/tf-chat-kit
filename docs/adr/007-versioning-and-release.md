@@ -1,7 +1,11 @@
 # ADR-007：版本与发布治理
 
-- 状态：Accepted
+- 状态：Superseded
 - 日期：2026-07-14
+- 替代记录：[ADR-008](008-github-and-public-npm-release.md)（2026-07-17）
+
+> 本记录保留统一版本、SemVer 和 0.x 初始阶段的历史决策。代码托管、许可证、Registry、
+> 发布身份与公开范围已由 ADR-008 替代。
 
 ## 背景
 

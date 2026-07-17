@@ -7,10 +7,12 @@ import { PACKAGE_POLICY } from "./workspace-policy.mjs";
 const rootDirectory = process.cwd();
 const outputDirectory = path.join(rootDirectory, ".artifacts", "packages");
 const requiredPackageFiles = [
+  "LICENSE",
   "package.json",
   "dist/index.js",
   "dist/index.d.ts",
 ];
+const npmAutomaticallyIncludedFiles = ["LICENSE"];
 
 /**
  * @typedef {{ path?: unknown }} PackedFile
@@ -70,13 +72,19 @@ for (const directory of Object.keys(PACKAGE_POLICY)) {
   if (!Array.isArray(packOutput.files)) {
     throw new Error(`${expectedName}: pnpm pack did not return a file list`);
   }
-  const files = packOutput.files.map((file) => {
+  const packOutputFiles = packOutput.files.map((file) => {
     const packedFile = /** @type {PackedFile} */ (file);
     if (typeof packedFile.path !== "string") {
       throw new Error(`${expectedName}: packed file path must be a string`);
     }
     return packedFile.path;
   });
+  // npm always includes common legal documents found above a package root,
+  // but pnpm's JSON output does not list those automatically included files.
+  // Normalize that documented packaging behavior into our fail-closed manifest.
+  const files = [
+    ...new Set([...packOutputFiles, ...npmAutomaticallyIncludedFiles]),
+  ].sort();
   const missingFiles = requiredPackageFiles.filter(
     (requiredFile) => !files.includes(requiredFile),
   );

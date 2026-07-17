@@ -256,7 +256,7 @@ describe("changeset governance", () => {
 
   it.each([
     "scripts/workspace-policy.mjs",
-    ".cnb.yml",
+    ".github/workflows/ci.yml",
     "package.json",
     "pnpm-lock.yaml",
   ])("rejects unrelated %s mixed into consumed release output", (file) => {

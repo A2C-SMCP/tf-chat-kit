@@ -8,12 +8,22 @@ import {
 const sourceManifest = {
   name: "@tf/chat-runtime",
   version: "0.1.0",
-  license: "UNLICENSED",
+  license: "MIT",
+  repository: {
+    type: "git",
+    url: "git+https://github.com/A2C-SMCP/tf-chat-kit.git",
+    directory: "packages/chat-runtime",
+  },
+  homepage: "https://github.com/A2C-SMCP/tf-chat-kit#readme",
+  bugs: { url: "https://github.com/A2C-SMCP/tf-chat-kit/issues" },
   type: "module",
   sideEffects: false,
   files: ["dist"],
   dependencies: { "@tf/chat-protocol": "workspace:^" },
-  publishConfig: { access: "restricted" },
+  publishConfig: {
+    access: "public",
+    registry: "https://registry.npmjs.org/",
+  },
 };
 
 type MutableArtifactInput = Omit<
@@ -33,12 +43,21 @@ const validInput = (): MutableArtifactInput => {
     packageName: "@tf/chat-runtime",
     sourceManifest,
     packedManifest,
-    declaredFiles: ["package.json", "dist/index.js", "dist/index.d.ts"],
+    declaredFiles: [
+      "LICENSE",
+      "package.json",
+      "dist/index.js",
+      "dist/index.d.ts",
+    ],
     extractedFiles: [
+      { path: "LICENSE", bytes: Buffer.from("approved license\n") },
       { path: "package.json", content: JSON.stringify(packedManifest) },
       { path: "dist/index.js", content: "export {};\n" },
       { path: "dist/index.d.ts", content: "export {};\n" },
     ],
+    expectedFileContents: {
+      LICENSE: Buffer.from("approved license\n"),
+    },
   };
 };
 
@@ -72,7 +91,7 @@ describe("packed artifact policy", () => {
     ["template credential assignment", "const token = `real-secret-value`;"],
     [
       "npm auth token assignment",
-      "//npm.cnb.cool/:_authToken=super-secret-token-value",
+      "//registry.npmjs.org/:_authToken=super-secret-token-value",
     ],
     ["unquoted credential assignment", "password=real-secret-value"],
     [
@@ -89,7 +108,7 @@ describe("packed artifact policy", () => {
     ],
   ])("rejects %s in packed text", (_label, content) => {
     const input = validInput();
-    input.extractedFiles[1] = { path: "dist/index.js", content };
+    input.extractedFiles[2] = { path: "dist/index.js", content };
 
     expect(validatePackedArtifact(input)).not.toEqual([]);
   });
@@ -106,11 +125,25 @@ describe("packed artifact policy", () => {
     );
   });
 
+  it("rejects a packed license that differs from the repository license", () => {
+    const input = validInput();
+    input.extractedFiles[0] = {
+      path: "LICENSE",
+      bytes: Buffer.from("different license\n"),
+    };
+
+    expect(validatePackedArtifact(input)).toContainEqual(
+      expect.stringContaining(
+        "LICENSE must exactly match the approved repository file",
+      ),
+    );
+  });
+
   it("accepts a documented environment placeholder in npm auth configuration", () => {
     const input = validInput();
-    input.extractedFiles[1] = {
+    input.extractedFiles[2] = {
       path: "dist/index.js",
-      content: "//npm.cnb.cool/:_authToken=${CNB_TOKEN}",
+      content: "//registry.npmjs.org/:_authToken=${NPM_TOKEN}",
     };
 
     expect(validatePackedArtifact(input)).toEqual([]);
@@ -118,7 +151,7 @@ describe("packed artifact policy", () => {
 
   it("rejects credentials embedded in UTF-16LE artifact text", () => {
     const input = validInput();
-    input.extractedFiles[1] = {
+    input.extractedFiles[2] = {
       path: "dist/index.js",
       bytes: Buffer.from(
         'const accessToken = "real-production-token-value";',
@@ -131,7 +164,7 @@ describe("packed artifact policy", () => {
 
   it("rejects ASCII credentials in an artifact containing NUL bytes", () => {
     const input = validInput();
-    input.extractedFiles[1] = {
+    input.extractedFiles[2] = {
       path: "dist/index.js",
       bytes: Buffer.concat([
         Buffer.from([0]),

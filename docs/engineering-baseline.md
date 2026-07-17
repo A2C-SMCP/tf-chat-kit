@@ -8,7 +8,7 @@
 
 | 项目             | 基线                           | 原因                                                              |
 | ---------------- | ------------------------------ | ----------------------------------------------------------------- |
-| Node.js          | 24.x                           | 当前开发环境与 CNB CI 使用同一 LTS 主版本                         |
+| Node.js          | 24.x                           | 当前开发环境与 GitHub Actions 使用同一 LTS 主版本                 |
 | pnpm             | 10.34.5                        | 以 Corepack 固定版本，使用 workspace protocol 和严格 peer 校验    |
 | TypeScript       | 5.9.3                          | 生成 ESM 与声明文件，保留对现有 TypeScript 5.x 宿主的类型语法兼容 |
 | Test             | Vitest 4.1                     | 覆盖工程治理的正常、边界和错误路径                                |
@@ -19,7 +19,7 @@
 DOM lib；React/UI 才启用 DOM 和 JSX。这样可以在工程层阻止浏览器或 UI 能力回流到 Headless
 核心。六个公共包默认也不允许 Node.js built-in 或 `process`/`Buffer` 等 Node 全局；确需平台
 能力时必须先在逐包 allowlist 中评审，不得让 Node 专属 API 破坏 Office、Tauri 或浏览器消费者。
-首个版本为 `0.1.0`，所有包标记 `UNLICENSED`，发布访问级别为 `restricted`。
+首个版本为 `0.1.0`，根仓库和所有包采用 MIT License，发布访问级别为 `public`。
 
 ## Peer dependency 基线
 
@@ -32,23 +32,21 @@ DOM lib；React/UI 才启用 DOM 和 JSX。这样可以在工程层阻止浏览�
 React 19 和 Ant Design 6 尚未经过目标宿主验证，不在 V1 支持矩阵中。扩大范围需要独立兼容
 验证，而不是直接放宽 peer range。
 
-## CNB npm Registry
+## GitHub 与 npm 官方 Registry
 
-实际 endpoint：**待 Release Owner 创建或指定，当前阻塞项**。
+源码仓库为公开的 `https://github.com/A2C-SMCP/tf-chat-kit`。六个 `@tf/*` package manifest
+固定使用 `https://registry.npmjs.org/`、`public` access、MIT License 和与源码仓库精确匹配的
+repository metadata。
 
-2026-07-14 使用只读 CNB API 查询 `turingfocus` 组织，可见 npm 制品仓库数量为 0。源码仓库
-已配置为 `https://cnb.cool/turingfocus/tf-chat-kit.git`，但 Git remote 不等同于 npm 制品仓库，
-因此不能从源码仓库名推断或伪造发布地址。CNB 官方格式为：
+正式发布前必须用认证态探针确认 Release Owner 对 `@tf` scope 的 public publish 权限。六个
+包名返回 E404 只表示当前不可见，不能证明调用者拥有 scope。TFCK-42 不执行正式发布；正式版本、
+dist-tag、兼容矩阵和回滚由 TFCK-13 负责。根脚本继续拒绝 `changeset publish`、`npm publish`、
+`pnpm publish` 或 `yarn publish` 等绕过路径，直到 TFCK-13 建立受保护的发布 workflow。
 
-```text
-https://npm.cnb.cool/<group>/<artifact-repository>/-/packages/
-```
-
-endpoint 确认后，应将 `@tf:registry` 和各包 `publishConfig.registry` 设为同一真实地址，并重新
-执行 tarball 安装门禁。认证只允许使用 CNB 内置 `CNB_TOKEN` 或受控 secret；真实 Token、
-Cookie、账号密码不得写入仓库、日志或制品。本 Story 不执行正式发布，正式版本、兼容矩阵和
-回滚由 TK-12 负责。Registry 和发布身份获批前，根脚本不提供发布命令，workspace policy 也会
-拒绝 `changeset publish`、`npm publish`、`pnpm publish` 或 `yarn publish` 等绕过路径。
+正式发布优先使用 npm Trusted Publishing 与 GitHub Actions OIDC。首次 bootstrap 如确需传统
+npm 凭据，只能进入受保护的 GitHub Environment；不得写入仓库、日志、tarball 或 source map，
+并应在 trusted publisher 生效后撤销长期写权限。公开 package、公开仓库与 GitHub-hosted runner
+共同生成可验证的 npm provenance。
 
 ## 本地与 CI 门禁
 
@@ -75,9 +73,9 @@ pnpm override 与六包清单都禁止源码路径依赖；公共包外部依赖
 待消费计划基于当前全部 pending changeset 计算且不得越过 0.x；已消费计划会在隔离 worktree 中
 使用固定版本的 Changesets CLI 在比较基线的全部 pending changeset 上重放，提交中的六包清单、
 六个 changelog 及 package 目录触碰文件集合必须与重放结果逐字匹配，不允许手工部分消费。
-CNB PR 使用目标分支 SHA 计算 merge-base，main push 使用
-`CNB_BEFORE_SHA` 覆盖本次 push 的完整提交范围；缺失事件基线时门禁直接失败。Registry 未就绪
-不影响本地 tarball 验证，但会阻塞 TFCK-2 最后一项验收和后续发布。
+GitHub Pull Request 使用 base SHA 计算 merge-base，`main` push 使用 event `before` SHA 覆盖
+本次 push 的完整提交范围；workflow 必须 checkout 完整历史，缺失或非法事件基线时门禁直接失败。
+npm 发布身份未验证不影响本地 tarball 验证，但会阻塞 TFCK-42 和后续正式发布。
 
 `pnpm pack:workspace` 是独立可用的制品入口：它会先构建六包，再通过 `pnpm pack --json`
 逐包确认 tarball 包含 `dist/index.js`、`dist/index.d.ts` 和 `package.json`。`pack:check` 进一步实际
