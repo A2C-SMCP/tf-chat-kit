@@ -1,2 +1,63 @@
-/** Public protocol contracts are introduced by TFCK-4. */
-export {};
+export * from "./gateway.js";
+export {
+  agentEventSchema,
+  capabilitiesSchema,
+  chatErrorSchema,
+  chatSnapshotSchema,
+  chatUpdateSchema,
+  compareTimelineItems,
+  conversationSchema,
+  getTimelineItemKey,
+  hasCompatibleAgentEventMetadata,
+  messageSchema,
+  runSchema,
+  timelineItemSchema,
+  unknownEventSchema,
+} from "./models.js";
+export { compareAgentEventTransitions } from "./ordering.js";
+export type {
+  AgentEvent,
+  AgentEventStatus,
+  AgentEventTransition,
+  AgentEventTransitionPayload,
+  AgentEventTransitionUpdate,
+  Capabilities,
+  ChatError,
+  ChatErrorCode,
+  ChatSnapshot,
+  ChatUpdate,
+  Conversation,
+  ConversationId,
+  ContactMessageContent,
+  FileMessageContent,
+  GenericAgentEvent,
+  GenericAgentEventTransitionPayload,
+  MediaMessageContent,
+  Message,
+  MessageAuthor,
+  MessageContent,
+  MessageRole,
+  Run,
+  RunId,
+  RunStatus,
+  TimelineItem,
+  TimelineItemId,
+  TimelinePageInfo,
+  TextMessageContent,
+  ToolAgentEvent,
+  ToolAgentEventTransitionPayload,
+  ToolCall,
+  ToolEventTransition,
+  ToolReturn,
+  UnknownEvent,
+  UnknownMessageContent,
+  UrlMessageContent,
+} from "./models.js";
+export * from "./raw.js";
+export { ProtocolValidationError } from "./schema.js";
+export type {
+  ProtocolParseResult,
+  ProtocolValidationIssue,
+  ProtocolValidationPathSegment,
+  RuntimeSchema,
+} from "./schema.js";

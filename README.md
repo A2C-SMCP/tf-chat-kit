@@ -4,7 +4,7 @@ TFRobot 聊天能力的可复用模块。项目采用 Headless Runtime、宿主�
 
 ## 当前状态
 
-项目处于工程初始化阶段。六包 workspace、统一构建测试配置和本地 tarball 验证已经建立；聊天协议、Runtime、Gateway、React 与 UI 的公共 API 将由后续 Story 按依赖顺序实现。
+项目处于 V1 纵向切片建设阶段。六包 workspace、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-protocol` 提供标准模型、运行时 schema 与 Gateway/SessionProvider 端口，Runtime、TFRobot Gateway、React 与 UI 的实现由后续 Story 按依赖顺序完成。
 
 ## V1 承诺
 
