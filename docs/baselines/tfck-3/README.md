@@ -6,7 +6,7 @@ This directory freezes the migration input for [TFCK-3](https://turingfocus.atla
 
 | Area                                                           | Jira item         | Evidence                                                                                                                                                                 | Status                                                                                                           |
 | -------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| TFRobotServer REST, Socket.IO, authentication, DTOs and errors | TFCK-21           | [`tfrobotserver-chat-contract.md`](./tfrobotserver-chat-contract.md), [`tfrobotserver-chat-contract.json`](../../../fixtures/tfck-3/v1/tfrobotserver-chat-contract.json) | Source/test-derived; live deployment evidence is open                                                            |
+| TFRobotServer REST, Socket.IO, authentication, DTOs and errors | TFCK-21           | [`tfrobotserver-chat-contract.md`](./tfrobotserver-chat-contract.md), [`tfrobotserver-chat-contract.json`](../../../fixtures/tfck-3/v1/tfrobotserver-chat-contract.json) | Complete as a source/test-derived contract freeze; runtime validation is deferred                                |
 | V1 behavior and migration decisions                            | TFCK-19           | [`chat-player-v1-migration-matrix.md`](./chat-player-v1-migration-matrix.md)                                                                                             | Complete as a design input; no package API is introduced                                                         |
 | V1 performance                                                 | TFCK-20 → TFCK-37 | [`performance-baseline.md`](./performance-baseline.md), [`chat-player-performance.json`](../../../fixtures/tfck-3/v1/chat-player-performance.json)                       | Historical anchor and comparison method frozen; unified measurement is deferred until V1 development is complete |
 
@@ -32,13 +32,13 @@ The external repositories were inspected read-only. Their worktrees were not cha
 - `runtime-capture` is required before calling a payload a real deployment sample.
 - Draft documents and comments are not treated as implemented contracts unless current source and tests agree.
 
-## Open contract gates
+## Deferred runtime and production gates
 
-1. `TFCK-21-LIVE-01`: no compatible signed-in browser/runtime was available on 2026-07-17. Deployment URL, deployed Server commit/version, and redacted real REST/Socket payloads remain unverified.
-2. `TFCK-21-ERR-01`: several domain failures fall through a generic exception handler and may expose `repr(exc)` in a `500` envelope. Exact production behavior needs runtime confirmation.
-3. `TFCK-21-SOCKET-AUTHZ-01`: `/chat` enforces only a connection-level `chat:read` scope. Internal producer handlers remain callable by any authenticated Socket client and require event-level authorization or transport isolation in TFRobotServer.
+1. `TFCK-21-LIVE-01`: deployment URL, deployed Server commit/version, and redacted real REST/Socket payloads remain unverified. TFCK-37 owns this runtime evidence before default cutover.
+2. `TFCK-21-ERR-01`: several domain failures fall through a generic exception handler and may expose `repr(exc)` in a `500` envelope. TFCK-37 owns exact deployed 404/422/500 confirmation.
+3. `TFCK-21-SOCKET-AUTHZ-01`: `/chat` enforces only a connection-level `chat:read` scope. [TFRS-297](https://turingfocus.atlassian.net/browse/TFRS-297) owns producer isolation or event-level authorization and blocks TFCK-7/TFCK-37 production validation.
 
-Until these gates are closed, TFCK-21 and the affected Server/Gateway work must not be represented as fully runtime-validated.
+TFCK-21 is complete as a reproducible source/test-derived freeze because every REST route and every cross-confirmed Socket event is referenced to Server source plus Server tests or the active Front caller. Socket events with source-only evidence are explicitly marked and deferred with an owner and required verification. It must not be represented as runtime-validated. The deferred items do not reopen the frozen evidence task, but they continue to block real Gateway validation and migration cutover.
 
 ## Deferred performance validation
 

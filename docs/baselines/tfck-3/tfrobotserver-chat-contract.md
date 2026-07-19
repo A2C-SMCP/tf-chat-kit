@@ -4,7 +4,7 @@ This document freezes the implemented TFRobotServer chat contract used as input 
 
 ## Evidence level
 
-The baseline is derived from TFRobotServer `origin/develop` at `d085c12dd8f603477dfb445bc5f5b0fd099caf15` (`0.3.0-dev7`), its integration/unit tests, the current TFRobotFront caller at `af3b4e2fa8d7a94c458d7c0812435ad17df0eb2e`, and completed authentication Jira work. No live deployment was available, so examples are redacted source/test fixtures rather than claimed production captures.
+The baseline is derived from TFRobotServer `origin/develop` at `d085c12dd8f603477dfb445bc5f5b0fd099caf15` (`0.3.0-dev7`), its integration/unit tests, the active TFRobotFront production caller at `af3b4e2fa8d7a94c458d7c0812435ad17df0eb2e`, and completed authentication Jira work. Every implemented REST route and every cross-confirmed Socket event has Server source plus Server-test or Front-caller support. Source-only Socket events are explicitly marked and deferred with an owner and required verification. No live deployment capture is claimed, so the baseline is explicitly source/test-derived rather than runtime-verified.
 
 ## Ownership and topology
 
@@ -61,13 +61,13 @@ Important adapter rules:
 
 ### Server-to-browser events
 
-| Event                        | Payload                                  | Notes                                                                                                   |
-| ---------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `chat_message`               | message DTO                              | May be a user or assistant message                                                                      |
-| `chat_event`                 | event transition DTO                     | `eventId`, `status`, `eventScene`, `conversationId`, `createTimestamp`, `content`, optional `exception` |
-| `chat_error`                 | `{conversationId,error,createTimestamp}` | Robot execution error; current Front does not listen for it                                             |
-| `conversation_state_changed` | `{conversationId,state,taskId?}`         | state is `working` or `idle`                                                                            |
-| `error`                      | `{status:"error",message}`               | Namespace validation/forwarding error sent to one Socket client                                         |
+| Event                        | Payload                                  | Evidence and notes                                                                                                              |
+| ---------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `chat_message`               | message DTO                              | Server source + integration test + active Front caller; may be a user or assistant message                                      |
+| `chat_event`                 | event transition DTO                     | Server source + active Front caller; includes IDs, status, scene, timestamp, content and optional exception                     |
+| `chat_error`                 | `{conversationId,error,createTimestamp}` | Server source + robot-run unit test; current Front does not listen, so consumer validation is deferred to TFCK-37               |
+| `conversation_state_changed` | `{conversationId,state,taskId?}`         | Server source + namespace unit test + active Front caller; state is `working` or `idle`                                         |
+| `error`                      | `{status:"error",message}`               | Server source only; negative integration coverage is deferred to TFRS-297 and blocks production validation, not baseline freeze |
 
 ### Implemented inbound handler exposure
 
@@ -81,7 +81,9 @@ The namespace handshake checks `chat:read` only. The frozen Server explicitly le
 | `chat_error`                 | Worker                     | Handshake `chat:read` only | No, but currently reachable                              |
 | `conversation_state_changed` | Worker                     | Handshake `chat:read` only | No, but currently reachable                              |
 
-Consequently, any principal that can establish `/chat` with `chat:read` can currently attempt to inject room messages, events, errors or state changes. This is a frozen security exposure, not an API recommendation. `TFCK-21-SOCKET-AUTHZ-01` covers the legacy message echo and worker-facing ingress; it remains blocking until TFRobotServer removes or appropriately authorizes the legacy echo and separates producer transport/namespace or adds per-event authorization. A future Kit Gateway must never expose these non-public emits as consumer commands.
+All inbound events have event-level evidence in the fixture and are cross-confirmed by Server tests and, where applicable, the active Front caller. Evidence that `chat_event` forwards its DTO does not prove that a browser principal is forbidden from invoking it: the negative authorization test and producer isolation remain a separate TFRS-297 security gate.
+
+Consequently, any principal that can establish `/chat` with `chat:read` can currently attempt to inject room messages, events, errors or state changes. This is a frozen security exposure, not an API recommendation. `TFCK-21-SOCKET-AUTHZ-01` covers the legacy message echo and worker-facing ingress. [TFRS-297](https://turingfocus.atlassian.net/browse/TFRS-297) owns the Server fix and blocks TFCK-7/TFCK-37 production validation; the known exposure does not block TFCK-21 from freezing the contract that exists. A future Kit Gateway must never expose these non-public emits as consumer commands.
 
 Implemented Server event statuses are `running`, `success`, `failed` and `aborted`. The current Front also recognizes `timeout`; Server source does not currently emit that value, so it is a tolerant-reader extension rather than frozen Server truth.
 
@@ -109,12 +111,13 @@ Implemented Server event statuses are `running`, `success`, `failed` and `aborte
 | Invalid browser `chat_message` or internal event | Socket `error` payload                                         | Server source; incomplete integration coverage          |
 | Robot run failure                                | Socket `chat_error` payload                                    | DTO/unit evidence; browser integration coverage missing |
 
-## Open contract questions
+## Deferred runtime and production questions
 
-- Identify a deployed environment and prove its Server revision/version.
-- Capture redacted real examples for conversations, history, send, status, interrupt and all browser-facing Socket events.
-- Confirm domain-specific 404/500 behavior for missing conversations and platforms.
-- Close `TFCK-21-SOCKET-AUTHZ-01` with Server-owned producer isolation or event-level authorization and regression tests.
+- `TFCK-21-LIVE-01` → TFCK-37: identify a deployed environment, prove its Server revision/version and capture redacted real examples for conversations, history, send, status, interrupt and browser-facing Socket events.
+- `TFCK-21-ERR-01` → TFCK-37: confirm domain-specific 404/422/500 behavior for missing conversations, platforms and run failures.
+- TFRS-297: close `TFCK-21-SOCKET-AUTHZ-01` with Server-owned producer isolation or event-level authorization and negative regression tests.
 - Confirm whether a future server-supported room leave/unsubscribe operation is required.
 - Confirm real frequency and maximum size for event transitions, `reasoningContent`, multipart messages and tool-return payloads.
 - Remove or redact credential-bearing Server logs in the owning repository.
+
+These questions prevent a runtime-verified compatibility claim and production cutover. They do not invalidate the source/test-derived TFCK-21 contract freeze.

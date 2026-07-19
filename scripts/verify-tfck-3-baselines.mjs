@@ -18,9 +18,9 @@ const documentRelativePaths = [
 // freeze the exact JSON bytes before JSON.parse can discard duplicate keys or
 // other source-level content. Updating either is a deliberate baseline change.
 const frozenContractSha256 =
-  "764d94c18463af384da7815f4616dc93e59bb12f3609d65c7526bbd8e4b48a35";
+  "987017feeb77b5b9e98a43a83840f810624e77be556a28425336054f1bc55769";
 const frozenContractSourceSha256 =
-  "ab69dae96025e6792a4e2c8b9c5257298576d0c5f2e62ab1d914d3a4037b27ff";
+  "8b6c582d0244a99b7f35fb70c64c36d943173663dda31935e53514bd176e7476";
 const frozenPerformanceSha256 =
   "e95318c58a26520156edd6800838e536240605f7ddc21c2b54911e0bbeb93366";
 const frozenPerformanceSourceSha256 =
@@ -28,11 +28,11 @@ const frozenPerformanceSourceSha256 =
 const frozenDocumentSha256 = new Map([
   [
     "docs/baselines/tfck-3/README.md",
-    "8c714e4647a2bc9619cdc8852ac57ef7ea037da821cd2bfcff8a11273d60999f",
+    "3f7f837ff48de126d4ce2f2bea62a81fb25cc50a2a366a1dce7b6b61e09ef35c",
   ],
   [
     "docs/baselines/tfck-3/tfrobotserver-chat-contract.md",
-    "5e5525491fb11848c2a0c8e49441e6efbc691228a181e4926e1cf5f111eabec5",
+    "dd99cf87b2d35987aea8ab552d9d5f4d31dcd7e58d40fe139ab9c4f252332098",
   ],
   [
     "docs/baselines/tfck-3/chat-player-v1-migration-matrix.md",
@@ -97,6 +97,33 @@ const requiredInboundSocketMetadata = new Map([
   ["chat_event", ["worker", false, "TFCK-21-SOCKET-AUTHZ-01"]],
   ["chat_error", ["worker", false, "TFCK-21-SOCKET-AUTHZ-01"]],
   ["conversation_state_changed", ["worker", false, "TFCK-21-SOCKET-AUTHZ-01"]],
+]);
+
+const requiredDocumentMarkers = new Map([
+  [
+    "docs/baselines/tfck-3/README.md",
+    [
+      "d085c12dd8f603477dfb445bc5f5b0fd099caf15",
+      "af3b4e2fa8d7a94c458d7c0812435ad17df0eb2e",
+      "TFCK-21-LIVE-01",
+      "TFCK-21-ERR-01",
+      "TFCK-21-SOCKET-AUTHZ-01",
+      "TFRS-297",
+      "TFCK-37-PAGE-01",
+      "TFCK-37-RERUN-01",
+    ],
+  ],
+  [
+    "docs/baselines/tfck-3/tfrobotserver-chat-contract.md",
+    [
+      "d085c12dd8f603477dfb445bc5f5b0fd099caf15",
+      "af3b4e2fa8d7a94c458d7c0812435ad17df0eb2e",
+      "TFCK-21-LIVE-01",
+      "TFCK-21-ERR-01",
+      "TFCK-21-SOCKET-AUTHZ-01",
+      "TFRS-297",
+    ],
+  ],
 ]);
 
 const requiredScenarioIds = [
@@ -250,8 +277,8 @@ export function validateTfrobotserverContract(contract) {
     errors.push("contract content does not match the frozen SHA-256 baseline");
   }
 
-  if (contract["schemaVersion"] !== 1) {
-    errors.push("contract schemaVersion must be 1");
+  if (contract["schemaVersion"] !== 2) {
+    errors.push("contract schemaVersion must be 2");
   }
   if (contract["baselineId"] !== "tfck-3/tfrobotserver-chat/v1") {
     errors.push("contract baselineId is invalid");
@@ -350,6 +377,44 @@ export function validateTfrobotserverContract(contract) {
   if (!isRecord(socket) || socket["namespace"] !== "/chat") {
     errors.push("Socket namespace must be /chat");
   } else {
+    /** @param {Record<string, unknown>} event @param {string} direction */
+    const validateSocketEvidence = (event, direction) => {
+      const eventName = String(event["event"]);
+      const label = `${direction} ${eventName}`;
+      const evidence = sortedStrings(event["evidence"]);
+      if (!evidence.some((item) => item.startsWith("server-source:"))) {
+        errors.push(`${label}: missing server-source evidence`);
+      }
+      if (event["evidenceStatus"] === "cross-confirmed") {
+        if (
+          !evidence.some(
+            (item) =>
+              item.startsWith("server-test:") ||
+              item.startsWith("front-caller:"),
+          )
+        ) {
+          errors.push(`${label}: missing independent supporting evidence`);
+        }
+      } else if (event["evidenceStatus"] === "source-only-deferred") {
+        if (
+          event["owner"] !== "TFRobotServer" ||
+          event["deferredTo"] !== "TFRS-297" ||
+          event["blocksBaselineFreeze"] !== false ||
+          event["blocksProductionValidation"] !== true ||
+          typeof event["verification"] !== "string" ||
+          event["verification"].trim() === ""
+        ) {
+          errors.push(
+            `${label}: source-only evidence must be owned by TFRobotServer, deferred to TFRS-297, preserve scoped gates and name verification evidence`,
+          );
+        }
+      } else {
+        errors.push(
+          `${label}: evidenceStatus must be cross-confirmed or source-only-deferred`,
+        );
+      }
+    };
+
     const inboundEvents = recordArray(socket["clientToServer"]);
     const inboundEventNames = sortedStrings(
       inboundEvents.map((event) => event["event"]),
@@ -362,6 +427,7 @@ export function validateTfrobotserverContract(contract) {
     }
     for (const event of inboundEvents) {
       const eventName = String(event["event"]);
+      validateSocketEvidence(event, "inbound");
       if (event["authorizationEnforcement"] !== "handshake-only:chat:read") {
         errors.push(`${eventName}: must record handshake-only authorization`);
       }
@@ -377,14 +443,16 @@ export function validateTfrobotserverContract(contract) {
         );
       }
     }
-    const events = sortedStrings(
-      recordArray(socket["serverToClient"]).map((event) => event["event"]),
-    );
+    const serverEvents = recordArray(socket["serverToClient"]);
+    const events = sortedStrings(serverEvents.map((event) => event["event"]));
     if (
       JSON.stringify(events) !==
       JSON.stringify([...requiredServerEvents].sort())
     ) {
       errors.push("Socket server event set is incomplete or contains drift");
+    }
+    for (const event of serverEvents) {
+      validateSocketEvidence(event, "outbound");
     }
     const unsupported = sortedStrings(socket["unsupported"]);
     for (const event of [
@@ -408,10 +476,34 @@ export function validateTfrobotserverContract(contract) {
   const socketSecurityGate = recordArray(contract["securityGates"]).find(
     (gate) => gate["id"] === "TFCK-21-SOCKET-AUTHZ-01",
   );
-  if (!socketSecurityGate || socketSecurityGate["blocking"] !== true) {
+  if (!socketSecurityGate) {
     errors.push(
-      "contract must preserve blocking Socket authorization security gate",
+      "contract must preserve the Socket authorization security gate",
     );
+  } else {
+    if (socketSecurityGate["blocksBaselineFreeze"] !== false) {
+      errors.push(
+        "Socket authorization security gate must not block the source/test baseline freeze",
+      );
+    }
+    if (socketSecurityGate["blocksProductionValidation"] !== true) {
+      errors.push(
+        "Socket authorization security gate must block production validation",
+      );
+    }
+    if (socketSecurityGate["trackingIssue"] !== "TFRS-297") {
+      errors.push(
+        "Socket authorization security gate must be tracked by TFRS-297",
+      );
+    }
+    if (
+      JSON.stringify(sortedStrings(socketSecurityGate["blockedItems"])) !==
+      JSON.stringify(["TFCK-37", "TFCK-7"])
+    ) {
+      errors.push(
+        "Socket authorization security gate must block TFCK-7 and TFCK-37",
+      );
+    }
   }
 
   const errorStatuses = recordArray(contract["errors"])
@@ -424,17 +516,38 @@ export function validateTfrobotserverContract(contract) {
     }
   }
 
-  const blockingUnknowns = recordArray(contract["unknowns"])
-    .filter((unknown) => unknown["blocking"] === true)
-    .map((unknown) => String(unknown["id"]));
-  for (const id of [
-    "TFCK-21-LIVE-01",
-    "TFCK-21-ERR-01",
-    "TFCK-21-SOCKET-AUTHZ-01",
-  ]) {
-    if (!blockingUnknowns.includes(id)) {
-      errors.push(`contract must preserve blocking unknown ${id}`);
+  const unknowns = recordArray(contract["unknowns"]);
+  for (const unknown of unknowns) {
+    const id = String(unknown["id"]);
+    if (Object.hasOwn(unknown, "blocking")) {
+      errors.push(
+        `${id}: generic blocking is ambiguous; use blocksBaselineFreeze and blocksProductionValidation`,
+      );
     }
+    if (
+      typeof unknown["blocksBaselineFreeze"] !== "boolean" ||
+      typeof unknown["blocksProductionValidation"] !== "boolean"
+    ) {
+      errors.push(`${id}: must declare both scoped blocking fields`);
+    }
+  }
+  for (const id of ["TFCK-21-LIVE-01", "TFCK-21-ERR-01"]) {
+    const unknown = unknowns.find((candidate) => candidate["id"] === id);
+    if (
+      !unknown ||
+      unknown["blocksBaselineFreeze"] !== false ||
+      unknown["deferredTo"] !== "TFCK-37" ||
+      unknown["blocksProductionValidation"] !== true
+    ) {
+      errors.push(
+        `${id} must be deferred to TFCK-37 without blocking the source/test baseline freeze`,
+      );
+    }
+  }
+  if (unknowns.some((unknown) => unknown["id"] === "TFCK-21-SOCKET-AUTHZ-01")) {
+    errors.push(
+      "Socket authorization exposure is a tracked security gate, not an unresolved contract unknown",
+    );
   }
 
   scanForbiddenText(contract, "contract fixture", errors);
@@ -592,17 +705,12 @@ export function validateTfck3Documents(documents) {
       scanForbiddenText(content, relativePath, errors);
     }
   }
-  const combined = Object.values(documents).join("\n");
-  for (const marker of [
-    "d085c12dd8f603477dfb445bc5f5b0fd099caf15",
-    "af3b4e2fa8d7a94c458d7c0812435ad17df0eb2e",
-    "TFCK-21-LIVE-01",
-    "TFCK-21-SOCKET-AUTHZ-01",
-    "TFCK-37-PAGE-01",
-    "TFCK-37-RERUN-01",
-  ]) {
-    if (!combined.includes(marker)) {
-      errors.push(`baseline documents must contain ${marker}`);
+  for (const [relativePath, markers] of requiredDocumentMarkers) {
+    const content = documents[relativePath] ?? "";
+    for (const marker of markers) {
+      if (!content.includes(marker)) {
+        errors.push(`${relativePath} must contain ${marker}`);
+      }
     }
   }
   return errors;

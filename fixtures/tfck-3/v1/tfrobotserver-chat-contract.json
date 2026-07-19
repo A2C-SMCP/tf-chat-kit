@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "baselineId": "tfck-3/tfrobotserver-chat/v1",
   "evidenceStatus": "source-test-derived",
   "observedAt": "2026-07-17",
@@ -371,6 +371,12 @@
         "intendedCaller": "browser",
         "authorizationEnforcement": "handshake-only:chat:read",
         "publicBrowserApi": true,
+        "evidenceStatus": "cross-confirmed",
+        "evidence": [
+          "server-source:tfrobotserver/socket_namespaces/chat.py",
+          "server-test:tests/integration_tests/socketio_namespace/test_chat.py",
+          "front-caller:src/components/chat-player/player/ChatPlayerContent.tsx"
+        ],
         "purpose": "Enter the conversation room."
       },
       {
@@ -392,6 +398,11 @@
         "authorizationEnforcement": "handshake-only:chat:read",
         "publicBrowserApi": false,
         "securityGapId": "TFCK-21-SOCKET-AUTHZ-01",
+        "evidenceStatus": "cross-confirmed",
+        "evidence": [
+          "server-source:tfrobotserver/socket_namespaces/chat.py",
+          "server-test:tests/integration_tests/socketio_namespace/test_chat.py"
+        ],
         "purpose": "Legacy room echo remains reachable with chat:read and can bypass the production REST chat:send path."
       },
       {
@@ -412,6 +423,11 @@
         "authorizationEnforcement": "handshake-only:chat:read",
         "publicBrowserApi": false,
         "securityGapId": "TFCK-21-SOCKET-AUTHZ-01",
+        "evidenceStatus": "cross-confirmed",
+        "evidence": [
+          "server-source:tfrobotserver/socket_namespaces/chat.py",
+          "server-test:tests/unit_tests/protocols/a2a/test_chat_tap.py"
+        ],
         "purpose": "Internal producer ingress that is currently reachable by any authenticated Socket client."
       },
       {
@@ -425,6 +441,11 @@
         "authorizationEnforcement": "handshake-only:chat:read",
         "publicBrowserApi": false,
         "securityGapId": "TFCK-21-SOCKET-AUTHZ-01",
+        "evidenceStatus": "cross-confirmed",
+        "evidence": [
+          "server-source:tfrobotserver/socket_namespaces/chat.py",
+          "server-test:tests/unit_tests/protocols/test_robot_run_error_propagation.py"
+        ],
         "purpose": "Internal producer ingress that is currently reachable by any authenticated Socket client."
       },
       {
@@ -438,6 +459,11 @@
         "authorizationEnforcement": "handshake-only:chat:read",
         "publicBrowserApi": false,
         "securityGapId": "TFCK-21-SOCKET-AUTHZ-01",
+        "evidenceStatus": "cross-confirmed",
+        "evidence": [
+          "server-source:tfrobotserver/socket_namespaces/chat.py",
+          "server-test:tests/unit_tests/socket_namespaces/test_chat_namespace.py"
+        ],
         "purpose": "Internal producer ingress that is currently reachable by any authenticated Socket client."
       }
     ],
@@ -458,7 +484,13 @@
           "role": "assistant",
           "msgType": "text",
           "reasoningContent": null
-        }
+        },
+        "evidenceStatus": "cross-confirmed",
+        "evidence": [
+          "server-source:tfrobotserver/socket_namespaces/chat.py",
+          "server-test:tests/integration_tests/socketio_namespace/test_chat.py",
+          "front-caller:src/components/chat-player/player/ChatPlayerContent.tsx"
+        ]
       },
       {
         "event": "chat_event",
@@ -490,7 +522,12 @@
               }
             }
           }
-        }
+        },
+        "evidenceStatus": "cross-confirmed",
+        "evidence": [
+          "server-source:tfrobotserver/socket_namespaces/chat.py",
+          "front-caller:src/components/chat-player/player/ChatPlayerContent.tsx"
+        ]
       },
       {
         "event": "chat_error",
@@ -498,6 +535,16 @@
           "conversationId": "42",
           "error": "Redacted run failure",
           "createTimestamp": 1773705600300
+        },
+        "evidenceStatus": "cross-confirmed",
+        "evidence": [
+          "server-source:tfrobotserver/socket_namespaces/chat.py",
+          "server-test:tests/unit_tests/protocols/test_robot_run_error_propagation.py"
+        ],
+        "consumerValidation": {
+          "status": "deferred",
+          "owner": "TFCK-37",
+          "reason": "The active TFRobotFront caller does not listen for chat_error."
         }
       },
       {
@@ -506,14 +553,27 @@
           "conversationId": "42",
           "state": "working",
           "taskId": "run-task-redacted"
-        }
+        },
+        "evidenceStatus": "cross-confirmed",
+        "evidence": [
+          "server-source:tfrobotserver/socket_namespaces/chat.py",
+          "server-test:tests/unit_tests/socket_namespaces/test_chat_namespace.py",
+          "front-caller:src/components/chat-player/player/ChatPlayerContent.tsx"
+        ]
       },
       {
         "event": "error",
         "payloadExample": {
           "status": "error",
           "message": "Invalid message format: <redacted-validation-detail>"
-        }
+        },
+        "evidenceStatus": "source-only-deferred",
+        "evidence": ["server-source:tfrobotserver/socket_namespaces/chat.py"],
+        "owner": "TFRobotServer",
+        "deferredTo": "TFRS-297",
+        "blocksBaselineFreeze": false,
+        "blocksProductionValidation": true,
+        "verification": "Add a Socket integration test that submits an invalid inbound event and asserts the redacted error payload."
       }
     ],
     "eventStatuses": ["running", "success", "failed", "aborted"],
@@ -523,20 +583,16 @@
       "chat_stream_start",
       "chat_stream_chunk",
       "chat_stream_end"
-    ],
-    "evidence": [
-      "server-source:tfrobotserver/socket_namespaces/chat.py",
-      "server-source:tfrobotserver/socket_namespaces/base.py",
-      "server-test:tests/integration_tests/socketio_namespace/test_chat.py",
-      "server-test:tests/integration_tests/socketio_namespace/test_auth.py",
-      "front-caller:src/components/chat-player/player/ChatPlayerContent.tsx"
     ]
   },
   "securityGates": [
     {
       "id": "TFCK-21-SOCKET-AUTHZ-01",
-      "blocking": true,
+      "blocksBaselineFreeze": false,
+      "blocksProductionValidation": true,
       "owner": "TFRobotServer",
+      "trackingIssue": "TFRS-297",
+      "blockedItems": ["TFCK-7", "TFCK-37"],
       "description": "The /chat handshake enforces chat:read, but the legacy chat_message echo and internal producer handlers have no event-level authorization or producer isolation.",
       "closureEvidence": "Remove or appropriately authorize the legacy echo, separate producer transport/namespace or add event-level authorization, and provide negative Socket integration tests."
     }
@@ -596,32 +652,34 @@
   "unknowns": [
     {
       "id": "TFCK-21-LIVE-01",
-      "blocking": true,
+      "blocksBaselineFreeze": false,
+      "deferredTo": "TFCK-37",
+      "blocksProductionValidation": true,
       "question": "Which deployed environment and Server revision should provide the redacted real payload baseline?"
     },
     {
       "id": "TFCK-21-ERR-01",
-      "blocking": true,
+      "blocksBaselineFreeze": false,
+      "deferredTo": "TFCK-37",
+      "blocksProductionValidation": true,
       "question": "What are the deployed domain-error responses for missing conversations/platforms and run failures?"
     },
     {
-      "id": "TFCK-21-SOCKET-AUTHZ-01",
-      "blocking": true,
-      "question": "How will Server prevent chat:read consumers from invoking worker-facing Socket handlers?"
-    },
-    {
       "id": "TFCK-21-LEAVE-01",
-      "blocking": false,
+      "blocksBaselineFreeze": false,
+      "blocksProductionValidation": false,
       "question": "Will Server add a supported room unsubscribe operation?"
     },
     {
       "id": "TFCK-21-SIZE-01",
-      "blocking": false,
+      "blocksBaselineFreeze": false,
+      "blocksProductionValidation": false,
       "question": "What are production frequencies and payload-size bounds for multipart, reasoning and tool events?"
     },
     {
       "id": "TFCK-21-LOG-01",
-      "blocking": false,
+      "blocksBaselineFreeze": false,
+      "blocksProductionValidation": false,
       "question": "When will credential-bearing Server auth/header logs be redacted by the owning repository?"
     }
   ]

@@ -64,6 +64,61 @@ describe("TFCK-3 migration baselines", () => {
     );
   });
 
+  it("rejects making deferred runtime evidence block the source/test freeze", async () => {
+    const { contract } = await loadTfck3Baselines();
+    const mutated = structuredClone(contract) as {
+      unknowns: Array<{
+        id: string;
+        blocksBaselineFreeze: boolean;
+        deferredTo?: string;
+        blocksProductionValidation: boolean;
+      }>;
+    };
+    const liveEvidence = mutated.unknowns.find(
+      ({ id }) => id === "TFCK-21-LIVE-01",
+    )!;
+    liveEvidence.blocksBaselineFreeze = true;
+    liveEvidence.blocksProductionValidation = false;
+    delete liveEvidence.deferredTo;
+
+    expect(validateTfrobotserverContract(mutated)).toContainEqual(
+      expect.stringContaining(
+        "must be deferred to TFCK-37 without blocking the source/test baseline freeze",
+      ),
+    );
+  });
+
+  it("rejects losing downstream ownership for the Socket authorization gate", async () => {
+    const { contract } = await loadTfck3Baselines();
+    const mutated = structuredClone(contract) as {
+      securityGates: Array<{
+        id: string;
+        blocksBaselineFreeze: boolean;
+        blocksProductionValidation: boolean;
+        trackingIssue: string;
+        blockedItems: string[];
+      }>;
+    };
+    const gate = mutated.securityGates.find(
+      ({ id }) => id === "TFCK-21-SOCKET-AUTHZ-01",
+    )!;
+    gate.blocksBaselineFreeze = true;
+    gate.blocksProductionValidation = false;
+    gate.trackingIssue = "TFCK-21";
+    gate.blockedItems = [];
+
+    expect(validateTfrobotserverContract(mutated)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "must not block the source/test baseline freeze",
+        ),
+        expect.stringContaining("must block production validation"),
+        expect.stringContaining("must be tracked by TFRS-297"),
+        expect.stringContaining("must block TFCK-7 and TFCK-37"),
+      ]),
+    );
+  });
+
   it("rejects a credential accidentally copied into a fixture", async () => {
     const { contract } = await loadTfck3Baselines();
     const mutated = structuredClone(contract) as {
@@ -196,6 +251,82 @@ describe("TFCK-3 migration baselines", () => {
 
     expect(validateTfrobotserverContract(mutated)).toContainEqual(
       expect.stringContaining("inbound handler set is incomplete"),
+    );
+  });
+
+  it("rejects a cross-confirmed Socket event without independent evidence", async () => {
+    const { contract } = await loadTfck3Baselines();
+    const mutated = structuredClone(contract) as {
+      socket: {
+        clientToServer: Array<{
+          event: string;
+          evidence: string[];
+        }>;
+      };
+    };
+    const chatEvent = mutated.socket.clientToServer.find(
+      ({ event }) => event === "chat_event",
+    )!;
+    chatEvent.evidence = chatEvent.evidence.filter((item) =>
+      item.startsWith("server-source:"),
+    );
+
+    expect(validateTfrobotserverContract(mutated)).toContainEqual(
+      expect.stringContaining(
+        "inbound chat_event: missing independent supporting evidence",
+      ),
+    );
+  });
+
+  it("rejects incomplete ownership for source-only Socket evidence", async () => {
+    const { contract } = await loadTfck3Baselines();
+    const mutated = structuredClone(contract) as {
+      socket: {
+        serverToClient: Array<{
+          event: string;
+          owner?: string;
+          verification?: string;
+        }>;
+      };
+    };
+    const errorEvent = mutated.socket.serverToClient.find(
+      ({ event }) => event === "error",
+    )!;
+    delete errorEvent.owner;
+    delete errorEvent.verification;
+
+    expect(validateTfrobotserverContract(mutated)).toContainEqual(
+      expect.stringContaining(
+        "outbound error: source-only evidence must be owned by TFRobotServer",
+      ),
+    );
+  });
+
+  it("rejects an ambiguous generic blocking field on an unknown", async () => {
+    const { contract } = await loadTfck3Baselines();
+    const mutated = structuredClone(contract) as {
+      unknowns: Array<{ id: string; blocking?: boolean }>;
+    };
+    mutated.unknowns[0]!.blocking = false;
+
+    expect(validateTfrobotserverContract(mutated)).toContainEqual(
+      expect.stringContaining("generic blocking is ambiguous"),
+    );
+  });
+
+  it("requires TFCK-21 ownership markers in each relevant document", async () => {
+    const { documents } = await loadTfck3Baselines();
+    const mutated = structuredClone(documents);
+    mutated["docs/baselines/tfck-3/README.md"] = mutated[
+      "docs/baselines/tfck-3/README.md"
+    ]!.replaceAll("TFRS-297", "TFRS-REDACTED");
+    mutated["docs/baselines/tfck-3/performance-baseline.md"] +=
+      "\nUnrelated marker: TFRS-297\n";
+
+    expect(validateTfck3Documents(mutated)).toContainEqual(
+      expect.stringContaining(
+        "docs/baselines/tfck-3/README.md must contain TFRS-297",
+      ),
     );
   });
 
