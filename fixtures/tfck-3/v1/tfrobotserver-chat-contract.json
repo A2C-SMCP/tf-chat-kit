@@ -1,0 +1,686 @@
+{
+  "schemaVersion": 2,
+  "baselineId": "tfck-3/tfrobotserver-chat/v1",
+  "evidenceStatus": "source-test-derived",
+  "observedAt": "2026-07-17",
+  "sources": {
+    "server": {
+      "repository": "TFRobotServer",
+      "ref": "origin/develop",
+      "commit": "d085c12dd8f603477dfb445bc5f5b0fd099caf15",
+      "version": "0.3.0-dev7"
+    },
+    "front": {
+      "repository": "TFRobotFront",
+      "ref": "origin/develop",
+      "commit": "af3b4e2fa8d7a94c458d7c0812435ad17df0eb2e"
+    },
+    "runtimeProbe": {
+      "status": "unavailable",
+      "environment": null,
+      "deployedCommit": null,
+      "reason": "No compatible signed-in browser/runtime session was available."
+    }
+  },
+  "responseEnvelope": {
+    "success": {
+      "code": 200,
+      "message": "Success",
+      "data": {}
+    },
+    "fieldNaming": "camelCase"
+  },
+  "authentication": {
+    "http": {
+      "credentials": [
+        {
+          "kind": "user-jwt",
+          "transport": "Authorization: Bearer <redacted-user-jwt>"
+        },
+        {
+          "kind": "admin-token",
+          "transport": "admin_key: <redacted-admin-token>"
+        }
+      ],
+      "retired": ["admin-secret", "redis-access-token"],
+      "scopes": {
+        "GET": "chat:read",
+        "nonGET": "chat:send",
+        "superuser": "robot:admin"
+      }
+    },
+    "socket": {
+      "namespace": "/chat",
+      "canonicalAuthExamples": [
+        {
+          "token": "<redacted-user-jwt>"
+        },
+        {
+          "admin_key": "<redacted-admin-token>"
+        }
+      ],
+      "requiredUserScope": "chat:read",
+      "requiresUserJwtIat": true,
+      "retiredTransports": ["admin_key-header", "access_token-header"],
+      "nonContractFallback": "Authorization: Bearer"
+    }
+  },
+  "rest": [
+    {
+      "id": "platform-list",
+      "method": "GET",
+      "path": "/v1/chat/platforms",
+      "scope": "chat:read",
+      "input": {},
+      "successDataExample": [
+        {
+          "platformId": 7,
+          "name": "Example Platform"
+        }
+      ],
+      "evidence": [
+        "server-source:tfrobotserver/api/v1/chat/chats.py",
+        "server-test:tests/integration_tests/api/v1/chat/test_chats.py",
+        "front-caller:src/components/chat-player/sider/ChatSider.tsx"
+      ]
+    },
+    {
+      "id": "platform-create",
+      "method": "POST",
+      "path": "/v1/chat/platforms",
+      "scope": "chat:send",
+      "input": {
+        "body": {
+          "platformName": "Example Platform"
+        }
+      },
+      "successDataExample": 7,
+      "evidence": [
+        "server-source:tfrobotserver/api/v1/chat/chats.py",
+        "server-test:tests/integration_tests/api/v1/chat/test_chats.py"
+      ]
+    },
+    {
+      "id": "platform-update",
+      "method": "PUT",
+      "path": "/v1/chat/platforms/{platformId}",
+      "scope": "chat:send",
+      "input": {
+        "path": {
+          "platformId": 7
+        },
+        "body": {
+          "platformName": "Renamed Platform"
+        }
+      },
+      "successDataExample": null,
+      "evidence": [
+        "server-source:tfrobotserver/api/v1/chat/chats.py",
+        "server-test:tests/integration_tests/api/v1/chat/test_chats.py"
+      ]
+    },
+    {
+      "id": "platform-delete",
+      "method": "DELETE",
+      "path": "/v1/chat/platforms/{platformId}",
+      "scope": "chat:send",
+      "input": {
+        "path": {
+          "platformId": 7
+        }
+      },
+      "successDataExample": null,
+      "evidence": [
+        "server-source:tfrobotserver/api/v1/chat/chats.py",
+        "server-test:tests/integration_tests/api/v1/chat/test_chats.py"
+      ]
+    },
+    {
+      "id": "conversation-list",
+      "method": "GET",
+      "path": "/v1/chat/conversations",
+      "scope": "chat:read",
+      "input": {
+        "query": {
+          "count": -10,
+          "cursor": "",
+          "platformId": 7
+        }
+      },
+      "successDataExample": {
+        "conversations": [
+          {
+            "conversationId": 42,
+            "title": "Redacted conversation",
+            "description": null,
+            "updateTimestamp": 1773705600000
+          }
+        ],
+        "cursor": ""
+      },
+      "evidence": [
+        "server-source:tfrobotserver/api/v1/chat/chats.py",
+        "server-test:tests/integration_tests/api/v1/chat/test_chats.py",
+        "front-caller:src/components/chat-player/sider/ChatSider.tsx"
+      ]
+    },
+    {
+      "id": "conversation-create",
+      "method": "POST",
+      "path": "/v1/chat/conversations",
+      "scope": "chat:send",
+      "input": {
+        "query": {
+          "title": "Redacted conversation",
+          "platformId": 7
+        }
+      },
+      "successDataExample": {
+        "conversationId": 42,
+        "title": "Redacted conversation",
+        "description": null,
+        "updateTimestamp": 1773705600000
+      },
+      "evidence": [
+        "server-source:tfrobotserver/api/v1/chat/chats.py",
+        "server-test:tests/integration_tests/api/v1/chat/test_chats.py",
+        "front-caller:src/components/chat-player/sider/ChatSider.tsx"
+      ]
+    },
+    {
+      "id": "conversation-update",
+      "method": "PATCH",
+      "path": "/v1/chat/conversations/{conversationId}",
+      "scope": "chat:send",
+      "input": {
+        "path": {
+          "conversationId": 42
+        },
+        "query": {
+          "title": "Renamed conversation"
+        }
+      },
+      "successDataExample": {
+        "conversationId": 42,
+        "title": "Renamed conversation",
+        "description": null,
+        "updateTimestamp": 1773705600000
+      },
+      "evidence": [
+        "server-source:tfrobotserver/api/v1/chat/chats.py",
+        "server-test:tests/integration_tests/api/v1/chat/test_chats.py",
+        "front-caller:src/components/chat-player/sider/ChatSider.tsx"
+      ]
+    },
+    {
+      "id": "conversation-delete",
+      "method": "DELETE",
+      "path": "/v1/chat/conversations/{conversationId}",
+      "scope": "chat:send",
+      "input": {
+        "path": {
+          "conversationId": 42
+        }
+      },
+      "successDataExample": {
+        "message": "会话删除成功",
+        "conversationId": 42
+      },
+      "evidence": [
+        "server-source:tfrobotserver/api/v1/chat/chats.py",
+        "server-test:tests/integration_tests/api/v1/chat/test_chats.py",
+        "front-caller:src/components/chat-player/sider/ChatSider.tsx"
+      ]
+    },
+    {
+      "id": "history-list",
+      "method": "GET",
+      "path": "/v1/chat/conversations/{conversationId}/messages",
+      "scope": "chat:read",
+      "input": {
+        "path": {
+          "conversationId": 42
+        },
+        "query": {
+          "count": -10,
+          "cursor": ""
+        }
+      },
+      "successDataExample": {
+        "messages": [
+          {
+            "msgId": "message-redacted-1",
+            "content": "Redacted user message",
+            "additionalKwargs": {},
+            "attachments": null,
+            "createTimestamp": 1773705600000,
+            "creator": {
+              "uid": "user-redacted",
+              "name": "Redacted user",
+              "avatar": null
+            },
+            "conversationId": 42,
+            "role": "user",
+            "msgType": "text"
+          }
+        ],
+        "events": [
+          {
+            "eventId": "event-redacted-1",
+            "status": "success",
+            "eventScene": "Chain",
+            "conversationId": 42,
+            "createTimestamp": 1773705600100,
+            "exception": null,
+            "content": "Redacted event"
+          }
+        ],
+        "cursor": ""
+      },
+      "evidence": [
+        "server-source:tfrobotserver/api/v1/chat/chats.py",
+        "server-test:tests/integration_tests/api/v1/chat/test_chats.py",
+        "front-caller:src/components/chat-player/player/ChatPlayerContent.tsx"
+      ]
+    },
+    {
+      "id": "message-send",
+      "method": "POST",
+      "path": "/v1/chat/conversations/{conversationId}/messages",
+      "scope": "chat:send",
+      "input": {
+        "path": {
+          "conversationId": 42
+        },
+        "body": {
+          "msgId": null,
+          "content": "Redacted user message",
+          "additionalKwargs": {},
+          "attachments": null,
+          "createTimestamp": 0,
+          "creator": {
+            "uid": "user-redacted",
+            "name": "Redacted user"
+          },
+          "conversationId": 42,
+          "role": "user",
+          "msgType": "text"
+        }
+      },
+      "successDataExample": {
+        "taskId": "run-task-redacted"
+      },
+      "evidence": [
+        "server-source:tfrobotserver/api/v1/chat/chats.py",
+        "server-test:tests/integration_tests/api/v1/chat/test_chats.py",
+        "front-caller:src/components/chat-player/player/input/ChatInputComponent.tsx"
+      ]
+    },
+    {
+      "id": "status-get",
+      "method": "GET",
+      "path": "/v1/chat/conversations/{conversationId}/status",
+      "scope": "chat:read",
+      "input": {
+        "path": {
+          "conversationId": 42
+        }
+      },
+      "successDataExample": {
+        "working": true,
+        "taskId": "run-task-redacted"
+      },
+      "evidence": [
+        "server-source:tfrobotserver/api/v1/chat/chats.py",
+        "server-test:tests/unit_tests/services/test_run_service.py",
+        "front-caller:src/components/chat-player/player/ChatPlayerContent.tsx"
+      ]
+    },
+    {
+      "id": "conversation-interrupt",
+      "method": "POST",
+      "path": "/v1/chat/conversations/{conversationId}/interrupt",
+      "scope": "chat:send",
+      "input": {
+        "path": {
+          "conversationId": 42
+        },
+        "body": {
+          "taskId": "run-task-redacted"
+        }
+      },
+      "successDataExample": {
+        "taskId": "cancel-task-redacted"
+      },
+      "evidence": [
+        "server-source:tfrobotserver/api/v1/chat/chats.py",
+        "server-test:tests/unit_tests/services/test_run_service.py",
+        "front-caller:src/components/chat-player/player/input/ChatInputComponent.tsx"
+      ]
+    }
+  ],
+  "socket": {
+    "enginePath": "/socket.io",
+    "namespace": "/chat",
+    "clientToServer": [
+      {
+        "event": "join_conversation",
+        "payloadExample": {
+          "conversation_id": "42"
+        },
+        "intendedCaller": "browser",
+        "authorizationEnforcement": "handshake-only:chat:read",
+        "publicBrowserApi": true,
+        "evidenceStatus": "cross-confirmed",
+        "evidence": [
+          "server-source:tfrobotserver/socket_namespaces/chat.py",
+          "server-test:tests/integration_tests/socketio_namespace/test_chat.py",
+          "front-caller:src/components/chat-player/player/ChatPlayerContent.tsx"
+        ],
+        "purpose": "Enter the conversation room."
+      },
+      {
+        "event": "chat_message",
+        "payloadExample": {
+          "msgId": "message-redacted-1",
+          "content": "Redacted user message",
+          "additionalKwargs": {},
+          "createTimestamp": 1773705600000,
+          "creator": {
+            "uid": "user-redacted",
+            "name": "Redacted user"
+          },
+          "conversationId": 42,
+          "role": "user",
+          "msgType": "text"
+        },
+        "intendedCaller": "legacy-browser-or-test",
+        "authorizationEnforcement": "handshake-only:chat:read",
+        "publicBrowserApi": false,
+        "securityGapId": "TFCK-21-SOCKET-AUTHZ-01",
+        "evidenceStatus": "cross-confirmed",
+        "evidence": [
+          "server-source:tfrobotserver/socket_namespaces/chat.py",
+          "server-test:tests/integration_tests/socketio_namespace/test_chat.py"
+        ],
+        "purpose": "Legacy room echo remains reachable with chat:read and can bypass the production REST chat:send path."
+      },
+      {
+        "event": "chat_event",
+        "payloadExample": {
+          "conversation_id": "42",
+          "event_dto": {
+            "eventId": "event-redacted-1",
+            "status": "success",
+            "eventScene": "Chain",
+            "conversationId": 42,
+            "createTimestamp": 1773705600100,
+            "exception": null,
+            "content": "Redacted event"
+          }
+        },
+        "intendedCaller": "worker",
+        "authorizationEnforcement": "handshake-only:chat:read",
+        "publicBrowserApi": false,
+        "securityGapId": "TFCK-21-SOCKET-AUTHZ-01",
+        "evidenceStatus": "cross-confirmed",
+        "evidence": [
+          "server-source:tfrobotserver/socket_namespaces/chat.py",
+          "server-test:tests/unit_tests/protocols/a2a/test_chat_tap.py"
+        ],
+        "purpose": "Internal producer ingress that is currently reachable by any authenticated Socket client."
+      },
+      {
+        "event": "chat_error",
+        "payloadExample": {
+          "conversationId": "42",
+          "error": "Redacted run failure",
+          "createTimestamp": 1773705600300
+        },
+        "intendedCaller": "worker",
+        "authorizationEnforcement": "handshake-only:chat:read",
+        "publicBrowserApi": false,
+        "securityGapId": "TFCK-21-SOCKET-AUTHZ-01",
+        "evidenceStatus": "cross-confirmed",
+        "evidence": [
+          "server-source:tfrobotserver/socket_namespaces/chat.py",
+          "server-test:tests/unit_tests/protocols/test_robot_run_error_propagation.py"
+        ],
+        "purpose": "Internal producer ingress that is currently reachable by any authenticated Socket client."
+      },
+      {
+        "event": "conversation_state_changed",
+        "payloadExample": {
+          "conversationId": "42",
+          "state": "working",
+          "taskId": "run-task-redacted"
+        },
+        "intendedCaller": "worker",
+        "authorizationEnforcement": "handshake-only:chat:read",
+        "publicBrowserApi": false,
+        "securityGapId": "TFCK-21-SOCKET-AUTHZ-01",
+        "evidenceStatus": "cross-confirmed",
+        "evidence": [
+          "server-source:tfrobotserver/socket_namespaces/chat.py",
+          "server-test:tests/unit_tests/socket_namespaces/test_chat_namespace.py"
+        ],
+        "purpose": "Internal producer ingress that is currently reachable by any authenticated Socket client."
+      }
+    ],
+    "serverToClient": [
+      {
+        "event": "chat_message",
+        "payloadExample": {
+          "msgId": "message-redacted-2",
+          "content": "Redacted assistant message",
+          "additionalKwargs": {},
+          "attachments": null,
+          "createTimestamp": 1773705600200,
+          "creator": {
+            "uid": "assistant-redacted",
+            "name": "Redacted assistant"
+          },
+          "conversationId": 42,
+          "role": "assistant",
+          "msgType": "text",
+          "reasoningContent": null
+        },
+        "evidenceStatus": "cross-confirmed",
+        "evidence": [
+          "server-source:tfrobotserver/socket_namespaces/chat.py",
+          "server-test:tests/integration_tests/socketio_namespace/test_chat.py",
+          "front-caller:src/components/chat-player/player/ChatPlayerContent.tsx"
+        ]
+      },
+      {
+        "event": "chat_event",
+        "payloadExample": {
+          "eventId": "event-redacted-1",
+          "status": "success",
+          "eventScene": "Tool",
+          "conversationId": 42,
+          "createTimestamp": 1773705600100,
+          "exception": null,
+          "content": {
+            "toolCall": {
+              "toolId": "tool-redacted",
+              "functionCall": {
+                "name": "example_tool",
+                "description": null,
+                "parameters": "{}"
+              },
+              "index": 0
+            },
+            "toolReturn": {
+              "origin": {
+                "result": "redacted"
+              },
+              "attachments": null,
+              "meta": {
+                "success": true,
+                "done": true
+              }
+            }
+          }
+        },
+        "evidenceStatus": "cross-confirmed",
+        "evidence": [
+          "server-source:tfrobotserver/socket_namespaces/chat.py",
+          "front-caller:src/components/chat-player/player/ChatPlayerContent.tsx"
+        ]
+      },
+      {
+        "event": "chat_error",
+        "payloadExample": {
+          "conversationId": "42",
+          "error": "Redacted run failure",
+          "createTimestamp": 1773705600300
+        },
+        "evidenceStatus": "cross-confirmed",
+        "evidence": [
+          "server-source:tfrobotserver/socket_namespaces/chat.py",
+          "server-test:tests/unit_tests/protocols/test_robot_run_error_propagation.py"
+        ],
+        "consumerValidation": {
+          "status": "deferred",
+          "owner": "TFCK-37",
+          "reason": "The active TFRobotFront caller does not listen for chat_error."
+        }
+      },
+      {
+        "event": "conversation_state_changed",
+        "payloadExample": {
+          "conversationId": "42",
+          "state": "working",
+          "taskId": "run-task-redacted"
+        },
+        "evidenceStatus": "cross-confirmed",
+        "evidence": [
+          "server-source:tfrobotserver/socket_namespaces/chat.py",
+          "server-test:tests/unit_tests/socket_namespaces/test_chat_namespace.py",
+          "front-caller:src/components/chat-player/player/ChatPlayerContent.tsx"
+        ]
+      },
+      {
+        "event": "error",
+        "payloadExample": {
+          "status": "error",
+          "message": "Invalid message format: <redacted-validation-detail>"
+        },
+        "evidenceStatus": "source-only-deferred",
+        "evidence": ["server-source:tfrobotserver/socket_namespaces/chat.py"],
+        "owner": "TFRobotServer",
+        "deferredTo": "TFRS-297",
+        "blocksBaselineFreeze": false,
+        "blocksProductionValidation": true,
+        "verification": "Add a Socket integration test that submits an invalid inbound event and asserts the redacted error payload."
+      }
+    ],
+    "eventStatuses": ["running", "success", "failed", "aborted"],
+    "toleratedButNotServerEmittedStatuses": ["timeout"],
+    "unsupported": [
+      "leave_conversation",
+      "chat_stream_start",
+      "chat_stream_chunk",
+      "chat_stream_end"
+    ]
+  },
+  "securityGates": [
+    {
+      "id": "TFCK-21-SOCKET-AUTHZ-01",
+      "blocksBaselineFreeze": false,
+      "blocksProductionValidation": true,
+      "owner": "TFRobotServer",
+      "trackingIssue": "TFRS-297",
+      "blockedItems": ["TFCK-7", "TFCK-37"],
+      "description": "The /chat handshake enforces chat:read, but the legacy chat_message echo and internal producer handlers have no event-level authorization or producer isolation.",
+      "closureEvidence": "Remove or appropriately authorize the legacy echo, separate producer transport/namespace or add event-level authorization, and provide negative Socket integration tests."
+    }
+  ],
+  "errors": [
+    {
+      "id": "http-unauthenticated",
+      "status": 401,
+      "example": {
+        "detail": "Could not validate credentials"
+      },
+      "evidenceStatus": "server-source"
+    },
+    {
+      "id": "http-insufficient-scope",
+      "status": 403,
+      "example": {
+        "detail": "Insufficient scope"
+      },
+      "evidenceStatus": "server-source"
+    },
+    {
+      "id": "http-validation",
+      "status": 422,
+      "example": {
+        "detail": [
+          {
+            "type": "validation_error",
+            "loc": ["body"],
+            "msg": "Redacted validation failure",
+            "input": null
+          }
+        ]
+      },
+      "evidenceStatus": "framework-source-derived"
+    },
+    {
+      "id": "http-unhandled",
+      "status": 500,
+      "example": {
+        "code": 500,
+        "message": "<redacted-exception-representation>",
+        "data": {}
+      },
+      "evidenceStatus": "server-source-risk"
+    },
+    {
+      "id": "socket-protocol-error",
+      "status": null,
+      "example": {
+        "status": "error",
+        "message": "Invalid message format: <redacted-validation-detail>"
+      },
+      "evidenceStatus": "server-source"
+    }
+  ],
+  "unknowns": [
+    {
+      "id": "TFCK-21-LIVE-01",
+      "blocksBaselineFreeze": false,
+      "deferredTo": "TFCK-37",
+      "blocksProductionValidation": true,
+      "question": "Which deployed environment and Server revision should provide the redacted real payload baseline?"
+    },
+    {
+      "id": "TFCK-21-ERR-01",
+      "blocksBaselineFreeze": false,
+      "deferredTo": "TFCK-37",
+      "blocksProductionValidation": true,
+      "question": "What are the deployed domain-error responses for missing conversations/platforms and run failures?"
+    },
+    {
+      "id": "TFCK-21-LEAVE-01",
+      "blocksBaselineFreeze": false,
+      "blocksProductionValidation": false,
+      "question": "Will Server add a supported room unsubscribe operation?"
+    },
+    {
+      "id": "TFCK-21-SIZE-01",
+      "blocksBaselineFreeze": false,
+      "blocksProductionValidation": false,
+      "question": "What are production frequencies and payload-size bounds for multipart, reasoning and tool events?"
+    },
+    {
+      "id": "TFCK-21-LOG-01",
+      "blocksBaselineFreeze": false,
+      "blocksProductionValidation": false,
+      "question": "When will credential-bearing Server auth/header logs be redacted by the owning repository?"
+    }
+  ]
+}
