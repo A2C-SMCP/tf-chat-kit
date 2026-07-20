@@ -4,7 +4,7 @@ TFRobot 聊天能力的可复用模块。项目采用 Headless Runtime、宿主�
 
 ## 当前状态
 
-项目处于 V1 纵向切片建设阶段。六包 workspace、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-protocol` 提供标准模型、运行时 schema 与 Gateway/SessionProvider 端口，Runtime、TFRobot Gateway、React 与 UI 的实现由后续 Story 按依赖顺序完成。
+项目处于 V1 纵向切片建设阶段。六包 workspace、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-protocol` 提供标准模型、运行时 schema 与 Gateway/SessionProvider 端口，`@turingfocus/chat-testing` 提供内存 Gateway、标准 fixtures 与框架无关契约套件。Runtime、TFRobot Gateway、React 与 UI 的实现由后续 Story 按依赖顺序完成。
 
 ## V1 承诺
 
@@ -32,8 +32,10 @@ V1 不承诺 Fluent UI、Web Component、AG-UI、账号登录系统或为每个�
 ```text
 chat-ui-antd -> chat-react -> chat-runtime -> chat-protocol
                          chat-gateway-tfrobot -> chat-protocol
-                                  chat-testing -> protocol/runtime
+                                  chat-testing -> chat-protocol
 ```
+
+`chat-testing` 不依赖 Runtime 实现；后续 Runtime 通过测试适配器接入其契约套件。
 
 任何 Chat Kit 包都不得反向依赖 TFRobotFront 或其他宿主项目。
 

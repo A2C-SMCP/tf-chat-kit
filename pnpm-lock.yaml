@@ -109,9 +109,6 @@ importers:
       "@turingfocus/chat-protocol":
         specifier: workspace:^
         version: link:../chat-protocol
-      "@turingfocus/chat-runtime":
-        specifier: workspace:^
-        version: link:../chat-runtime
 
   packages/chat-ui-antd:
     dependencies:

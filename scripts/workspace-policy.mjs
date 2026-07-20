@@ -113,10 +113,7 @@ export const PACKAGE_POLICY = Object.freeze({
   },
   "chat-testing": {
     name: "@turingfocus/chat-testing",
-    internalDependencies: [
-      "@turingfocus/chat-protocol",
-      "@turingfocus/chat-runtime",
-    ],
+    internalDependencies: ["@turingfocus/chat-protocol"],
     allowedNodeBuiltins: [],
     peerDependencies: {},
     allowedExternalDependencies: {},

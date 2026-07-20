@@ -127,6 +127,21 @@ describe("workspace governance", () => {
     );
   });
 
+  it("keeps chat-testing independent of the future Runtime implementation", async () => {
+    const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
+    const testing = snapshot.packages.find(
+      ({ directory }) => directory === "chat-testing",
+    )!;
+    testing.manifest.dependencies ??= {};
+    testing.manifest.dependencies["@turingfocus/chat-runtime"] = "workspace:^";
+
+    expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
+      expect.stringContaining(
+        '@turingfocus/chat-testing: internal dependencies must be {"@turingfocus/chat-protocol":"workspace:^"}',
+      ),
+    );
+  });
+
   it("rejects React and Ant Design outside their allowed packages", async () => {
     const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
     const runtime = snapshot.packages.find(
