@@ -4,7 +4,7 @@ TFRobot 聊天能力的可复用模块。项目采用 Headless Runtime、宿主�
 
 ## 当前状态
 
-项目处于 V1 纵向切片建设阶段。六包 workspace、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-protocol` 提供标准模型、运行时 schema 与 Gateway/SessionProvider 端口，`@turingfocus/chat-testing` 提供内存 Gateway、标准 fixtures 与框架无关契约套件。Runtime、TFRobot Gateway、React 与 UI 的实现由后续 Story 按依赖顺序完成。
+项目处于 V1 纵向切片建设阶段。六包 workspace、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-protocol` 提供标准模型、运行时 schema 与 Gateway/SessionProvider 端口，`@turingfocus/chat-testing` 提供内存 Gateway、标准 fixtures 与框架无关契约套件，`@turingfocus/chat-runtime` 提供实例化 ChatClient、不可变快照、历史/实时归并、聊天命令和显式释放。TFRobot Gateway、React 与 UI 的实现由后续 Story 按依赖顺序完成。
 
 ## V1 承诺
 
@@ -59,3 +59,8 @@ pnpm pack:workspace
 TypeScript 消费者中实际安装、构建和运行六个产物。宿主验证必须使用 tarball、npm prerelease
 或 npm 官方 Registry 的正式版本，不得通过源码路径消费。
 `pnpm pack:workspace` 可从 clean workspace 直接构建并生成经过内容检查的六包 tarball。
+
+Runtime V1 的时间轴性能门禁覆盖 5,000 个常驻条目上的 1,000 次连续增量更新，以及将 5,000
+个历史条目一次归并到 5,000 个当前条目。不可变快照会在每次可观察更新时复制时间轴的顶层数组，
+但复用未变化的条目对象；超过 10,000 个常驻条目的宿主应通过历史分页限制内存窗口。扩大这一
+规模前需先增加对应基准，并评估批量通知或分块持久化结构。

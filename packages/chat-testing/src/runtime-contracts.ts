@@ -146,6 +146,8 @@ const runtimeIsolationCase = (
         firstMemory.controller.emitUpdateToAll(
           firstFixtures.realtimeMessageUpdate,
         );
+        firstMemory.controller.emitUpdateToAll(firstFixtures.runUpdate);
+        firstMemory.controller.emitError(firstFixtures.authenticationError);
         await firstAdapter.settle();
         await secondAdapter.settle();
         const firstSnapshot = await firstAdapter.getSnapshot();
@@ -156,10 +158,19 @@ const runtimeIsolationCase = (
           ) === true,
           "the first Runtime must receive its own update",
         );
+        assert(
+          firstSnapshot?.run?.id === "run-replaced" &&
+            firstSnapshot.run.status === "succeeded",
+          "the first Runtime must receive only its own Run update",
+        );
+        assert(
+          firstSnapshot?.error?.code === "authentication",
+          "the first Runtime must receive only its own authentication error",
+        );
         assertEqual(
           secondSnapshot,
           secondFixtures.initialSnapshot,
-          "the second Runtime must not receive the first Runtime update",
+          "the second Runtime must not receive the first Runtime state, Run, or authentication updates",
         );
         assert(
           firstNotifications > firstNotificationsBeforeUpdate,
@@ -252,6 +263,135 @@ const probeSnapshotIsolation = async (
   );
 };
 
+const runtimeSnapshotBoundaryCase = (
+  factory: RuntimeContractAdapterFactory,
+): ChatContractCase =>
+  Object.freeze({
+    name: "preserves updates across initial-load and conversation-switch snapshot boundaries",
+    async run() {
+      const firstFixtures = createChatContractFixtures({
+        conversationId: "conversation-boundary-first",
+      });
+      const secondFixtures = createChatContractFixtures({
+        baseTimestamp: 1_773_705_700_000,
+        conversationId: "conversation-boundary-second",
+      });
+      const firstMemory = createMemoryChatGateway({ fixtures: firstFixtures });
+      const secondMemory = createMemoryChatGateway({
+        fixtures: secondFixtures,
+      });
+      const emitted = new Set<string>();
+      const selectMemory = (conversationId: string) =>
+        conversationId === firstFixtures.conversation.id
+          ? firstMemory
+          : secondMemory;
+      const emitSnapshotBoundary = (
+        conversationId: string,
+        fixtures: ChatContractFixtures,
+      ): void => {
+        if (emitted.has(conversationId)) return;
+        emitted.add(conversationId);
+        const memory = selectMemory(conversationId);
+        memory.controller.emitUpdateToAll(fixtures.realtimeMessageUpdate);
+        memory.controller.emitUpdateToAll(fixtures.runUpdate);
+        memory.controller.emitError(fixtures.authenticationError);
+      };
+      const gateway: ChatGateway = {
+        dispose: async (options) => {
+          const results = await Promise.allSettled([
+            firstMemory.gateway.dispose(options),
+            secondMemory.gateway.dispose(options),
+          ]);
+          const failures = results
+            .filter(
+              (result): result is PromiseRejectedResult =>
+                result.status === "rejected",
+            )
+            .map(({ reason }) => reason);
+          if (failures.length === 1) throw failures[0];
+          if (failures.length > 1) {
+            throw new AggregateError(failures, "Gateway cleanup failed");
+          }
+        },
+        interrupt: (input) =>
+          selectMemory(input.conversationId).gateway.interrupt(input),
+        listConversations: (input) =>
+          firstMemory.gateway.listConversations(input),
+        loadConversation: (input) => {
+          const fixtures =
+            input.conversationId === firstFixtures.conversation.id
+              ? firstFixtures
+              : secondFixtures;
+          emitSnapshotBoundary(input.conversationId, fixtures);
+          return selectMemory(input.conversationId).gateway.loadConversation(
+            input,
+          );
+        },
+        sendText: (input) =>
+          selectMemory(input.conversationId).gateway.sendText(input),
+        subscribe: (input, observer) =>
+          selectMemory(input.conversationId).gateway.subscribe(input, observer),
+      };
+      let adapter: RuntimeContractAdapter | undefined;
+      const assertBoundaryState = (
+        snapshot: ChatSnapshot | null,
+        fixtures: ChatContractFixtures,
+        label: string,
+      ): void => {
+        assert(
+          snapshot?.timeline.some(({ id }) => id === "message-realtime") ===
+            true,
+          `${label} must retain the message emitted at the snapshot boundary`,
+        );
+        assert(
+          snapshot?.run?.id === "run-replaced" &&
+            snapshot.run.status === "succeeded",
+          `${label} must retain the Run emitted at the snapshot boundary`,
+        );
+        assert(
+          snapshot?.error?.code === "authentication" &&
+            snapshot.error.conversationId === fixtures.conversation.id,
+          `${label} must retain the error emitted at the snapshot boundary`,
+        );
+      };
+
+      try {
+        adapter = await factory(gateway, firstFixtures);
+        await adapter.loadConversation({
+          conversationId: firstFixtures.conversation.id,
+          deadlineAt: deadlineFrom(firstMemory.controller.now()),
+        });
+        await adapter.settle();
+        assertBoundaryState(
+          await adapter.getSnapshot(),
+          firstFixtures,
+          "initial load",
+        );
+
+        await adapter.loadConversation({
+          conversationId: secondFixtures.conversation.id,
+          deadlineAt: deadlineFrom(secondMemory.controller.now()),
+        });
+        await adapter.settle();
+        assertBoundaryState(
+          await adapter.getSnapshot(),
+          secondFixtures,
+          "conversation switch",
+        );
+      } finally {
+        try {
+          await adapter?.dispose({
+            deadlineAt: deadlineFrom(firstMemory.controller.now()),
+          });
+        } finally {
+          await gateway.dispose({
+            deadlineAt: deadlineFrom(firstMemory.controller.now()),
+          });
+        }
+      }
+    },
+  });
+
 /**
  * Runtime behavior cases. The adapter is intentionally test-only so TFCK-5
  * does not freeze the concrete ChatClient signatures introduced later.
@@ -261,6 +401,7 @@ export const createRuntimeContractCases = (
 ): readonly ChatContractCase[] =>
   Object.freeze([
     runtimeIsolationCase(factory),
+    runtimeSnapshotBoundaryCase(factory),
     runtimeCase(
       "loads the initial immutable snapshot",
       factory,
@@ -278,6 +419,38 @@ export const createRuntimeContractCases = (
         );
         assert(snapshot !== null, "Runtime must expose an initial snapshot");
         await probeSnapshotIsolation(adapter, snapshot, "initial snapshot");
+      },
+    ),
+    runtimeCase(
+      "does not publish an unchanged conversation reload",
+      factory,
+      async ({ adapter, deadlineAt, fixtures }) => {
+        const input: LoadConversationInput = {
+          conversationId: fixtures.conversation.id,
+          deadlineAt: deadlineAt(),
+        };
+        await adapter.loadConversation(input);
+        const before = await adapter.getSnapshot();
+        let notifications = 0;
+        const subscription = await adapter.subscribe(() => {
+          notifications += 1;
+        });
+
+        await adapter.loadConversation({
+          ...input,
+          deadlineAt: deadlineAt(),
+        });
+        await adapter.settle();
+
+        assert(
+          (await adapter.getSnapshot()) === before,
+          "an unchanged reload must retain the current immutable snapshot",
+        );
+        assert(
+          notifications === 1,
+          "an unchanged reload must not notify subscribers",
+        );
+        await subscription.dispose();
       },
     ),
     runtimeCase(
@@ -488,6 +661,13 @@ export const createRuntimeContractCases = (
           deadlineAt: deadlineAt(),
         };
         const interrupted = await adapter.interrupt(interruptInput);
+        const implicitInterruptInput: InterruptRunInput = {
+          conversationId: fixtures.conversation.id,
+          deadlineAt: deadlineAt(),
+        };
+        const implicitlyInterrupted = await adapter.interrupt(
+          implicitInterruptInput,
+        );
         assertEqual(
           sent,
           { ok: true, value: fixtures.sendTextSuccess },
@@ -499,6 +679,11 @@ export const createRuntimeContractCases = (
           "Runtime must return the Gateway interrupt result",
         );
         assertEqual(
+          implicitlyInterrupted,
+          { ok: true, value: fixtures.interruptSuccess },
+          "Runtime must return the implicit interrupt result",
+        );
+        assertEqual(
           calls().filter(
             ({ operation }) =>
               operation === "sendText" || operation === "interrupt",
@@ -506,8 +691,15 @@ export const createRuntimeContractCases = (
           [
             { operation: "sendText", input: sendInput },
             { operation: "interrupt", input: interruptInput },
+            {
+              operation: "interrupt",
+              input: {
+                ...implicitInterruptInput,
+                runId: fixtures.initialSnapshot.run?.id,
+              },
+            },
           ],
-          "Runtime commands must reach the injected Gateway without changing their payloads",
+          "Runtime commands must reach the injected Gateway and implicit interrupts must be pinned to the active Run",
         );
       },
     ),
@@ -534,6 +726,11 @@ export const createRuntimeContractCases = (
         assert(
           gatewayDisposed(),
           "disposed Runtime adapters must dispose their injected Gateway",
+        );
+        assertEqual(
+          await adapter.getSnapshot(),
+          null,
+          "disposed Runtime adapters must release their retained snapshot state",
         );
         emitUpdate(fixtures.realtimeMessageUpdate);
         await adapter.settle();

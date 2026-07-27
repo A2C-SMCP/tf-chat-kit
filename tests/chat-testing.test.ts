@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -7,6 +9,7 @@ import {
   getTimelineItemKey,
   hasCompatibleAgentEventMetadata,
   type AgentEvent,
+  type ChatError,
   type ChatGateway,
   type ChatSnapshot,
   type ChatUpdate,
@@ -44,23 +47,40 @@ class ReferenceRuntimeAdapter implements RuntimeContractAdapter {
   }
 
   async loadConversation(input: LoadConversationInput): Promise<void> {
-    const loaded = await this.#gateway.loadConversation(input);
-    if (!loaded.ok) throw new Error(loaded.error.message);
-    this.#snapshot = chatSnapshotSchema.parse(loaded.value);
-
+    const pending: ChatUpdate[] = [];
+    const pendingErrors: ChatError[] = [];
+    let buffering = true;
     const subscribed = await this.#gateway.subscribe(input, {
-      next: (update) => this.#apply(update),
+      next: (update) => {
+        if (buffering) pending.push(update);
+        else this.#apply(update);
+      },
       error: (error) => {
-        if (this.#snapshot === null) return;
-        this.#snapshot = chatSnapshotSchema.parse({
-          ...this.#snapshot,
-          error,
-        });
-        this.#notify();
+        if (buffering) {
+          pendingErrors.push(error);
+          return;
+        }
+        this.#applyError(error);
       },
     });
-    if (!subscribed.ok) throw new Error(subscribed.error.message);
-    this.#gatewaySubscription = subscribed.value;
+    const loaded = await this.#gateway.loadConversation(input);
+    if (!loaded.ok) throw new Error(loaded.error.message);
+    if (loaded.value.capabilities.liveUpdates && !subscribed.ok) {
+      throw new Error(subscribed.error.message);
+    }
+    const snapshot = chatSnapshotSchema.parse(loaded.value);
+    if (
+      this.#snapshot === null ||
+      !isDeepStrictEqual(snapshot, this.#snapshot)
+    ) {
+      this.#snapshot = snapshot;
+    }
+    buffering = false;
+    for (const update of pending) this.#apply(update);
+    for (const error of pendingErrors) this.#applyError(error);
+    const previousSubscription = this.#gatewaySubscription;
+    this.#gatewaySubscription = subscribed.ok ? subscribed.value : undefined;
+    await previousSubscription?.dispose(input);
   }
 
   getSnapshot(): ChatSnapshot | null {
@@ -74,7 +94,10 @@ class ReferenceRuntimeAdapter implements RuntimeContractAdapter {
   interrupt(
     input: InterruptRunInput,
   ): Promise<GatewayResult<InterruptRunSuccess>> {
-    return this.#gateway.interrupt(input);
+    const runId = input.runId ?? this.#snapshot?.run?.id;
+    return this.#gateway.interrupt(
+      runId === undefined ? input : { ...input, runId },
+    );
   }
 
   settle(): Promise<void> {
@@ -97,6 +120,7 @@ class ReferenceRuntimeAdapter implements RuntimeContractAdapter {
     if (this.#disposed) return;
     this.#disposed = true;
     this.#listeners.clear();
+    this.#snapshot = null;
     await this.#gatewaySubscription?.dispose(options);
     await this.#gateway.dispose(options);
   }
@@ -104,6 +128,15 @@ class ReferenceRuntimeAdapter implements RuntimeContractAdapter {
   #notify(): void {
     if (this.#disposed || this.#snapshot === null) return;
     for (const listener of this.#listeners) listener(this.#snapshot);
+  }
+
+  #applyError(error: ChatError): void {
+    if (this.#snapshot === null) return;
+    this.#snapshot = chatSnapshotSchema.parse({
+      ...this.#snapshot,
+      error,
+    });
+    this.#notify();
   }
 
   #replaceTimelineItem(item: TimelineItem): void {

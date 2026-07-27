@@ -1,2 +1,9 @@
-/** Public runtime APIs are introduced by TFCK-6. */
-export {};
+export {
+  ChatClient,
+  createChatClient,
+  type ChatClientOptions,
+  type ChatClientSubscription,
+  type ChatSnapshotListener,
+  type ChatClientUnhandledError,
+  type ChatClientUnhandledErrorSource,
+} from "./chat-client.js";
