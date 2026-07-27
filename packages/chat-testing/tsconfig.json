@@ -7,6 +7,6 @@
     "types": [],
     "tsBuildInfoFile": "../../.artifacts/tsbuildinfo/chat-testing.tsbuildinfo"
   },
-  "references": [{ "path": "../chat-protocol" }, { "path": "../chat-runtime" }],
+  "references": [{ "path": "../chat-protocol" }],
   "include": ["src/**/*.ts"]
 }
