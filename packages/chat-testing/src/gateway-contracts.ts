@@ -424,10 +424,22 @@ export const createGatewayContractCases = (
           "the same Gateway must recover after reconnect",
         );
         await controller.emitUpdate(fixtures.realtimeMessageUpdate);
+        const recoveredRealtimeUpdates = updates.filter(
+          (update) => update.kind === "timeline.upsert",
+        );
         assertEqual(
-          updates,
+          recoveredRealtimeUpdates,
           [fixtures.realtimeMessageUpdate],
           "the original live subscription must resume after reconnect",
+        );
+        assert(
+          updates.every(
+            (update) =>
+              update.kind === "timeline.upsert" ||
+              (update.kind === "run.replace" &&
+                update.conversationId === fixtures.conversation.id),
+          ),
+          "reconnect may additionally converge only the subscribed run state",
         );
         await subscribed.value.dispose({
           deadlineAt: deadlineFrom(controller.now()),

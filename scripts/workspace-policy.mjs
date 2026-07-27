@@ -86,7 +86,7 @@ export const PACKAGE_POLICY = Object.freeze({
     allowedNodeBuiltins: [],
     peerDependencies: {},
     allowedExternalDependencies: {
-      dependencies: ["socket.io-client"],
+      dependencies: ["socket.io-client", "zod"],
     },
   },
   "chat-react": {
