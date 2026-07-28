@@ -85,6 +85,9 @@ const extractionRoot = await mkdtemp(
 const consumerDirectory = await mkdtemp(
   path.join(os.tmpdir(), "tf-chat-kit-consumer-"),
 );
+const reactConsumerDirectory = await mkdtemp(
+  path.join(os.tmpdir(), "tf-chat-kit-react-consumer-"),
+);
 
 try {
   for (const packedPackage of packManifest.packages) {
@@ -140,6 +143,7 @@ try {
       "react-dom": "18.3.1",
     },
     devDependencies: {
+      "@types/react": "18.3.31",
       typescript: "5.9.3",
     },
     pnpm: { overrides: packageFiles },
@@ -200,9 +204,104 @@ try {
     "tsconfig.json",
   ]);
   run("node", [path.join(consumerDirectory, "dist", "index.js")]);
+
+  const reactConsumerPackageNames = [
+    "@turingfocus/chat-protocol",
+    "@turingfocus/chat-runtime",
+    "@turingfocus/chat-react",
+  ];
+  const reactConsumerPackageFiles = Object.fromEntries(
+    reactConsumerPackageNames.map((name) => [name, packageFiles[name]]),
+  );
+  const reactConsumerManifest = {
+    name: "tf-chat-kit-react-consumer",
+    version: "0.0.0",
+    private: true,
+    type: "module",
+    packageManager: "pnpm@10.34.5",
+    dependencies: {
+      ...reactConsumerPackageFiles,
+      react: "18.3.1",
+    },
+    devDependencies: {
+      "@types/react": "18.3.31",
+      typescript: "5.9.3",
+    },
+    pnpm: { overrides: reactConsumerPackageFiles },
+  };
+  await writeFile(
+    path.join(reactConsumerDirectory, "package.json"),
+    `${JSON.stringify(reactConsumerManifest, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(reactConsumerDirectory, "index.ts"),
+    [
+      'import { createElement } from "react";',
+      'import type { ChatSnapshot } from "@turingfocus/chat-protocol";',
+      'import type { ChatClient } from "@turingfocus/chat-runtime";',
+      'import { ChatProvider, useChatSelector } from "@turingfocus/chat-react";',
+      "",
+      "const ConversationTitle = () =>",
+      '  createElement("span", null, useChatSelector((snapshot: ChatSnapshot | null) => snapshot?.conversation.title ?? ""));',
+      "",
+      "export const OfficeStyleConsumer = ({ client }: { readonly client: ChatClient }) =>",
+      "  createElement(ChatProvider, { client }, createElement(ConversationTitle));",
+      "",
+      'console.log("Built a React consumer without Ant Design or a production Gateway.");',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await writeFile(
+    path.join(reactConsumerDirectory, "tsconfig.json"),
+    `${JSON.stringify(
+      {
+        compilerOptions: {
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          outDir: "dist",
+          strict: true,
+          target: "ES2022",
+        },
+        include: ["index.ts"],
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  run("pnpm", [
+    "--dir",
+    reactConsumerDirectory,
+    "install",
+    "--lockfile-only",
+    "--ignore-scripts",
+    "--config.strict-peer-dependencies=true",
+  ]);
+  run("pnpm", ["--dir", reactConsumerDirectory, "fetch", "--frozen-lockfile"]);
+  run("pnpm", [
+    "--dir",
+    reactConsumerDirectory,
+    "install",
+    "--offline",
+    "--frozen-lockfile",
+    "--ignore-scripts",
+    "--config.strict-peer-dependencies=true",
+  ]);
+  run("pnpm", [
+    "--dir",
+    reactConsumerDirectory,
+    "exec",
+    "tsc",
+    "-p",
+    "tsconfig.json",
+  ]);
+  run("node", [path.join(reactConsumerDirectory, "dist", "index.js")]);
 } finally {
   await rm(extractionRoot, { recursive: true, force: true });
   await rm(consumerDirectory, { recursive: true, force: true });
+  await rm(reactConsumerDirectory, { recursive: true, force: true });
 }
 
 console.log("Packed artifact validation passed.");

@@ -4,7 +4,7 @@ TFRobot 聊天能力的可复用模块。项目采用 Headless Runtime、宿主�
 
 ## 当前状态
 
-项目处于 V1 纵向切片建设阶段。六包 workspace、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-protocol` 提供标准模型、运行时 schema 与 Gateway/SessionProvider 端口，`@turingfocus/chat-testing` 提供内存 Gateway、标准 fixtures 与框架无关契约套件，`@turingfocus/chat-runtime` 提供实例化 ChatClient、不可变快照、历史/实时归并、聊天命令和显式释放，`@turingfocus/chat-gateway-tfrobot` 提供实例隔离的 TFRobotServer REST/Socket.IO、DTO 校验、短期认证注入和安全映射。React 与 UI 的实现由后续 Story 按依赖顺序完成；真实 Gateway 的生产 Socket 验证仍受 TFRS-297 安全门禁约束。
+项目处于 V1 纵向切片建设阶段。六包 workspace、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-protocol` 提供标准模型、运行时 schema 与 Gateway/SessionProvider 端口，`@turingfocus/chat-testing` 提供内存 Gateway、标准 fixtures 与框架无关契约套件，`@turingfocus/chat-runtime` 提供实例化 ChatClient、不可变快照、历史/实时归并、聊天命令和显式释放，`@turingfocus/chat-gateway-tfrobot` 提供实例隔离的 TFRobotServer REST/Socket.IO、DTO 校验、短期认证注入和安全映射，`@turingfocus/chat-react` 提供无样式 Provider、选择性订阅 hooks 和明确的实例所有权。Ant Design UI 由后续 Story 完成；真实 Gateway 的生产 Socket 验证仍受 TFRS-297 安全门禁约束。
 
 ## V1 承诺
 
@@ -64,3 +64,8 @@ Runtime V1 的时间轴性能门禁覆盖 5,000 个常驻条目上的 1,000 次�
 个历史条目一次归并到 5,000 个当前条目。不可变快照会在每次可观察更新时复制时间轴的顶层数组，
 但复用未变化的条目对象；超过 10,000 个常驻条目的宿主应通过历史分页限制内存窗口。扩大这一
 规模前需先增加对应基准，并评估批量通知或分块持久化结构。
+
+React 宿主通过 `ChatProvider` 注入自行持有的 `ChatClient`；该 Provider 不会释放外部实例。
+需要由 React 生命周期创建实例时，使用 `OwnedChatProvider` 和稳定的 `ChatClientFactory`，
+并提供释放失败处理。`useChatSelector` 用于订阅所需切片，避免无关快照更新触发组件渲染；
+`useChatSnapshot` 仅适用于确实需要完整快照的消费者。
