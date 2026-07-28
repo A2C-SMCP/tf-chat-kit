@@ -18,6 +18,16 @@
     "node": ">=24 <25",
     "pnpm": ">=10 <11"
   },
+  "pnpm": {
+    "overrides": {
+      "antd": "5.23.4"
+    },
+    "patchedDependencies": {
+      "antd@5.23.4": "patches/antd@5.23.4.patch",
+      "rc-cascader@3.33.1": "patches/rc-cascader@3.33.1.patch",
+      "rc-picker@4.9.2": "patches/rc-picker@4.9.2.patch"
+    }
+  },
   "scripts": {
     "build": "tsc -b --pretty false",
     "check": "pnpm run check:workspace && pnpm run check:changesets && pnpm run check:boundaries && pnpm run lint && pnpm run format:check && pnpm run typecheck && pnpm run test && pnpm run pack:check",
@@ -49,7 +59,7 @@
     "@types/react": "18.3.31",
     "@types/react-dom": "18.3.7",
     "@types/react-test-renderer": "18.3.1",
-    "antd": "5.29.3",
+    "antd": "5.23.4",
     "dependency-cruiser": "18.1.0",
     "eslint": "9.39.5",
     "globals": "17.7.0",

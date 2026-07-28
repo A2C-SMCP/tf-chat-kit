@@ -27,10 +27,19 @@ DOM lib；React/UI 才启用 DOM 和 JSX。这样可以在工程层阻止浏览�
 | --------------------------- | ---------- | ------------------ | ---------------------------------------------------------- |
 | `@turingfocus/chat-react`   | React      | `>=18.2.0 <19.0.0` | Office 使用 React 18.2；TFRobotFront/Tauri 使用 React 18.3 |
 | `@turingfocus/chat-ui-antd` | React      | `>=18.2.0 <19.0.0` | 与无样式 React 层保持一致                                  |
+| `@turingfocus/chat-ui-antd` | ReactDOM   | `>=18.2.0 <19.0.0` | 虚拟化 DOM 渲染；与宿主 React 主版本保持一致               |
 | `@turingfocus/chat-ui-antd` | Ant Design | `>=5.23.4 <6.0.0`  | Tauri 使用 5.23.4；TFRobotFront 使用 5.28.x                |
 
 React 19 和 Ant Design 6 尚未经过目标宿主验证，不在 V1 支持矩阵中。扩大范围需要独立兼容
 验证，而不是直接放宽 peer range。
+
+仓库以支持下界 Ant Design 5.23.4 执行完整声明检查，不启用全局 `skipLibCheck`。该版本及其
+传递依赖中有三处已确认的声明生成缺陷（ErrorBoundary 的 ReactNode 返回类型、Cascader 在
+`exactOptionalPropertyTypes` 下误用 `Required`、PickerPanel 重复声明 `defaultValue`），由根
+目录 `patches/` 中的最小 `.d.ts` 补丁修正。补丁不改变运行时代码，并由锁文件校验及
+`pnpm check` 的完整 TypeScript 门禁持续验证；升级 Ant Design 时必须先删除补丁并重新确认
+上游声明已修复。`pack:check` 还会在不继承这些补丁的临时项目中，以 5.23.4 和当前 5.29.x
+分别安装、编译并服务端渲染已打包 UI，守护公开产物的最低版本兼容契约。
 
 ## GitHub 与 npm 官方 Registry
 

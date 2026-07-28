@@ -1,0 +1,26 @@
+diff --git a/es/Cascader.d.ts b/es/Cascader.d.ts
+index 6a423544780dcb3776320d36d0e730a1a11e5443..1d34683db29a3b46de03f649d11d6924c6604547 100644
+--- a/es/Cascader.d.ts
++++ b/es/Cascader.d.ts
+@@ -61,7 +61,7 @@ export interface FieldNames<OptionType extends DefaultOptionType = DefaultOption
+     children?: keyof OptionType;
+ }
+ export type ValueType<OptionType extends DefaultOptionType = DefaultOptionType, ValueField extends keyof OptionType = keyof OptionType> = keyof OptionType extends ValueField ? unknown extends OptionType['value'] ? OptionType[ValueField] : OptionType['value'] : OptionType[ValueField];
+-export type GetValueType<OptionType extends DefaultOptionType = DefaultOptionType, ValueField extends keyof OptionType = keyof OptionType, Multiple extends boolean | React.ReactNode = false> = false extends Multiple ? ValueType<Required<OptionType>, ValueField>[] : ValueType<Required<OptionType>, ValueField>[][];
++export type GetValueType<OptionType extends DefaultOptionType = DefaultOptionType, ValueField extends keyof OptionType = keyof OptionType, Multiple extends boolean | React.ReactNode = false> = false extends Multiple ? ValueType<OptionType, ValueField>[] : ValueType<OptionType, ValueField>[][];
+ export type GetOptionType<OptionType extends DefaultOptionType = DefaultOptionType, Multiple extends boolean | React.ReactNode = false> = false extends Multiple ? OptionType[] : OptionType[][];
+ export interface CascaderProps<OptionType extends DefaultOptionType = DefaultOptionType, ValueField extends keyof OptionType = keyof OptionType, Multiple extends boolean | React.ReactNode = false> extends BaseCascaderProps<OptionType, ValueField> {
+     checkable?: Multiple;
+diff --git a/lib/Cascader.d.ts b/lib/Cascader.d.ts
+index 6a423544780dcb3776320d36d0e730a1a11e5443..1d34683db29a3b46de03f649d11d6924c6604547 100644
+--- a/lib/Cascader.d.ts
++++ b/lib/Cascader.d.ts
+@@ -61,7 +61,7 @@ export interface FieldNames<OptionType extends DefaultOptionType = DefaultOption
+     children?: keyof OptionType;
+ }
+ export type ValueType<OptionType extends DefaultOptionType = DefaultOptionType, ValueField extends keyof OptionType = keyof OptionType> = keyof OptionType extends ValueField ? unknown extends OptionType['value'] ? OptionType[ValueField] : OptionType['value'] : OptionType[ValueField];
+-export type GetValueType<OptionType extends DefaultOptionType = DefaultOptionType, ValueField extends keyof OptionType = keyof OptionType, Multiple extends boolean | React.ReactNode = false> = false extends Multiple ? ValueType<Required<OptionType>, ValueField>[] : ValueType<Required<OptionType>, ValueField>[][];
++export type GetValueType<OptionType extends DefaultOptionType = DefaultOptionType, ValueField extends keyof OptionType = keyof OptionType, Multiple extends boolean | React.ReactNode = false> = false extends Multiple ? ValueType<OptionType, ValueField>[] : ValueType<OptionType, ValueField>[][];
+ export type GetOptionType<OptionType extends DefaultOptionType = DefaultOptionType, Multiple extends boolean | React.ReactNode = false> = false extends Multiple ? OptionType[] : OptionType[][];
+ export interface CascaderProps<OptionType extends DefaultOptionType = DefaultOptionType, ValueField extends keyof OptionType = keyof OptionType, Multiple extends boolean | React.ReactNode = false> extends BaseCascaderProps<OptionType, ValueField> {
+     checkable?: Multiple;

@@ -1,0 +1,40 @@
+diff --git a/es/alert/ErrorBoundary.d.ts b/es/alert/ErrorBoundary.d.ts
+index 91b7fc585c0d72c755f8fb365804c2f6a360639f..8566b0581a26e5ca2cd184ff501b3be7355b31b4 100644
+--- a/es/alert/ErrorBoundary.d.ts
++++ b/es/alert/ErrorBoundary.d.ts
+@@ -12,13 +12,8 @@ interface ErrorBoundaryStates {
+     };
+ }
+ declare class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryStates> {
+-    state: {
+-        error: undefined;
+-        info: {
+-            componentStack: string;
+-        };
+-    };
++    state: ErrorBoundaryStates;
+     componentDidCatch(error: Error | null, info: object): void;
+-    render(): string | number | bigint | boolean | Iterable<React.ReactNode> | Promise<string | number | bigint | boolean | React.ReactPortal | React.ReactElement<unknown, string | React.JSXElementConstructor<any>> | Iterable<React.ReactNode> | null | undefined> | React.JSX.Element | null | undefined;
++    render(): React.ReactNode;
+ }
+ export default ErrorBoundary;
+diff --git a/lib/alert/ErrorBoundary.d.ts b/lib/alert/ErrorBoundary.d.ts
+index 91b7fc585c0d72c755f8fb365804c2f6a360639f..8566b0581a26e5ca2cd184ff501b3be7355b31b4 100644
+--- a/lib/alert/ErrorBoundary.d.ts
++++ b/lib/alert/ErrorBoundary.d.ts
+@@ -12,13 +12,8 @@ interface ErrorBoundaryStates {
+     };
+ }
+ declare class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryStates> {
+-    state: {
+-        error: undefined;
+-        info: {
+-            componentStack: string;
+-        };
+-    };
++    state: ErrorBoundaryStates;
+     componentDidCatch(error: Error | null, info: object): void;
+-    render(): string | number | bigint | boolean | Iterable<React.ReactNode> | Promise<string | number | bigint | boolean | React.ReactPortal | React.ReactElement<unknown, string | React.JSXElementConstructor<any>> | Iterable<React.ReactNode> | null | undefined> | React.JSX.Element | null | undefined;
++    render(): React.ReactNode;
+ }
+ export default ErrorBoundary;

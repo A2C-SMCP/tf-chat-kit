@@ -21,6 +21,30 @@ const run = (command, args, options = {}) =>
     ...options,
   });
 
+/** @param {string} directory */
+const installBuildAndRunConsumer = (directory) => {
+  run("pnpm", [
+    "--dir",
+    directory,
+    "install",
+    "--lockfile-only",
+    "--ignore-scripts",
+    "--config.strict-peer-dependencies=true",
+  ]);
+  run("pnpm", ["--dir", directory, "fetch", "--frozen-lockfile"]);
+  run("pnpm", [
+    "--dir",
+    directory,
+    "install",
+    "--offline",
+    "--frozen-lockfile",
+    "--ignore-scripts",
+    "--config.strict-peer-dependencies=true",
+  ]);
+  run("pnpm", ["--dir", directory, "exec", "tsc", "-p", "tsconfig.json"]);
+  run("node", [path.join(directory, "dist", "index.js")]);
+};
+
 const packageDirectories = Object.keys(PACKAGE_POLICY);
 
 /**
@@ -85,6 +109,9 @@ const extractionRoot = await mkdtemp(
 const consumerDirectory = await mkdtemp(
   path.join(os.tmpdir(), "tf-chat-kit-consumer-"),
 );
+const minimumUiConsumerDirectory = await mkdtemp(
+  path.join(os.tmpdir(), "tf-chat-kit-minimum-ui-consumer-"),
+);
 const reactConsumerDirectory = await mkdtemp(
   path.join(os.tmpdir(), "tf-chat-kit-react-consumer-"),
 );
@@ -144,6 +171,7 @@ try {
     },
     devDependencies: {
       "@types/react": "18.3.31",
+      "@types/react-dom": "18.3.7",
       typescript: "5.9.3",
     },
     pnpm: { overrides: packageFiles },
@@ -155,7 +183,46 @@ try {
   );
   await writeFile(
     path.join(consumerDirectory, "index.ts"),
-    `${packManifest.packages.map(({ name }) => `import * as ${name.replace(/\W/gu, "_")} from ${JSON.stringify(name)};`).join("\n")}\nconsole.log("Installed, built, and imported ${packManifest.packages.length} packed packages.");\n`,
+    [
+      'import { createElement } from "react";',
+      'import { renderToStaticMarkup } from "react-dom/server";',
+      'import type { TimelineItem } from "@turingfocus/chat-protocol";',
+      ...packManifest.packages.map(
+        ({ name }) =>
+          `import * as ${name.replace(/\W/gu, "_")} from ${JSON.stringify(name)};`,
+      ),
+      "",
+      "const shellMarkup = renderToStaticMarkup(",
+      "  createElement(_turingfocus_chat_ui_antd.ChatUiShell, {",
+      '    contentState: { kind: "empty" },',
+      "    conversations: [],",
+      "    onConversationSelect: () => undefined,",
+      "  }),",
+      ");",
+      'if (!shellMarkup.includes("No conversation selected")) {',
+      '  throw new Error("Packed Ant Design chat shell did not render.");',
+      "}",
+      "const unknownItem: TimelineItem = {",
+      '  kind: "unknown-event",',
+      '  id: "packed-unknown",',
+      '  conversationId: "packed-conversation",',
+      '  originalType: "future.packed-event",',
+      "  createdAt: Date.UTC(2026, 6, 28),",
+      '  summary: "Packed safe fallback",',
+      '  raw: { token: "must-not-render" },',
+      "};",
+      "const timelineMarkup = renderToStaticMarkup(",
+      "  createElement(_turingfocus_chat_ui_antd.ChatTimeline, {",
+      '    conversationId: "packed-conversation",',
+      "    items: [unknownItem],",
+      "  }),",
+      ");",
+      'if (!timelineMarkup.includes("Packed safe fallback") || timelineMarkup.includes("must-not-render")) {',
+      '  throw new Error("Packed Ant Design timeline fallback is unsafe or unavailable.");',
+      "}",
+      `console.log("Installed, built, imported, and rendered ${packManifest.packages.length} packed packages.");`,
+      "",
+    ].join("\n"),
     "utf8",
   );
   await writeFile(
@@ -163,6 +230,7 @@ try {
     `${JSON.stringify(
       {
         compilerOptions: {
+          exactOptionalPropertyTypes: true,
           module: "NodeNext",
           moduleResolution: "NodeNext",
           outDir: "dist",
@@ -177,33 +245,32 @@ try {
     "utf8",
   );
 
-  run("pnpm", [
-    "--dir",
-    consumerDirectory,
-    "install",
-    "--lockfile-only",
-    "--ignore-scripts",
-    "--config.strict-peer-dependencies=true",
-  ]);
-  run("pnpm", ["--dir", consumerDirectory, "fetch", "--frozen-lockfile"]);
-  run("pnpm", [
-    "--dir",
-    consumerDirectory,
-    "install",
-    "--offline",
-    "--frozen-lockfile",
-    "--ignore-scripts",
-    "--config.strict-peer-dependencies=true",
-  ]);
-  run("pnpm", [
-    "--dir",
-    consumerDirectory,
-    "exec",
-    "tsc",
-    "-p",
-    "tsconfig.json",
-  ]);
-  run("node", [path.join(consumerDirectory, "dist", "index.js")]);
+  installBuildAndRunConsumer(consumerDirectory);
+
+  const minimumUiConsumerManifest = {
+    ...consumerManifest,
+    name: "tf-chat-kit-minimum-ui-consumer",
+    dependencies: {
+      ...consumerManifest.dependencies,
+      antd: "5.23.4",
+    },
+  };
+  await writeFile(
+    path.join(minimumUiConsumerDirectory, "package.json"),
+    `${JSON.stringify(minimumUiConsumerManifest, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(minimumUiConsumerDirectory, "index.ts"),
+    await readFile(path.join(consumerDirectory, "index.ts"), "utf8"),
+    "utf8",
+  );
+  await writeFile(
+    path.join(minimumUiConsumerDirectory, "tsconfig.json"),
+    await readFile(path.join(consumerDirectory, "tsconfig.json"), "utf8"),
+    "utf8",
+  );
+  installBuildAndRunConsumer(minimumUiConsumerDirectory);
 
   const reactConsumerPackageNames = [
     "@turingfocus/chat-protocol",
@@ -271,36 +338,11 @@ try {
     )}\n`,
     "utf8",
   );
-  run("pnpm", [
-    "--dir",
-    reactConsumerDirectory,
-    "install",
-    "--lockfile-only",
-    "--ignore-scripts",
-    "--config.strict-peer-dependencies=true",
-  ]);
-  run("pnpm", ["--dir", reactConsumerDirectory, "fetch", "--frozen-lockfile"]);
-  run("pnpm", [
-    "--dir",
-    reactConsumerDirectory,
-    "install",
-    "--offline",
-    "--frozen-lockfile",
-    "--ignore-scripts",
-    "--config.strict-peer-dependencies=true",
-  ]);
-  run("pnpm", [
-    "--dir",
-    reactConsumerDirectory,
-    "exec",
-    "tsc",
-    "-p",
-    "tsconfig.json",
-  ]);
-  run("node", [path.join(reactConsumerDirectory, "dist", "index.js")]);
+  installBuildAndRunConsumer(reactConsumerDirectory);
 } finally {
   await rm(extractionRoot, { recursive: true, force: true });
   await rm(consumerDirectory, { recursive: true, force: true });
+  await rm(minimumUiConsumerDirectory, { recursive: true, force: true });
   await rm(reactConsumerDirectory, { recursive: true, force: true });
 }
 

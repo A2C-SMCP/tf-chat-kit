@@ -1,0 +1,26 @@
+diff --git a/es/PickerPanel/index.d.ts b/es/PickerPanel/index.d.ts
+index a5ef7718f8d45b56302be63c098443f39ceb7044..13e253be14eb9c4e9399cde7251a9eea003ca566 100644
+--- a/es/PickerPanel/index.d.ts
++++ b/es/PickerPanel/index.d.ts
+@@ -3,7 +3,7 @@ import type { CellRender, Components, Locale, OnPanelChange, PanelMode, PickerMo
+ export interface PickerPanelRef {
+     nativeElement: HTMLDivElement;
+ }
+-export interface BasePickerPanelProps<DateType extends object = any> extends Pick<SharedPanelProps<DateType>, 'locale' | 'generateConfig' | 'disabledDate' | 'minDate' | 'maxDate' | 'prevIcon' | 'nextIcon' | 'superPrevIcon' | 'superNextIcon'>, SharedTimeProps<DateType>, Pick<React.HTMLAttributes<HTMLDivElement>, 'tabIndex'> {
++export interface BasePickerPanelProps<DateType extends object = any> extends Pick<SharedPanelProps<DateType>, 'locale' | 'generateConfig' | 'disabledDate' | 'minDate' | 'maxDate' | 'prevIcon' | 'nextIcon' | 'superPrevIcon' | 'superNextIcon'>, Omit<SharedTimeProps<DateType>, 'defaultValue'>, Pick<React.HTMLAttributes<HTMLDivElement>, 'tabIndex'> {
+     prefixCls?: string;
+     direction?: 'ltr' | 'rtl';
+     onSelect?: (date: DateType) => void;
+diff --git a/lib/PickerPanel/index.d.ts b/lib/PickerPanel/index.d.ts
+index a5ef7718f8d45b56302be63c098443f39ceb7044..13e253be14eb9c4e9399cde7251a9eea003ca566 100644
+--- a/lib/PickerPanel/index.d.ts
++++ b/lib/PickerPanel/index.d.ts
+@@ -3,7 +3,7 @@ import type { CellRender, Components, Locale, OnPanelChange, PanelMode, PickerMo
+ export interface PickerPanelRef {
+     nativeElement: HTMLDivElement;
+ }
+-export interface BasePickerPanelProps<DateType extends object = any> extends Pick<SharedPanelProps<DateType>, 'locale' | 'generateConfig' | 'disabledDate' | 'minDate' | 'maxDate' | 'prevIcon' | 'nextIcon' | 'superPrevIcon' | 'superNextIcon'>, SharedTimeProps<DateType>, Pick<React.HTMLAttributes<HTMLDivElement>, 'tabIndex'> {
++export interface BasePickerPanelProps<DateType extends object = any> extends Pick<SharedPanelProps<DateType>, 'locale' | 'generateConfig' | 'disabledDate' | 'minDate' | 'maxDate' | 'prevIcon' | 'nextIcon' | 'superPrevIcon' | 'superNextIcon'>, Omit<SharedTimeProps<DateType>, 'defaultValue'>, Pick<React.HTMLAttributes<HTMLDivElement>, 'tabIndex'> {
+     prefixCls?: string;
+     direction?: 'ltr' | 'rtl';
+     onSelect?: (date: DateType) => void;

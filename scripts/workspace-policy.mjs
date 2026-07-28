@@ -100,15 +100,19 @@ export const PACKAGE_POLICY = Object.freeze({
   },
   "chat-ui-antd": {
     name: "@turingfocus/chat-ui-antd",
-    internalDependencies: ["@turingfocus/chat-react"],
+    internalDependencies: [
+      "@turingfocus/chat-protocol",
+      "@turingfocus/chat-react",
+    ],
     allowedNodeBuiltins: [],
     peerDependencies: {
       antd: ">=5.23.4 <6.0.0",
       react: ">=18.2.0 <19.0.0",
+      "react-dom": ">=18.2.0 <19.0.0",
     },
     allowedExternalDependencies: {
-      dependencies: heavyRendererDependencyPatterns,
-      peerDependencies: ["antd", "react"],
+      dependencies: [...heavyRendererDependencyPatterns, "react-virtuoso"],
+      peerDependencies: ["antd", "react", "react-dom"],
     },
   },
   "chat-testing": {
