@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -103,20 +110,29 @@ const packManifest = JSON.parse(
     "utf8",
   ),
 );
-const extractionRoot = await mkdtemp(
-  path.join(os.tmpdir(), "tf-chat-kit-artifacts-"),
+const verificationRoot = await mkdtemp(
+  path.join(os.tmpdir(), "tf-chat-kit-packed-verification-"),
 );
-const consumerDirectory = await mkdtemp(
-  path.join(os.tmpdir(), "tf-chat-kit-consumer-"),
+const extractionRoot = path.join(verificationRoot, "artifacts");
+const consumerDirectory = path.join(verificationRoot, "consumer");
+const minimumUiConsumerDirectory = path.join(
+  verificationRoot,
+  "minimum-ui-consumer",
 );
-const minimumUiConsumerDirectory = await mkdtemp(
-  path.join(os.tmpdir(), "tf-chat-kit-minimum-ui-consumer-"),
-);
-const reactConsumerDirectory = await mkdtemp(
-  path.join(os.tmpdir(), "tf-chat-kit-react-consumer-"),
+const reactConsumerDirectory = path.join(verificationRoot, "react-consumer");
+const tfrobotfrontStyleConsumerDirectory = path.join(
+  verificationRoot,
+  "tfrobotfront-style-consumer",
 );
 
 try {
+  await Promise.all([
+    mkdir(extractionRoot),
+    mkdir(consumerDirectory),
+    mkdir(minimumUiConsumerDirectory),
+    mkdir(reactConsumerDirectory),
+    mkdir(tfrobotfrontStyleConsumerDirectory),
+  ]);
   for (const packedPackage of packManifest.packages) {
     const policyEntry = Object.entries(PACKAGE_POLICY).find(
       ([, { name }]) => name === packedPackage.name,
@@ -339,11 +355,123 @@ try {
     "utf8",
   );
   installBuildAndRunConsumer(reactConsumerDirectory);
+
+  const tfrobotfrontStylePackageNames = [
+    "@turingfocus/chat-gateway-tfrobot",
+    "@turingfocus/chat-protocol",
+    "@turingfocus/chat-react",
+    "@turingfocus/chat-runtime",
+    "@turingfocus/chat-ui-antd",
+  ];
+  const tfrobotfrontStylePackageFiles = Object.fromEntries(
+    tfrobotfrontStylePackageNames.map((name) => [name, packageFiles[name]]),
+  );
+  const tfrobotfrontStyleConsumerManifest = {
+    name: "tf-chat-kit-tfrobotfront-style-consumer",
+    version: "0.0.0",
+    private: true,
+    type: "module",
+    packageManager: "pnpm@10.34.5",
+    dependencies: {
+      ...tfrobotfrontStylePackageFiles,
+      antd: "5.29.3",
+      react: "18.3.1",
+      "react-dom": "18.3.1",
+      "react-test-renderer": "18.3.1",
+    },
+    devDependencies: {
+      "@types/node": "24.13.3",
+      "@types/react": "18.3.31",
+      "@types/react-dom": "18.3.7",
+      "@types/react-test-renderer": "18.3.1",
+      typescript: "5.9.3",
+    },
+    pnpm: { overrides: tfrobotfrontStylePackageFiles },
+  };
+  await writeFile(
+    path.join(tfrobotfrontStyleConsumerDirectory, "package.json"),
+    `${JSON.stringify(tfrobotfrontStyleConsumerManifest, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(tfrobotfrontStyleConsumerDirectory, "consumer.ts"),
+    await readFile(
+      path.join(
+        rootDirectory,
+        "tests",
+        "consumers",
+        "tfrobotfront-style",
+        "consumer.ts",
+      ),
+      "utf8",
+    ),
+    "utf8",
+  );
+  await writeFile(
+    path.join(tfrobotfrontStyleConsumerDirectory, "index.ts"),
+    [
+      'import { runHostConsumerVerification } from "./consumer.js";',
+      "",
+      "await runHostConsumerVerification();",
+      'console.log("Verified the versioned TFRobotFront-style host consumer.");',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await writeFile(
+    path.join(tfrobotfrontStyleConsumerDirectory, "tsconfig.json"),
+    `${JSON.stringify(
+      {
+        compilerOptions: {
+          exactOptionalPropertyTypes: true,
+          lib: ["ES2023", "DOM", "DOM.Iterable"],
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          outDir: "dist",
+          skipLibCheck: true,
+          strict: true,
+          target: "ES2023",
+          types: ["node"],
+        },
+        include: ["consumer.ts", "index.ts"],
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  installBuildAndRunConsumer(tfrobotfrontStyleConsumerDirectory);
+  for (const packageName of tfrobotfrontStylePackageNames) {
+    const packedPackage = packManifest.packages.find(
+      ({ name }) => name === packageName,
+    );
+    if (packedPackage === undefined) {
+      throw new Error(`missing packed package ${packageName}`);
+    }
+    const installedManifest = JSON.parse(
+      await readFile(
+        path.join(
+          tfrobotfrontStyleConsumerDirectory,
+          "node_modules",
+          ...packageName.split("/"),
+          "package.json",
+        ),
+        "utf8",
+      ),
+    );
+    if (
+      installedManifest.name !== packedPackage.name ||
+      installedManifest.version !== packedPackage.version ||
+      installedManifest.repository?.url !==
+        "git+https://github.com/A2C-SMCP/tf-chat-kit.git"
+    ) {
+      throw new Error(
+        `${packageName}: installed host consumer package metadata did not match the packed artifact`,
+      );
+    }
+  }
 } finally {
-  await rm(extractionRoot, { recursive: true, force: true });
-  await rm(consumerDirectory, { recursive: true, force: true });
-  await rm(minimumUiConsumerDirectory, { recursive: true, force: true });
-  await rm(reactConsumerDirectory, { recursive: true, force: true });
+  await rm(verificationRoot, { recursive: true, force: true });
 }
 
 console.log("Packed artifact validation passed.");
