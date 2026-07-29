@@ -23,15 +23,19 @@ DOM lib；React/UI 才启用 DOM 和 JSX。这样可以在工程层阻止浏览�
 
 ## Peer dependency 基线
 
-| 包                          | Peer       | 范围               | 消费者证据                                                 |
-| --------------------------- | ---------- | ------------------ | ---------------------------------------------------------- |
-| `@turingfocus/chat-react`   | React      | `>=18.2.0 <19.0.0` | Office 使用 React 18.2；TFRobotFront/Tauri 使用 React 18.3 |
-| `@turingfocus/chat-ui-antd` | React      | `>=18.2.0 <19.0.0` | 与无样式 React 层保持一致                                  |
-| `@turingfocus/chat-ui-antd` | ReactDOM   | `>=18.2.0 <19.0.0` | 虚拟化 DOM 渲染；与宿主 React 主版本保持一致               |
-| `@turingfocus/chat-ui-antd` | Ant Design | `>=5.23.4 <6.0.0`  | Tauri 使用 5.23.4；TFRobotFront 使用 5.28.x                |
+| 包                          | Peer       | 范围               | 消费者证据                                             |
+| --------------------------- | ---------- | ------------------ | ------------------------------------------------------ |
+| `@turingfocus/chat-react`   | React      | `>=18.2.0 <19.0.0` | Office 风格消费者验证 18.2 下界；已检查宿主锁定 18.3.1 |
+| `@turingfocus/chat-ui-antd` | React      | `>=18.2.0 <19.0.0` | 与无样式 React 层保持一致                              |
+| `@turingfocus/chat-ui-antd` | ReactDOM   | `>=18.2.0 <19.0.0` | 虚拟化 DOM 渲染；与宿主 React 主版本保持一致           |
+| `@turingfocus/chat-ui-antd` | Ant Design | `>=5.23.4 <6.0.0`  | 消费者验证 5.23.4 下界；已检查 Tauri 宿主锁定 5.29.3   |
 
 React 19 和 Ant Design 6 尚未经过目标宿主验证，不在 V1 支持矩阵中。扩大范围需要独立兼容
 验证，而不是直接放宽 peer range。
+
+宿主声明范围、锁定版本和只读 revision 的证据记录在
+`docs/baselines/tfck-12/non-tfrobotfront-consumer-matrix.md`。兼容下界消费者用于守护公共 peer
+契约，不表示外部宿主锁文件当前解析到该下界版本。
 
 仓库以支持下界 Ant Design 5.23.4 执行完整声明检查，不启用全局 `skipLibCheck`。该版本及其
 传递依赖中有三处已确认的声明生成缺陷（ErrorBoundary 的 ReactNode 返回类型、Cascader 在
@@ -62,11 +66,19 @@ npm 凭据，只能进入受保护的 GitHub Environment；不得写入仓库、
 ## 本地与 CI 门禁
 
 ```bash
+nvm install
+nvm use
+corepack enable
 corepack prepare pnpm@10.34.5 --activate
 pnpm install --frozen-lockfile
 pnpm check
 pnpm pack:workspace
 ```
+
+仓库根目录的 `.nvmrc` 是本地开发与 GitHub Actions 共用的 Node.js 24.x 版本来源。
+`package.json` 的 `engines` 与 `devEngines.runtime` 声明支持范围和失败语义；根 `preinstall`
+和 workspace 检查复用同一版本校验，确保 pnpm 10 下的普通安装与完整门禁都能 fail-fast。
+显式 `--ignore-scripts` 会跳过安装钩子，因此 CI 仍以 workspace 检查作为最终门禁。
 
 `pnpm check` 验证固定包集合、统一版本、Changesets 状态、依赖方向、宿主源码零依赖、peer
 归属、lint、格式、类型、测试、构建、tarball 最终内容，以及临时消费者的离线安装、TypeScript

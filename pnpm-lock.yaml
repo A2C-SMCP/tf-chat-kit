@@ -42,6 +42,9 @@ importers:
       "@eslint/js":
         specifier: 9.39.5
         version: 9.39.5
+      "@types/jsdom":
+        specifier: 28.0.3
+        version: 28.0.3
       "@types/node":
         specifier: 24.13.3
         version: 24.13.3
@@ -973,6 +976,12 @@ packages:
         integrity: sha512-rp/ezSWaD1m44dPKICGhiskI13nVr7qTloFwDa/IYkhhf5nzwP+zIQcIJh3WIFSBOy/H1PzB40jPjMDksN4F+g==,
       }
 
+  "@types/jsdom@28.0.3":
+    resolution:
+      {
+        integrity: sha512-/HQ2uFoetFTXuye8vzIcHw2z6Fwi7Hi/qcgC+RoS9NCyewiqxhVGqlG+ViGB6lkax481R6dmhf1I7lIGlzJStQ==,
+      }
+
   "@types/json-schema@7.0.15":
     resolution:
       {
@@ -1033,6 +1042,12 @@ packages:
     resolution:
       {
         integrity: sha512-vfEqpXTvwT91yhmwdfouStN2hSKwTvyRs8qpLfADyrq/kxDw0hZM7Wk9Ug1FELj8hIby+S/+kQCSRFF32nv2Qw==,
+      }
+
+  "@types/tough-cookie@4.0.5":
+    resolution:
+      {
+        integrity: sha512-/Ad8+nIOV7Rl++6f1BdKxFSMgmoqEoYbHRpPcx3JEfv8VRsQe9Z4mCXeJBzxs7mbHY/XOZZuXlRNfhpVPbs6ZA==,
       }
 
   "@types/unist@2.0.11":
@@ -4019,6 +4034,12 @@ packages:
         integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==,
       }
 
+  undici-types@7.29.0:
+    resolution:
+      {
+        integrity: sha512-vamA8dGlzMwhpyYpQp9d8vka3o4D/yn5I7ez7Or+msDA4bZ8Uh+Zy91WvWf3I73gDAkFha9JcYRqm2li0Npfgg==,
+      }
+
   undici@7.29.0:
     resolution:
       {
@@ -4899,6 +4920,13 @@ snapshots:
     dependencies:
       "@types/unist": 3.0.3
 
+  "@types/jsdom@28.0.3":
+    dependencies:
+      "@types/node": 24.13.3
+      "@types/tough-cookie": 4.0.5
+      parse5: 8.0.1
+      undici-types: 7.29.0
+
   "@types/json-schema@7.0.15": {}
 
   "@types/mdast@4.0.4":
@@ -4929,6 +4957,8 @@ snapshots:
     dependencies:
       "@types/prop-types": 15.7.15
       csstype: 3.2.3
+
+  "@types/tough-cookie@4.0.5": {}
 
   "@types/unist@2.0.11": {}
 
@@ -7015,6 +7045,8 @@ snapshots:
   typescript@5.9.3: {}
 
   undici-types@7.18.2: {}
+
+  undici-types@7.29.0: {}
 
   undici@7.29.0: {}
 

@@ -52,6 +52,117 @@ const installBuildAndRunConsumer = (directory) => {
   run("node", [path.join(directory, "dist", "index.js")]);
 };
 
+/**
+ * @param {string} directory
+ * @param {readonly string[]} packageNames
+ * @param {readonly PackedPackage[]} packedPackages
+ */
+const verifyInstalledPackageMetadata = async (
+  directory,
+  packageNames,
+  packedPackages,
+) => {
+  for (const packageName of packageNames) {
+    const packedPackage = packedPackages.find(
+      ({ name }) => name === packageName,
+    );
+    if (packedPackage === undefined) {
+      throw new Error(`missing packed package ${packageName}`);
+    }
+    const installedManifest = JSON.parse(
+      await readFile(
+        path.join(
+          directory,
+          "node_modules",
+          ...packageName.split("/"),
+          "package.json",
+        ),
+        "utf8",
+      ),
+    );
+    if (
+      installedManifest.name !== packedPackage.name ||
+      installedManifest.version !== packedPackage.version ||
+      installedManifest.repository?.url !==
+        "git+https://github.com/A2C-SMCP/tf-chat-kit.git"
+    ) {
+      throw new Error(
+        `${packageName}: installed consumer package metadata did not match the packed artifact`,
+      );
+    }
+  }
+};
+
+/**
+ * @param {string} directory
+ * @param {readonly string[]} forbiddenMarkers
+ */
+const assertPackagesAbsent = async (directory, forbiddenMarkers) => {
+  const virtualStoreEntries = await readdir(
+    path.join(directory, "node_modules", ".pnpm"),
+  );
+  for (const marker of forbiddenMarkers) {
+    if (virtualStoreEntries.some((entry) => entry.startsWith(marker))) {
+      throw new Error(
+        `${path.basename(directory)} unexpectedly installed ${marker}`,
+      );
+    }
+  }
+};
+
+/**
+ * @typedef {{
+ *   directory: string;
+ *   manifest: Record<string, unknown>;
+ *   sourceFiles: Readonly<Record<string, string>>;
+ *   tsconfig: Record<string, unknown>;
+ *   packageNames?: readonly string[];
+ *   forbiddenPackageMarkers?: readonly string[];
+ * }} ConsumerProject
+ */
+
+/**
+ * Writes, installs, builds, runs and inspects one isolated packed-package
+ * consumer. Consumer definitions own their dependency and compiler choices;
+ * this helper owns the shared verification lifecycle.
+ *
+ * @param {ConsumerProject} project
+ * @param {readonly PackedPackage[]} packedPackages
+ */
+const verifyConsumerProject = async (project, packedPackages) => {
+  await Promise.all([
+    writeFile(
+      path.join(project.directory, "package.json"),
+      `${JSON.stringify(project.manifest, null, 2)}\n`,
+      "utf8",
+    ),
+    writeFile(
+      path.join(project.directory, "tsconfig.json"),
+      `${JSON.stringify(project.tsconfig, null, 2)}\n`,
+      "utf8",
+    ),
+    ...Object.entries(project.sourceFiles).map(([fileName, source]) =>
+      writeFile(path.join(project.directory, fileName), source, "utf8"),
+    ),
+  ]);
+
+  installBuildAndRunConsumer(project.directory);
+
+  if (project.packageNames !== undefined) {
+    await verifyInstalledPackageMetadata(
+      project.directory,
+      project.packageNames,
+      packedPackages,
+    );
+  }
+  if (project.forbiddenPackageMarkers !== undefined) {
+    await assertPackagesAbsent(
+      project.directory,
+      project.forbiddenPackageMarkers,
+    );
+  }
+};
+
 const packageDirectories = Object.keys(PACKAGE_POLICY);
 
 /**
@@ -120,6 +231,14 @@ const minimumUiConsumerDirectory = path.join(
   "minimum-ui-consumer",
 );
 const reactConsumerDirectory = path.join(verificationRoot, "react-consumer");
+const officeStyleConsumerDirectory = path.join(
+  verificationRoot,
+  "office-style-consumer",
+);
+const tauriStyleConsumerDirectory = path.join(
+  verificationRoot,
+  "tauri-style-consumer",
+);
 const tfrobotfrontStyleConsumerDirectory = path.join(
   verificationRoot,
   "tfrobotfront-style-consumer",
@@ -131,6 +250,8 @@ try {
     mkdir(consumerDirectory),
     mkdir(minimumUiConsumerDirectory),
     mkdir(reactConsumerDirectory),
+    mkdir(officeStyleConsumerDirectory),
+    mkdir(tauriStyleConsumerDirectory),
     mkdir(tfrobotfrontStyleConsumerDirectory),
   ]);
   for (const packedPackage of packManifest.packages) {
@@ -192,76 +313,67 @@ try {
     },
     pnpm: { overrides: packageFiles },
   };
-  await writeFile(
-    path.join(consumerDirectory, "package.json"),
-    `${JSON.stringify(consumerManifest, null, 2)}\n`,
-    "utf8",
-  );
-  await writeFile(
-    path.join(consumerDirectory, "index.ts"),
-    [
-      'import { createElement } from "react";',
-      'import { renderToStaticMarkup } from "react-dom/server";',
-      'import type { TimelineItem } from "@turingfocus/chat-protocol";',
-      ...packManifest.packages.map(
-        ({ name }) =>
-          `import * as ${name.replace(/\W/gu, "_")} from ${JSON.stringify(name)};`,
-      ),
-      "",
-      "const shellMarkup = renderToStaticMarkup(",
-      "  createElement(_turingfocus_chat_ui_antd.ChatUiShell, {",
-      '    contentState: { kind: "empty" },',
-      "    conversations: [],",
-      "    onConversationSelect: () => undefined,",
-      "  }),",
-      ");",
-      'if (!shellMarkup.includes("No conversation selected")) {',
-      '  throw new Error("Packed Ant Design chat shell did not render.");',
-      "}",
-      "const unknownItem: TimelineItem = {",
-      '  kind: "unknown-event",',
-      '  id: "packed-unknown",',
-      '  conversationId: "packed-conversation",',
-      '  originalType: "future.packed-event",',
-      "  createdAt: Date.UTC(2026, 6, 28),",
-      '  summary: "Packed safe fallback",',
-      '  raw: { token: "must-not-render" },',
-      "};",
-      "const timelineMarkup = renderToStaticMarkup(",
-      "  createElement(_turingfocus_chat_ui_antd.ChatTimeline, {",
-      '    conversationId: "packed-conversation",',
-      "    items: [unknownItem],",
-      "  }),",
-      ");",
-      'if (!timelineMarkup.includes("Packed safe fallback") || timelineMarkup.includes("must-not-render")) {',
-      '  throw new Error("Packed Ant Design timeline fallback is unsafe or unavailable.");',
-      "}",
-      `console.log("Installed, built, imported, and rendered ${packManifest.packages.length} packed packages.");`,
-      "",
-    ].join("\n"),
-    "utf8",
-  );
-  await writeFile(
-    path.join(consumerDirectory, "tsconfig.json"),
-    `${JSON.stringify(
-      {
-        compilerOptions: {
-          exactOptionalPropertyTypes: true,
-          module: "NodeNext",
-          moduleResolution: "NodeNext",
-          outDir: "dist",
-          strict: true,
-          target: "ES2022",
-        },
-        include: ["index.ts"],
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
+  const packageSmokeSource = [
+    'import { createElement } from "react";',
+    'import { renderToStaticMarkup } from "react-dom/server";',
+    'import type { TimelineItem } from "@turingfocus/chat-protocol";',
+    ...packManifest.packages.map(
+      ({ name }) =>
+        `import * as ${name.replace(/\W/gu, "_")} from ${JSON.stringify(name)};`,
+    ),
+    "",
+    "const shellMarkup = renderToStaticMarkup(",
+    "  createElement(_turingfocus_chat_ui_antd.ChatUiShell, {",
+    '    contentState: { kind: "empty" },',
+    "    conversations: [],",
+    "    onConversationSelect: () => undefined,",
+    "  }),",
+    ");",
+    'if (!shellMarkup.includes("No conversation selected")) {',
+    '  throw new Error("Packed Ant Design chat shell did not render.");',
+    "}",
+    "const unknownItem: TimelineItem = {",
+    '  kind: "unknown-event",',
+    '  id: "packed-unknown",',
+    '  conversationId: "packed-conversation",',
+    '  originalType: "future.packed-event",',
+    "  createdAt: Date.UTC(2026, 6, 28),",
+    '  summary: "Packed safe fallback",',
+    '  raw: { token: "must-not-render" },',
+    "};",
+    "const timelineMarkup = renderToStaticMarkup(",
+    "  createElement(_turingfocus_chat_ui_antd.ChatTimeline, {",
+    '    conversationId: "packed-conversation",',
+    "    items: [unknownItem],",
+    "  }),",
+    ");",
+    'if (!timelineMarkup.includes("Packed safe fallback") || timelineMarkup.includes("must-not-render")) {',
+    '  throw new Error("Packed Ant Design timeline fallback is unsafe or unavailable.");',
+    "}",
+    `console.log("Installed, built, imported, and rendered ${packManifest.packages.length} packed packages.");`,
+    "",
+  ].join("\n");
+  const packageSmokeTsconfig = {
+    compilerOptions: {
+      exactOptionalPropertyTypes: true,
+      module: "NodeNext",
+      moduleResolution: "NodeNext",
+      outDir: "dist",
+      strict: true,
+      target: "ES2022",
+    },
+    include: ["index.ts"],
+  };
 
-  installBuildAndRunConsumer(consumerDirectory);
+  await verifyConsumerProject(
+    {
+      directory: consumerDirectory,
+      manifest: consumerManifest,
+      sourceFiles: { "index.ts": packageSmokeSource },
+      tsconfig: packageSmokeTsconfig,
+    },
+    packManifest.packages,
+  );
 
   const minimumUiConsumerManifest = {
     ...consumerManifest,
@@ -271,22 +383,15 @@ try {
       antd: "5.23.4",
     },
   };
-  await writeFile(
-    path.join(minimumUiConsumerDirectory, "package.json"),
-    `${JSON.stringify(minimumUiConsumerManifest, null, 2)}\n`,
-    "utf8",
+  await verifyConsumerProject(
+    {
+      directory: minimumUiConsumerDirectory,
+      manifest: minimumUiConsumerManifest,
+      sourceFiles: { "index.ts": packageSmokeSource },
+      tsconfig: packageSmokeTsconfig,
+    },
+    packManifest.packages,
   );
-  await writeFile(
-    path.join(minimumUiConsumerDirectory, "index.ts"),
-    await readFile(path.join(consumerDirectory, "index.ts"), "utf8"),
-    "utf8",
-  );
-  await writeFile(
-    path.join(minimumUiConsumerDirectory, "tsconfig.json"),
-    await readFile(path.join(consumerDirectory, "tsconfig.json"), "utf8"),
-    "utf8",
-  );
-  installBuildAndRunConsumer(minimumUiConsumerDirectory);
 
   const reactConsumerPackageNames = [
     "@turingfocus/chat-protocol",
@@ -312,34 +417,28 @@ try {
     },
     pnpm: { overrides: reactConsumerPackageFiles },
   };
-  await writeFile(
-    path.join(reactConsumerDirectory, "package.json"),
-    `${JSON.stringify(reactConsumerManifest, null, 2)}\n`,
-    "utf8",
-  );
-  await writeFile(
-    path.join(reactConsumerDirectory, "index.ts"),
-    [
-      'import { createElement } from "react";',
-      'import type { ChatSnapshot } from "@turingfocus/chat-protocol";',
-      'import type { ChatClient } from "@turingfocus/chat-runtime";',
-      'import { ChatProvider, useChatSelector } from "@turingfocus/chat-react";',
-      "",
-      "const ConversationTitle = () =>",
-      '  createElement("span", null, useChatSelector((snapshot: ChatSnapshot | null) => snapshot?.conversation.title ?? ""));',
-      "",
-      "export const OfficeStyleConsumer = ({ client }: { readonly client: ChatClient }) =>",
-      "  createElement(ChatProvider, { client }, createElement(ConversationTitle));",
-      "",
-      'console.log("Built a React consumer without Ant Design or a production Gateway.");',
-      "",
-    ].join("\n"),
-    "utf8",
-  );
-  await writeFile(
-    path.join(reactConsumerDirectory, "tsconfig.json"),
-    `${JSON.stringify(
-      {
+  await verifyConsumerProject(
+    {
+      directory: reactConsumerDirectory,
+      manifest: reactConsumerManifest,
+      sourceFiles: {
+        "index.ts": [
+          'import { createElement } from "react";',
+          'import type { ChatSnapshot } from "@turingfocus/chat-protocol";',
+          'import type { ChatClient } from "@turingfocus/chat-runtime";',
+          'import { ChatProvider, useChatSelector } from "@turingfocus/chat-react";',
+          "",
+          "const ConversationTitle = () =>",
+          '  createElement("span", null, useChatSelector((snapshot: ChatSnapshot | null) => snapshot?.conversation.title ?? ""));',
+          "",
+          "export const OfficeStyleConsumer = ({ client }: { readonly client: ChatClient }) =>",
+          "  createElement(ChatProvider, { client }, createElement(ConversationTitle));",
+          "",
+          'console.log("Built a React consumer without Ant Design or a production Gateway.");',
+          "",
+        ].join("\n"),
+      },
+      tsconfig: {
         compilerOptions: {
           module: "NodeNext",
           moduleResolution: "NodeNext",
@@ -349,12 +448,180 @@ try {
         },
         include: ["index.ts"],
       },
-      null,
-      2,
-    )}\n`,
+    },
+    packManifest.packages,
+  );
+
+  const officeStylePackageNames = [
+    "@turingfocus/chat-protocol",
+    "@turingfocus/chat-react",
+    "@turingfocus/chat-runtime",
+    "@turingfocus/chat-testing",
+  ];
+  const officeStylePackageFiles = Object.fromEntries(
+    officeStylePackageNames.map((name) => [name, packageFiles[name]]),
+  );
+  const officeStyleConsumerManifest = {
+    name: "tf-chat-kit-office-style-consumer",
+    version: "0.0.0",
+    private: true,
+    type: "module",
+    packageManager: "pnpm@10.34.5",
+    dependencies: {
+      ...officeStylePackageFiles,
+      react: "18.2.0",
+      "react-test-renderer": "18.2.0",
+    },
+    devDependencies: {
+      "@types/react": "18.2.64",
+      "@types/react-test-renderer": "18.3.1",
+      "@types/scheduler": "0.16.8",
+      typescript: "5.9.3",
+    },
+    pnpm: { overrides: officeStylePackageFiles },
+  };
+  const officeConsumerSource = await readFile(
+    path.join(
+      rootDirectory,
+      "tests",
+      "consumers",
+      "office-style",
+      "consumer.ts",
+    ),
     "utf8",
   );
-  installBuildAndRunConsumer(reactConsumerDirectory);
+  for (const forbiddenSourceToken of [
+    'from "antd"',
+    "react-dom",
+    "Office.",
+    "window.",
+    "document.",
+    "@tauri-apps",
+    "TFRobotFront",
+  ]) {
+    if (officeConsumerSource.includes(forbiddenSourceToken)) {
+      throw new Error(
+        `Office-style consumer contains forbidden host/UI token ${forbiddenSourceToken}`,
+      );
+    }
+  }
+  await verifyConsumerProject(
+    {
+      directory: officeStyleConsumerDirectory,
+      forbiddenPackageMarkers: [
+        "@microsoft+office-js@",
+        "@tauri-apps+",
+        "@turingfocus+chat-gateway-tfrobot@",
+        "@turingfocus+chat-ui-antd@",
+        "antd@",
+        "next@",
+        "office-js@",
+        "react-dom@",
+      ],
+      manifest: officeStyleConsumerManifest,
+      packageNames: officeStylePackageNames,
+      sourceFiles: {
+        "consumer.ts": officeConsumerSource,
+        "index.ts": [
+          'import { runOfficeConsumerVerification } from "./consumer.js";',
+          "",
+          "await runOfficeConsumerVerification();",
+          "",
+        ].join("\n"),
+      },
+      tsconfig: {
+        compilerOptions: {
+          exactOptionalPropertyTypes: true,
+          lib: ["ES2023"],
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          outDir: "dist",
+          strict: true,
+          target: "ES2023",
+        },
+        include: ["consumer.ts", "index.ts"],
+      },
+    },
+    packManifest.packages,
+  );
+
+  const tauriStylePackageNames = [
+    "@turingfocus/chat-protocol",
+    "@turingfocus/chat-react",
+    "@turingfocus/chat-runtime",
+    "@turingfocus/chat-testing",
+    "@turingfocus/chat-ui-antd",
+  ];
+  const tauriStylePackageFiles = Object.fromEntries(
+    tauriStylePackageNames.map((name) => [name, packageFiles[name]]),
+  );
+  const tauriStyleConsumerManifest = {
+    name: "tf-chat-kit-tauri-style-consumer",
+    version: "0.0.0",
+    private: true,
+    type: "module",
+    packageManager: "pnpm@10.34.5",
+    dependencies: {
+      ...tauriStylePackageFiles,
+      antd: "5.23.4",
+      jsdom: "29.1.1",
+      react: "18.3.1",
+      "react-dom": "18.3.1",
+    },
+    devDependencies: {
+      "@types/jsdom": "28.0.3",
+      "@types/react": "18.3.31",
+      "@types/react-dom": "18.3.7",
+      typescript: "5.9.3",
+    },
+    pnpm: { overrides: tauriStylePackageFiles },
+  };
+  const tauriConsumerSource = await readFile(
+    path.join(
+      rootDirectory,
+      "tests",
+      "consumers",
+      "tauri-style",
+      "consumer.ts",
+    ),
+    "utf8",
+  );
+  await verifyConsumerProject(
+    {
+      directory: tauriStyleConsumerDirectory,
+      forbiddenPackageMarkers: [
+        "@tauri-apps+",
+        "@turingfocus+chat-gateway-tfrobot@",
+        "next@",
+        "office-js@",
+      ],
+      manifest: tauriStyleConsumerManifest,
+      packageNames: tauriStylePackageNames,
+      sourceFiles: {
+        "consumer.ts": tauriConsumerSource,
+        "index.ts": [
+          'import { runTauriConsumerVerification } from "./consumer.js";',
+          "",
+          "await runTauriConsumerVerification();",
+          "",
+        ].join("\n"),
+      },
+      tsconfig: {
+        compilerOptions: {
+          exactOptionalPropertyTypes: true,
+          lib: ["ES2023", "DOM", "DOM.Iterable"],
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          outDir: "dist",
+          skipLibCheck: true,
+          strict: true,
+          target: "ES2023",
+        },
+        include: ["consumer.ts", "index.ts"],
+      },
+    },
+    packManifest.packages,
+  );
 
   const tfrobotfrontStylePackageNames = [
     "@turingfocus/chat-gateway-tfrobot",
@@ -388,40 +655,32 @@ try {
     },
     pnpm: { overrides: tfrobotfrontStylePackageFiles },
   };
-  await writeFile(
-    path.join(tfrobotfrontStyleConsumerDirectory, "package.json"),
-    `${JSON.stringify(tfrobotfrontStyleConsumerManifest, null, 2)}\n`,
-    "utf8",
-  );
-  await writeFile(
-    path.join(tfrobotfrontStyleConsumerDirectory, "consumer.ts"),
-    await readFile(
-      path.join(
-        rootDirectory,
-        "tests",
-        "consumers",
-        "tfrobotfront-style",
-        "consumer.ts",
-      ),
-      "utf8",
+  const tfrobotfrontConsumerSource = await readFile(
+    path.join(
+      rootDirectory,
+      "tests",
+      "consumers",
+      "tfrobotfront-style",
+      "consumer.ts",
     ),
     "utf8",
   );
-  await writeFile(
-    path.join(tfrobotfrontStyleConsumerDirectory, "index.ts"),
-    [
-      'import { runHostConsumerVerification } from "./consumer.js";',
-      "",
-      "await runHostConsumerVerification();",
-      'console.log("Verified the versioned TFRobotFront-style host consumer.");',
-      "",
-    ].join("\n"),
-    "utf8",
-  );
-  await writeFile(
-    path.join(tfrobotfrontStyleConsumerDirectory, "tsconfig.json"),
-    `${JSON.stringify(
-      {
+  await verifyConsumerProject(
+    {
+      directory: tfrobotfrontStyleConsumerDirectory,
+      manifest: tfrobotfrontStyleConsumerManifest,
+      packageNames: tfrobotfrontStylePackageNames,
+      sourceFiles: {
+        "consumer.ts": tfrobotfrontConsumerSource,
+        "index.ts": [
+          'import { runHostConsumerVerification } from "./consumer.js";',
+          "",
+          "await runHostConsumerVerification();",
+          'console.log("Verified the versioned TFRobotFront-style host consumer.");',
+          "",
+        ].join("\n"),
+      },
+      tsconfig: {
         compilerOptions: {
           exactOptionalPropertyTypes: true,
           lib: ["ES2023", "DOM", "DOM.Iterable"],
@@ -435,41 +694,9 @@ try {
         },
         include: ["consumer.ts", "index.ts"],
       },
-      null,
-      2,
-    )}\n`,
-    "utf8",
+    },
+    packManifest.packages,
   );
-  installBuildAndRunConsumer(tfrobotfrontStyleConsumerDirectory);
-  for (const packageName of tfrobotfrontStylePackageNames) {
-    const packedPackage = packManifest.packages.find(
-      ({ name }) => name === packageName,
-    );
-    if (packedPackage === undefined) {
-      throw new Error(`missing packed package ${packageName}`);
-    }
-    const installedManifest = JSON.parse(
-      await readFile(
-        path.join(
-          tfrobotfrontStyleConsumerDirectory,
-          "node_modules",
-          ...packageName.split("/"),
-          "package.json",
-        ),
-        "utf8",
-      ),
-    );
-    if (
-      installedManifest.name !== packedPackage.name ||
-      installedManifest.version !== packedPackage.version ||
-      installedManifest.repository?.url !==
-        "git+https://github.com/A2C-SMCP/tf-chat-kit.git"
-    ) {
-      throw new Error(
-        `${packageName}: installed host consumer package metadata did not match the packed artifact`,
-      );
-    }
-  }
 } finally {
   await rm(verificationRoot, { recursive: true, force: true });
 }

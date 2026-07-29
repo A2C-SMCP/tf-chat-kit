@@ -16,6 +16,10 @@ import ts from "typescript";
  *   private?: boolean;
  *   license?: string;
  *   packageManager?: string;
+ *   engines?: DependencyMap;
+ *   devEngines?: {
+ *     runtime?: { name?: string; version?: string; onFail?: string };
+ *   };
  *   scripts?: Record<string, string>;
  *   files?: string[];
  *   sideEffects?: boolean | string[];
@@ -45,6 +49,7 @@ import ts from "typescript";
 /**
  * @typedef {{
  *   rootManifest: PackageManifest;
+ *   nodeVersion: string;
  *   changesetConfig: Record<string, unknown>;
  *   packages: WorkspacePackage[];
  *   sourceFiles: SourceFile[];
@@ -61,6 +66,17 @@ const PUBLIC_REGISTRY = "https://registry.npmjs.org/";
 const REPOSITORY_URL = "git+https://github.com/A2C-SMCP/tf-chat-kit.git";
 const HOMEPAGE_URL = "https://github.com/A2C-SMCP/tf-chat-kit#readme";
 const BUGS_URL = "https://github.com/A2C-SMCP/tf-chat-kit/issues";
+const ROOT_ENGINE_POLICY = Object.freeze({
+  node: ">=24 <25",
+  pnpm: ">=10 <11",
+});
+const ROOT_DEV_ENGINE_POLICY = Object.freeze({
+  runtime: Object.freeze({
+    name: "node",
+    version: ">=24 <25",
+    onFail: "error",
+  }),
+});
 
 /** @type {Readonly<Record<string, PackageRule>>} */
 export const PACKAGE_POLICY = Object.freeze({
@@ -159,6 +175,7 @@ const ROOT_SCRIPT_POLICY = Object.freeze({
   lint: "eslint . --max-warnings=0",
   "pack:check": "node scripts/verify-packed-artifacts.mjs",
   "pack:workspace": "node scripts/pack-workspace.mjs",
+  preinstall: "node scripts/check-node-version.mjs",
   test: "vitest run",
   typecheck:
     "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false",
@@ -2205,6 +2222,23 @@ export function validateWorkspaceSnapshot(snapshot) {
   if (snapshot.rootManifest.packageManager !== "pnpm@10.34.5") {
     errors.push("root packageManager must be pinned to pnpm@10.34.5");
   }
+  if (snapshot.nodeVersion !== "24\n") {
+    errors.push("root .nvmrc must contain exactly Node.js major version 24");
+  }
+  if (
+    stableObjectJson(snapshot.rootManifest.engines ?? {}) !==
+    stableObjectJson(ROOT_ENGINE_POLICY)
+  ) {
+    errors.push("root engines must require Node.js 24.x and pnpm 10.x");
+  }
+  if (
+    stableObjectJson(snapshot.rootManifest.devEngines ?? {}) !==
+    stableObjectJson(ROOT_DEV_ENGINE_POLICY)
+  ) {
+    errors.push(
+      "root devEngines.runtime must reject runtimes outside Node.js 24.x",
+    );
+  }
   if (snapshot.rootManifest.license !== "MIT")
     errors.push("root license must be MIT");
   validateRepositoryMetadata("root", snapshot.rootManifest, undefined, errors);
@@ -2447,6 +2481,7 @@ export async function loadWorkspaceSnapshot(rootDirectory) {
         await readFile(path.join(rootDirectory, "package.json"), "utf8"),
       )
     ),
+    nodeVersion: await readFile(path.join(rootDirectory, ".nvmrc"), "utf8"),
     changesetConfig: /** @type {Record<string, unknown>} */ (
       JSON.parse(
         await readFile(

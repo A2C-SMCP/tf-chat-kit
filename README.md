@@ -50,11 +50,18 @@ chat-ui-antd -------------------------------> chat-protocol
 ## 开发
 
 ```bash
+nvm install
+nvm use
+corepack enable
 corepack prepare pnpm@10.34.5 --activate
-pnpm install
+pnpm install --frozen-lockfile
 pnpm check
 pnpm pack:workspace
 ```
+
+仓库根目录的 `.nvmrc` 与 GitHub Actions 共用 Node.js 24.x。执行任何安装或门禁前先通过
+`nvm install && nvm use` 激活该主版本；错误版本会在依赖安装的 `preinstall` 或 workspace
+检查前直接失败。显式使用 `--ignore-scripts` 会跳过前者，但不会绕过 `pnpm check`。
 
 `pnpm check` 会执行架构边界、lint、格式、类型、测试、构建、tarball 内容与安全检查，并在临时
 TypeScript 消费者中实际安装、构建和运行六个产物。宿主验证必须使用 tarball、npm prerelease

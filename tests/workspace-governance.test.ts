@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { assertSupportedNodeVersion } from "../scripts/check-node-version.mjs";
 import {
   collectSourceFiles,
   loadWorkspaceSnapshot,
@@ -25,6 +26,15 @@ const replacePackageSource = (
 };
 
 describe("workspace governance", () => {
+  it("accepts Node.js 24 and rejects unsupported majors with recovery guidance", () => {
+    expect(() =>
+      assertSupportedNodeVersion("24.18.0", "v24.18.0"),
+    ).not.toThrow();
+    expect(() => assertSupportedNodeVersion("23.5.0", "v23.5.0")).toThrow(
+      'Node.js v23.5.0 is unsupported; expected >=24 <25. Run "nvm install && nvm use" from the repository root.',
+    );
+  });
+
   it("accepts the committed six-package architecture", async () => {
     const snapshot = await loadWorkspaceSnapshot(process.cwd());
     expect(validateWorkspaceSnapshot(snapshot)).toEqual([]);
@@ -101,6 +111,33 @@ describe("workspace governance", () => {
     expect(errors).toContain("root license must be MIT");
     expect(errors).toContainEqual(
       expect.stringContaining("root: homepage must"),
+    );
+  });
+
+  it("rejects Node.js toolchain policy drift", async () => {
+    const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
+    snapshot.nodeVersion = "23\n";
+    snapshot.rootManifest.engines = {
+      node: ">=23 <25",
+      pnpm: ">=10 <11",
+    };
+    snapshot.rootManifest.devEngines = {
+      runtime: {
+        name: "node",
+        version: ">=23 <25",
+        onFail: "warn",
+      },
+    };
+
+    const errors = validateWorkspaceSnapshot(snapshot);
+    expect(errors).toContain(
+      "root .nvmrc must contain exactly Node.js major version 24",
+    );
+    expect(errors).toContain(
+      "root engines must require Node.js 24.x and pnpm 10.x",
+    );
+    expect(errors).toContain(
+      "root devEngines.runtime must reject runtimes outside Node.js 24.x",
     );
   });
 
