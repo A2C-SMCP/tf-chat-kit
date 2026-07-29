@@ -497,6 +497,13 @@ describe("chat-testing fixtures", () => {
     expect(second.initialSnapshot.timeline[0]?.createdAt).toBe(2_000);
     expect(Object.isFrozen(first)).toBe(true);
     expect(Object.isFrozen(first.initialSnapshot)).toBe(true);
+    expect(Object.isFrozen(first.askUserRequest)).toBe(true);
+    expect(Object.isFrozen(first.askUserRequest.questions)).toBe(true);
+    expect(Object.isFrozen(first.askUserRequest.questions[0])).toBe(true);
+    expect(Object.isFrozen(first.askUserRequest.questions[0]?.options)).toBe(
+      true,
+    );
+    expect(Object.isFrozen(first.answerInteractionSuccess)).toBe(true);
     const unknownEvent = first.unknownEventUpdate;
     expect(unknownEvent.kind).toBe("timeline.upsert");
     if (
@@ -695,6 +702,23 @@ describe("framework-neutral Gateway contract", () => {
   });
 
   expect(new Set(cases.map(({ name }) => name)).size).toBe(cases.length);
+  for (const contractCase of cases) {
+    it(contractCase.name, () => contractCase.run());
+  }
+});
+
+describe("optional answerInteraction Gateway contract", () => {
+  const cases = createGatewayContractCases(
+    (fixtures) => {
+      const memory = createMemoryChatGateway({ fixtures });
+      return { gateway: memory.gateway, controller: memory.controller };
+    },
+    { answerInteraction: true },
+  );
+
+  expect(
+    cases.some(({ name }) => name === "executes answerInteraction commands"),
+  ).toBe(true);
   for (const contractCase of cases) {
     it(contractCase.name, () => contractCase.run());
   }

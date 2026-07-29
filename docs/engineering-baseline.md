@@ -78,8 +78,9 @@ fixed group 的 `package.json` 和 `CHANGELOG.md` 输出；版本提交必须保
 提供新的 changeset。根清单、
 pnpm override 与六包清单都禁止源码路径依赖；公共包外部依赖采用按 dependency section 划分的
 显式 allowlist，React 和 Ant Design 只允许作为 peer，`socket.io-client` 只允许作为
-`chat-gateway-tfrobot` 的生产依赖，Monaco/xterm 等重 renderer 只允许作为 `chat-ui-antd` 的生产
-依赖。六包必须显式声明 `sideEffects`；当前纯入口使用 `false`，未来引入 CSS 等副作用时改为明确
+`chat-gateway-tfrobot` 的生产依赖；`react-markdown`、`remark-gfm` 与 `rehype-sanitize`
+只允许作为 `chat-ui-antd` 的安全 Markdown 生产依赖，Monaco/xterm 等重 renderer 也只允许作为
+`chat-ui-antd` 的生产依赖。六包必须显式声明 `sideEffects`；当前纯入口使用 `false`，未来引入 CSS 等副作用时改为明确
 的文件模式列表。Changesets fixed-group release plan 是版本计算的唯一依据：
 待消费计划基于当前全部 pending changeset 计算且不得越过 0.x；已消费计划会在隔离 worktree 中
 使用固定版本的 Changesets CLI 在比较基线的全部 pending changeset 上重放，提交中的六包清单、

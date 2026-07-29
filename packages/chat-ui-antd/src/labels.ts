@@ -1,6 +1,14 @@
 import type { ChatUiLabelOverrides, ChatUiLabels } from "./types.js";
 
 export const defaultChatUiLabels: ChatUiLabels = Object.freeze({
+  askUserCancel: "Cancel",
+  askUserChatAboutThis: "Chat about this",
+  askUserLabel: "User input requested",
+  askUserRequired: "This answer is required.",
+  askUserSubmit: "Submit answers",
+  askUserSubmitting: "Submitting",
+  askUserUnavailable:
+    "Interaction answers are unavailable in the current session.",
   capabilityUnavailableDescription:
     "This chat capability is not available in the current session.",
   capabilityUnavailableTitle: "Capability unavailable",

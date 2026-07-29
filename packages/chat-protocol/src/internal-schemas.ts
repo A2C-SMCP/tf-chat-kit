@@ -1,9 +1,25 @@
 import { z } from "zod/v4";
 
+import {
+  ASK_USER_MAX_ANSWER_VALUES,
+  ASK_USER_MAX_OPTIONS,
+  ASK_USER_MAX_QUESTIONS,
+  ASK_USER_MAX_QUESTION_ID_CHARACTERS,
+  ASK_USER_MAX_REQUEST_ID_CHARACTERS,
+  ASK_USER_MAX_TEXT_CHARACTERS,
+  isAskUserInteractionValueCompatible,
+  isSafeAskUserQuestionId,
+} from "./ask-user.js";
 import type {
   AgentEvent,
   AgentEventTransition,
   AgentEventTransitionPayload,
+  AskUserInteractionAnswer,
+  AskUserInteractionOption,
+  AskUserInteractionQuestion,
+  AskUserInteractionRequest,
+  AskUserInteractionResult,
+  AskUserInteractionValue,
   Capabilities,
   ChatError,
   ChatSnapshot,
@@ -186,6 +202,155 @@ const toolReturnParser = z
     { message: "tool returns must preserve at least one field" },
   ) as z.ZodType<ToolReturn>;
 
+const askUserInteractionOptionParser: z.ZodType<AskUserInteractionOption> =
+  z.object({
+    label: z.string().min(1).max(ASK_USER_MAX_TEXT_CHARACTERS),
+    value: z.string().max(ASK_USER_MAX_TEXT_CHARACTERS),
+    description: z.string().max(ASK_USER_MAX_TEXT_CHARACTERS).optional(),
+  });
+
+const askUserInteractionValueParser: z.ZodType<AskUserInteractionValue> =
+  z.union([
+    z.string().max(ASK_USER_MAX_TEXT_CHARACTERS),
+    z
+      .array(z.string().max(ASK_USER_MAX_TEXT_CHARACTERS))
+      .max(ASK_USER_MAX_ANSWER_VALUES),
+  ]);
+
+const askUserInteractionQuestionIdParser = idParser
+  .max(ASK_USER_MAX_QUESTION_ID_CHARACTERS)
+  .refine(isSafeAskUserQuestionId, {
+    message: "Ask User question IDs must not use reserved object keys",
+  });
+
+const askUserInteractionRequestIdParser = idParser.max(
+  ASK_USER_MAX_REQUEST_ID_CHARACTERS,
+);
+
+const askUserInteractionAnswersParser = z.preprocess(
+  (value, context) => {
+    if (
+      value !== null &&
+      typeof value === "object" &&
+      Reflect.ownKeys(value).some(
+        (key) => typeof key === "string" && !isSafeAskUserQuestionId(key),
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Ask User answer keys must not use reserved object keys",
+      });
+      return z.NEVER;
+    }
+    return value;
+  },
+  z
+    .record(askUserInteractionQuestionIdParser, askUserInteractionValueParser)
+    .refine(
+      (answers) => Object.keys(answers).length <= ASK_USER_MAX_QUESTIONS,
+      { message: "Ask User answers exceed the question budget" },
+    ),
+) as z.ZodType<Readonly<Record<string, AskUserInteractionValue>>>;
+
+const askUserInteractionQuestionParser: z.ZodType<AskUserInteractionQuestion> =
+  z
+    .object({
+      id: askUserInteractionQuestionIdParser,
+      prompt: z.string().min(1).max(ASK_USER_MAX_TEXT_CHARACTERS),
+      title: z.string().max(ASK_USER_MAX_TEXT_CHARACTERS).optional(),
+      description: z.string().max(ASK_USER_MAX_TEXT_CHARACTERS).optional(),
+      placeholder: z.string().max(ASK_USER_MAX_TEXT_CHARACTERS).optional(),
+      required: z.boolean(),
+      multiple: z.boolean(),
+      defaultValue: askUserInteractionValueParser.optional(),
+      options: z
+        .array(askUserInteractionOptionParser)
+        .max(ASK_USER_MAX_OPTIONS),
+    })
+    .superRefine((question, context) => {
+      if (
+        new Set(question.options.map((option) => option.value)).size !==
+        question.options.length
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["options"],
+          message: "Ask User option values must be unique within a question",
+        });
+      }
+    });
+
+const askUserInteractionQuestionsParser = z
+  .array(askUserInteractionQuestionParser)
+  .min(1)
+  .max(ASK_USER_MAX_QUESTIONS)
+  .refine(
+    (questions) =>
+      new Set(questions.map((question) => question.id)).size ===
+      questions.length,
+    { message: "Ask User question IDs must be unique" },
+  );
+
+const askUserInteractionRequestQuestionsParser =
+  askUserInteractionQuestionsParser.superRefine((questions, context) => {
+    questions.forEach((question, index) => {
+      if (question.multiple && question.options.length === 0) {
+        context.addIssue({
+          code: "custom",
+          path: [index, "options"],
+          message: "multi-select Ask User requests require options",
+        });
+      }
+      if (
+        question.defaultValue !== undefined &&
+        !isAskUserInteractionValueCompatible(question, question.defaultValue)
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: [index, "defaultValue"],
+          message: "Ask User default value must match its question",
+        });
+      }
+    });
+  });
+
+export const askUserInteractionRequestParser: z.ZodType<AskUserInteractionRequest> =
+  z.object({
+    kind: z.literal("ask-user"),
+    conversationId: idParser,
+    requestId: askUserInteractionRequestIdParser,
+    revision: askUserInteractionRequestIdParser,
+    eventId: askUserInteractionRequestIdParser.optional(),
+    title: z.string().min(1).max(ASK_USER_MAX_TEXT_CHARACTERS),
+    questions: askUserInteractionRequestQuestionsParser,
+    timeoutSeconds: z.number().finite().positive().optional(),
+  });
+
+export const askUserInteractionAnswerParser: z.ZodType<AskUserInteractionAnswer> =
+  z.object({
+    requestId: askUserInteractionRequestIdParser,
+    revision: askUserInteractionRequestIdParser,
+    action: z.enum(["cancel", "submit"]),
+    answers: askUserInteractionAnswersParser,
+  });
+
+export const askUserInteractionResultParser: z.ZodType<AskUserInteractionResult> =
+  z.object({
+    kind: z.literal("ask-user"),
+    requestId: askUserInteractionRequestIdParser,
+    revision: askUserInteractionRequestIdParser.optional(),
+    status: z.enum([
+      "answered",
+      "cancelled",
+      "chat-about-this",
+      "failed",
+      "timeout",
+    ]),
+    questions: askUserInteractionQuestionsParser,
+    answers: askUserInteractionAnswersParser.optional(),
+    error: z.string().max(ASK_USER_MAX_TEXT_CHARACTERS).optional(),
+  });
+
 const toolEventTransitionParser: z.ZodType<ToolEventTransition> = z
   .object({
     id: idParser,
@@ -197,15 +362,18 @@ const toolEventTransitionParser: z.ZodType<ToolEventTransition> = z
     raw: rawParser.optional(),
     toolCall: toolCallParser.optional(),
     toolReturn: toolReturnParser.optional(),
+    interaction: askUserInteractionResultParser.optional(),
   })
   .superRefine((transition, context) => {
     if (
       transition.toolCall === undefined &&
-      transition.toolReturn === undefined
+      transition.toolReturn === undefined &&
+      transition.interaction === undefined
     ) {
       context.addIssue({
         code: "custom",
-        message: "tool transitions must preserve a tool call or tool return",
+        message:
+          "tool transitions must preserve a tool call, tool return, or interaction",
       });
     }
   });
@@ -282,13 +450,15 @@ export const agentEventParser: z.ZodType<AgentEvent> = z
       !event.transitions.some(
         (transition) =>
           transition.toolCall !== undefined ||
-          transition.toolReturn !== undefined,
+          transition.toolReturn !== undefined ||
+          transition.interaction !== undefined,
       )
     ) {
       context.addIssue({
         code: "custom",
         path: ["transitions"],
-        message: "tool events must preserve a tool call or tool return",
+        message:
+          "tool events must preserve a tool call, tool return, or interaction",
       });
     }
   });
@@ -352,6 +522,7 @@ export const runParser: z.ZodType<Run> = z
   });
 
 export const capabilitiesParser: z.ZodType<Capabilities> = z.object({
+  answerInteraction: z.boolean().optional(),
   interrupt: z.boolean(),
   listConversations: z.boolean(),
   liveUpdates: z.boolean(),
@@ -371,6 +542,7 @@ export const chatSnapshotParser: z.ZodType<ChatSnapshot> = z
     run: runParser.nullable(),
     capabilities: capabilitiesParser,
     pageInfo: timelinePageInfoParser,
+    pendingInteraction: askUserInteractionRequestParser.optional(),
     error: chatErrorParser.optional(),
   })
   .superRefine((snapshot, context) => {
@@ -399,6 +571,16 @@ export const chatSnapshotParser: z.ZodType<ChatSnapshot> = z
       ["error"],
       context,
     );
+    if (
+      snapshot.pendingInteraction !== undefined &&
+      snapshot.pendingInteraction.conversationId !== snapshot.conversation.id
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["pendingInteraction", "conversationId"],
+        message: "pending interaction must belong to the snapshot conversation",
+      });
+    }
   });
 
 export const chatUpdateParser: z.ZodType<ChatUpdate> = z
@@ -432,6 +614,11 @@ export const chatUpdateParser: z.ZodType<ChatUpdate> = z
       capabilities: capabilitiesParser,
     }),
     z.object({
+      kind: z.literal("interaction.replace"),
+      conversationId: idParser,
+      interaction: askUserInteractionRequestParser.nullable(),
+    }),
+    z.object({
       kind: z.literal("error.reported"),
       conversationId: idParser.optional(),
       error: chatErrorParser,
@@ -457,6 +644,17 @@ export const chatUpdateParser: z.ZodType<ChatUpdate> = z
         code: "custom",
         path: ["run", "conversationId"],
         message: "run must belong to the updated conversation",
+      });
+    }
+    if (
+      update.kind === "interaction.replace" &&
+      update.interaction !== null &&
+      update.interaction.conversationId !== update.conversationId
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["interaction", "conversationId"],
+        message: "interaction must belong to the updated conversation",
       });
     }
     if (

@@ -1,5 +1,9 @@
 import {
+  answerInteractionInputSchema,
+  getAskUserInteractionAnswerValidationError,
   isGatewayOperationSupported,
+  type AnswerInteractionInput,
+  type AnswerInteractionSuccess,
   type ChatError,
   type ChatGateway,
   type ChatSnapshot,
@@ -78,6 +82,42 @@ const runtimeFailure = <T>(
   }),
 });
 
+interface InteractionIdentity {
+  readonly requestId: string;
+  readonly revision: string;
+}
+
+const MAX_RETIRED_INTERACTION_IDENTITIES = 256;
+
+const interactionIdentityKey = ({
+  requestId,
+  revision,
+}: InteractionIdentity): string =>
+  `${requestId.length}:${requestId}:${revision.length}:${revision}`;
+
+const interactionAnswerInFlightKey = (
+  conversationEpoch: number,
+  conversationId: string,
+  identity: InteractionIdentity,
+): string =>
+  `${conversationEpoch}:${conversationId.length}:${conversationId}:${interactionIdentityKey(identity)}`;
+
+const hasSameInteractionIdentity = (
+  left: InteractionIdentity | undefined,
+  right: InteractionIdentity | undefined,
+): boolean => {
+  if (left === undefined || right === undefined) return left === right;
+  return left.requestId === right.requestId && left.revision === right.revision;
+};
+
+const retiredInteractionError = (conversationId: string): ChatError =>
+  cloneImmutable({
+    code: "conflict",
+    conversationId,
+    message: "A retired interaction revision cannot become pending again",
+    retryable: false,
+  });
+
 const runCleanup = async (
   cleanup: () => unknown,
   onError: (error: unknown) => void,
@@ -100,8 +140,12 @@ export class ChatClient {
   readonly #snapshotStore: SnapshotStore;
   #disposed = false;
   #disposePromise: Promise<void> | undefined;
+  #conversationEpoch = 0;
   #generation = 0;
   #gatewaySubscription: GatewaySubscription | undefined;
+  readonly #interactionAnswersInFlight = new Set<string>();
+  readonly #retiredInteractionIdentities = new Set<string>();
+  readonly #supersededInteractionAnswers = new Set<string>();
   #historyRequestId = 0;
   #loadRequestId = 0;
   #pendingHandoff: PendingHandoff | undefined;
@@ -248,10 +292,19 @@ export class ChatClient {
     const loadedState = createSnapshotState(loaded.value);
     const currentState = this.#snapshotStore.state;
     const handoff = this.#pendingHandoff;
-    const nextState =
+    let nextState =
       handoff?.requestId === requestId && currentState !== null
         ? rebaseSnapshotState(handoff.baseline, loadedState, currentState)
         : loadedState;
+    if (
+      currentState?.snapshot.conversation.id !==
+      nextState.snapshot.conversation.id
+    ) {
+      this.#conversationEpoch += 1;
+      this.#retiredInteractionIdentities.clear();
+    } else if (currentState !== null) {
+      nextState = this.#guardInteractionTransition(currentState, nextState);
+    }
     this.#snapshotStore.commit(nextState);
     if (!this.#disposed) notificationQueue.activate(generation);
     this.#clearPendingHandoff(requestId);
@@ -293,6 +346,138 @@ export class ChatClient {
     const result = await this.#gateway.sendText(input);
     if (!result.ok) this.#reportError(result.error, generation);
     return result;
+  }
+
+  async answerInteraction(
+    input: AnswerInteractionInput,
+  ): Promise<GatewayResult<AnswerInteractionSuccess>> {
+    const parsed = answerInteractionInputSchema.safeParse(input);
+    if (!parsed.success) {
+      return runtimeFailure(
+        "validation",
+        "Interaction answer input is invalid",
+        typeof input.conversationId === "string"
+          ? input.conversationId
+          : undefined,
+      );
+    }
+    const command = parsed.data;
+    const state = this.#activeState(command.conversationId);
+    if (!state.ok) return state;
+    const pending = state.value.pendingInteraction;
+    if (
+      pending === undefined ||
+      pending.requestId !== command.answer.requestId ||
+      pending.revision !== command.answer.revision
+    ) {
+      return runtimeFailure(
+        "conflict",
+        "Interaction request is no longer pending",
+        command.conversationId,
+      );
+    }
+    const conversationEpoch = this.#conversationEpoch;
+    const inFlightKey = interactionAnswerInFlightKey(
+      conversationEpoch,
+      command.conversationId,
+      command.answer,
+    );
+    if (this.#interactionAnswersInFlight.has(inFlightKey)) {
+      return runtimeFailure(
+        "conflict",
+        "Interaction request is already being answered",
+        command.conversationId,
+      );
+    }
+    if (
+      !isGatewayOperationSupported(
+        state.value.capabilities,
+        "answerInteraction",
+      ) ||
+      this.#gateway.answerInteraction === undefined
+    ) {
+      return runtimeFailure(
+        "unsupported",
+        "Interaction answers are unavailable",
+        command.conversationId,
+      );
+    }
+    if (
+      getAskUserInteractionAnswerValidationError(pending, command.answer) !==
+      undefined
+    ) {
+      return runtimeFailure(
+        "validation",
+        "Interaction answers do not match the pending questions",
+        command.conversationId,
+      );
+    }
+    this.#interactionAnswersInFlight.add(inFlightKey);
+    try {
+      const result = await this.#gateway.answerInteraction(command);
+      const current = this.#snapshotStore.state?.snapshot;
+      const sameActiveConversation =
+        !this.#disposed &&
+        conversationEpoch === this.#conversationEpoch &&
+        current?.conversation.id === command.conversationId;
+      if (!sameActiveConversation) {
+        return runtimeFailure(
+          "conflict",
+          "Interaction answer was superseded",
+          command.conversationId,
+        );
+      }
+      if (this.#supersededInteractionAnswers.has(inFlightKey)) {
+        return runtimeFailure(
+          "conflict",
+          "Interaction answer was superseded",
+          command.conversationId,
+        );
+      }
+      const currentPending = current.pendingInteraction;
+      if (
+        currentPending !== undefined &&
+        !hasSameInteractionIdentity(currentPending, pending)
+      ) {
+        return runtimeFailure(
+          "conflict",
+          "Interaction answer was superseded",
+          command.conversationId,
+        );
+      }
+      if (!result.ok) {
+        if (hasSameInteractionIdentity(currentPending, pending)) {
+          this.#reportError(result.error, this.#generation);
+        }
+        return result;
+      }
+      if (
+        result.value.requestId !== command.answer.requestId ||
+        result.value.revision !== command.answer.revision
+      ) {
+        return runtimeFailure(
+          "validation",
+          "Gateway acknowledged a different interaction request",
+          command.conversationId,
+        );
+      }
+      const latest = this.#snapshotStore.latestState();
+      if (
+        latest !== null &&
+        hasSameInteractionIdentity(latest.snapshot.pendingInteraction, pending)
+      ) {
+        this.#snapshotStore.commit(
+          this.#guardInteractionTransition(
+            latest,
+            updateSnapshotState(latest, { pendingInteraction: undefined }),
+          ),
+        );
+      }
+      return result;
+    } finally {
+      this.#interactionAnswersInFlight.delete(inFlightKey);
+      this.#supersededInteractionAnswers.delete(inFlightKey);
+    }
   }
 
   async interrupt(
@@ -341,8 +526,12 @@ export class ChatClient {
     if (this.#disposePromise !== undefined) return this.#disposePromise;
 
     this.#disposed = true;
+    this.#conversationEpoch += 1;
     this.#generation += 1;
     this.#historyRequestId += 1;
+    this.#interactionAnswersInFlight.clear();
+    this.#retiredInteractionIdentities.clear();
+    this.#supersededInteractionAnswers.clear();
     this.#loadRequestId += 1;
     this.#pendingHandoff = undefined;
     this.#snapshotStore.close();
@@ -560,7 +749,63 @@ export class ChatClient {
       return;
     }
     const state = this.#snapshotStore.latestState()!;
-    this.#snapshotStore.commit(applySnapshotUpdate(state, update));
+    this.#snapshotStore.commit(
+      this.#guardInteractionTransition(
+        state,
+        applySnapshotUpdate(state, update),
+      ),
+    );
+  }
+
+  #guardInteractionTransition(
+    current: SnapshotState,
+    candidate: SnapshotState,
+  ): SnapshotState {
+    const currentInteraction = current.snapshot.pendingInteraction;
+    const candidateInteraction = candidate.snapshot.pendingInteraction;
+    if (
+      candidateInteraction !== undefined &&
+      !hasSameInteractionIdentity(currentInteraction, candidateInteraction) &&
+      this.#retiredInteractionIdentities.has(
+        interactionIdentityKey(candidateInteraction),
+      )
+    ) {
+      return updateSnapshotState(candidate, {
+        pendingInteraction: currentInteraction,
+        error: retiredInteractionError(current.snapshot.conversation.id),
+      });
+    }
+    if (
+      currentInteraction !== undefined &&
+      !hasSameInteractionIdentity(currentInteraction, candidateInteraction)
+    ) {
+      if (candidateInteraction !== undefined) {
+        const inFlightKey = interactionAnswerInFlightKey(
+          this.#conversationEpoch,
+          current.snapshot.conversation.id,
+          currentInteraction,
+        );
+        if (this.#interactionAnswersInFlight.has(inFlightKey)) {
+          this.#supersededInteractionAnswers.add(inFlightKey);
+        }
+      }
+      this.#retireInteractionIdentity(currentInteraction);
+    }
+    return candidate;
+  }
+
+  #retireInteractionIdentity(identity: InteractionIdentity): void {
+    const key = interactionIdentityKey(identity);
+    this.#retiredInteractionIdentities.delete(key);
+    this.#retiredInteractionIdentities.add(key);
+    while (
+      this.#retiredInteractionIdentities.size >
+      MAX_RETIRED_INTERACTION_IDENTITIES
+    ) {
+      const oldest = this.#retiredInteractionIdentities.values().next().value;
+      if (oldest === undefined) return;
+      this.#retiredInteractionIdentities.delete(oldest);
+    }
   }
 
   #applyGatewayError(error: ChatError, generation: number): void {

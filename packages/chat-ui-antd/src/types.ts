@@ -41,6 +41,13 @@ export type ChatContentState =
     };
 
 export interface ChatUiLabels {
+  readonly askUserCancel: ReactNode;
+  readonly askUserChatAboutThis: ReactNode;
+  readonly askUserLabel: string;
+  readonly askUserRequired: string;
+  readonly askUserSubmit: ReactNode;
+  readonly askUserSubmitting: ReactNode;
+  readonly askUserUnavailable: ReactNode;
   readonly capabilityUnavailableDescription: ReactNode;
   readonly capabilityUnavailableTitle: ReactNode;
   readonly composerLabel: string;

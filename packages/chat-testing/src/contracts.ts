@@ -11,6 +11,7 @@ export {
   type GatewayContractHold,
   type GatewayContractHoldPoint,
   type GatewayContractOperation,
+  type GatewayContractOptions,
 } from "./gateway-contracts.js";
 export {
   createRuntimeContractCases,

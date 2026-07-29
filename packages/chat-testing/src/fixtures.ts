@@ -1,8 +1,11 @@
 import {
   chatErrorSchema,
+  askUserInteractionRequestSchema,
   chatSnapshotSchema,
   chatUpdateSchema,
   conversationSchema,
+  type AnswerInteractionSuccess,
+  type AskUserInteractionRequest,
   type ChatError,
   type ChatSnapshot,
   type ChatUpdate,
@@ -12,12 +15,15 @@ import {
 } from "@turingfocus/chat-protocol";
 
 export interface ChatContractFixtureOptions {
+  readonly answerInteraction?: boolean | undefined;
   readonly baseTimestamp?: number | undefined;
   readonly conversationId?: string | undefined;
 }
 
 /** A coherent, normalized scenario shared by Gateway and Runtime contracts. */
 export interface ChatContractFixtures {
+  readonly answerInteractionSuccess: AnswerInteractionSuccess;
+  readonly askUserRequest: AskUserInteractionRequest;
   readonly authenticationError: ChatError;
   readonly capabilitiesUpdate: ChatUpdate;
   readonly conversation: Conversation;
@@ -56,6 +62,29 @@ export const createChatContractFixtures = (
     title: "Contract conversation",
     updatedAt: baseTimestamp,
   });
+  const askUserRequest: AskUserInteractionRequest =
+    askUserInteractionRequestSchema.parse({
+      kind: "ask-user",
+      conversationId,
+      requestId: "ask-user-request",
+      revision: "ask-user-revision-1",
+      eventId: "ask-user-event",
+      title: "Need your input",
+      questions: [
+        {
+          id: "0",
+          prompt: "Which option should be used?",
+          required: true,
+          multiple: false,
+          options: [
+            { label: "First", value: "first" },
+            { label: "Second", value: "second" },
+          ],
+        },
+      ],
+      timeoutSeconds: 300,
+    });
+  const answerInteraction = options.answerInteraction === true;
 
   const initialSnapshot = chatSnapshotSchema.parse({
     conversation,
@@ -78,6 +107,7 @@ export const createChatContractFixtures = (
       startedAt: baseTimestamp,
     },
     capabilities: {
+      ...(answerInteraction ? { answerInteraction: true } : {}),
       interrupt: true,
       listConversations: true,
       liveUpdates: true,
@@ -85,6 +115,11 @@ export const createChatContractFixtures = (
       sendText: true,
     },
     pageInfo: { hasPreviousPage: false },
+    ...(answerInteraction ? { pendingInteraction: askUserRequest } : {}),
+  });
+  const answerInteractionSuccess: AnswerInteractionSuccess = Object.freeze({
+    requestId: askUserRequest.requestId,
+    revision: askUserRequest.revision,
   });
 
   const realtimeMessageUpdate = chatUpdateSchema.parse({
@@ -363,6 +398,8 @@ export const createChatContractFixtures = (
   });
 
   return Object.freeze({
+    answerInteractionSuccess,
+    askUserRequest,
     authenticationError,
     capabilitiesUpdate,
     conversation,

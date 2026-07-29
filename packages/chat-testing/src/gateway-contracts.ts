@@ -1,7 +1,11 @@
 import type {
+  AnswerInteractionInput,
+  AnswerInteractionSuccess,
   ChatError,
   ChatGateway,
+  ChatSnapshot,
   ChatUpdate,
+  GatewayResult,
   InterruptRunInput,
   ListConversationsInput,
   LoadConversationInput,
@@ -23,6 +27,7 @@ import {
 } from "./fixtures.js";
 
 export type GatewayContractOperation =
+  | "answerInteraction"
   | "interrupt"
   | "listConversations"
   | "loadConversation"
@@ -33,6 +38,10 @@ export type GatewayContractHoldPoint =
   GatewayContractOperation | "gateway.dispose" | "subscription.dispose";
 
 export type GatewayContractCall =
+  | {
+      readonly operation: "answerInteraction";
+      readonly input: AnswerInteractionInput;
+    }
   | { readonly operation: "interrupt"; readonly input: InterruptRunInput }
   | {
       readonly operation: "listConversations";
@@ -67,6 +76,10 @@ export interface GatewayContractController {
   holdNext(point: GatewayContractHoldPoint): GatewayContractHold;
   now(): number;
   reconnect(): MaybePromise<void>;
+  setAnswerInteractionResult?(
+    result: GatewayResult<AnswerInteractionSuccess>,
+  ): MaybePromise<void>;
+  setSnapshot?(snapshot: ChatSnapshot): MaybePromise<void>;
 }
 
 export interface GatewayContractHarness {
@@ -82,6 +95,10 @@ export interface GatewayContractHarness {
 export type GatewayContractHarnessFactory = (
   fixtures: ChatContractFixtures,
 ) => MaybePromise<GatewayContractHarness>;
+
+export interface GatewayContractOptions {
+  readonly answerInteraction?: boolean | undefined;
+}
 
 const disposeGatewayHarness = async (
   harness: GatewayContractHarness,
@@ -102,11 +119,12 @@ const gatewayCase = (
     harness: GatewayContractHarness,
     fixtures: ChatContractFixtures,
   ) => Promise<void>,
+  options: GatewayContractOptions = {},
 ): ChatContractCase =>
   Object.freeze({
     name,
     async run() {
-      const fixtures = createChatContractFixtures();
+      const fixtures = createChatContractFixtures(options);
       const harness = await factory(fixtures);
       try {
         await execute(harness, fixtures);
@@ -118,16 +136,19 @@ const gatewayCase = (
 
 const gatewayIsolationCase = (
   factory: GatewayContractHarnessFactory,
+  options: GatewayContractOptions = {},
 ): ChatContractCase =>
   Object.freeze({
     name: "isolates concurrent Gateway instances",
     async run() {
       const baseTimestamp = 1_773_705_600_000;
       const firstFixtures = createChatContractFixtures({
+        answerInteraction: options.answerInteraction,
         baseTimestamp,
         conversationId: "conversation-contract-first",
       });
       const secondFixtures = createChatContractFixtures({
+        answerInteraction: options.answerInteraction,
         baseTimestamp: baseTimestamp + 10_000,
         conversationId: "conversation-contract-second",
       });
@@ -157,6 +178,34 @@ const gatewayIsolationCase = (
         );
         assert(firstSubscribed.ok, "the first instance must subscribe");
         assert(secondSubscribed.ok, "the second instance must subscribe");
+
+        if (options.answerInteraction === true) {
+          assert(
+            first.gateway.answerInteraction !== undefined &&
+              second.gateway.answerInteraction !== undefined,
+            "each capable instance must expose answerInteraction",
+          );
+          const answered = await first.gateway.answerInteraction({
+            conversationId: firstFixtures.conversation.id,
+            answer: {
+              requestId: firstFixtures.askUserRequest.requestId,
+              revision: firstFixtures.askUserRequest.revision,
+              action: "cancel",
+              answers: {},
+            },
+            deadlineAt: deadlineFrom(first.controller.now()),
+          });
+          assert(
+            answered.ok,
+            "the first instance must answer its own pending interaction",
+          );
+          assert(
+            second.controller.calls.every(
+              ({ operation }) => operation !== "answerInteraction",
+            ),
+            "answering through one instance must not reach another",
+          );
+        }
 
         await first.controller.emitUpdate(firstFixtures.realtimeMessageUpdate);
         assertEqual(
@@ -228,9 +277,274 @@ const gatewayIsolationCase = (
 /** Framework-neutral Gateway cases consumable from Vitest, Jest, or Node tests. */
 export const createGatewayContractCases = (
   factory: GatewayContractHarnessFactory,
+  options: GatewayContractOptions = {},
 ): readonly ChatContractCase[] =>
   Object.freeze([
-    gatewayIsolationCase(factory),
+    gatewayIsolationCase(factory, options),
+    gatewayCase(
+      "aligns the optional answerInteraction command with capabilities",
+      factory,
+      async ({ controller, gateway }, fixtures) => {
+        const loaded = await gateway.loadConversation({
+          conversationId: fixtures.conversation.id,
+          deadlineAt: deadlineFrom(controller.now()),
+        });
+        assert(loaded.ok, "the capability probe must load a snapshot");
+        const supported = loaded.value.capabilities.answerInteraction === true;
+        if (supported) {
+          assert(
+            gateway.answerInteraction !== undefined,
+            "an advertised answerInteraction capability requires the command",
+          );
+          return;
+        }
+        if (gateway.answerInteraction === undefined) return;
+        const answered = await gateway.answerInteraction({
+          conversationId: fixtures.conversation.id,
+          answer: {
+            requestId: fixtures.askUserRequest.requestId,
+            revision: fixtures.askUserRequest.revision,
+            action: "cancel",
+            answers: {},
+          },
+          deadlineAt: deadlineFrom(controller.now()),
+        });
+        assert(
+          !answered.ok && answered.error.code === "unsupported",
+          "an unavailable answerInteraction command must return unsupported",
+        );
+      },
+      options,
+    ),
+    ...(options.answerInteraction === true
+      ? [
+          gatewayCase(
+            "executes answerInteraction commands",
+            factory,
+            async ({ controller, gateway }, fixtures) => {
+              assert(
+                gateway.answerInteraction !== undefined,
+                "answerInteraction capability requires a Gateway command",
+              );
+              const input: AnswerInteractionInput = {
+                conversationId: fixtures.conversation.id,
+                answer: {
+                  requestId: fixtures.askUserRequest.requestId,
+                  revision: fixtures.askUserRequest.revision,
+                  action: "submit",
+                  answers: { "0": "first" },
+                },
+                deadlineAt: deadlineFrom(controller.now()),
+              };
+              const answered = await gateway.answerInteraction(input);
+              assertEqual(
+                answered,
+                { ok: true, value: fixtures.answerInteractionSuccess },
+                "answerInteraction must preserve its acknowledgement ID",
+              );
+              assertEqual(
+                controller.calls,
+                [{ operation: "answerInteraction", input }],
+                "answerInteraction must dispatch the complete request payload",
+              );
+            },
+            options,
+          ),
+          gatewayCase(
+            "rejects invalid answerInteraction input before dispatch",
+            factory,
+            async ({ controller, gateway }, fixtures) => {
+              assert(
+                gateway.answerInteraction !== undefined,
+                "answerInteraction capability requires a Gateway command",
+              );
+              const answered = await gateway.answerInteraction({
+                conversationId: fixtures.conversation.id,
+                answer: {
+                  requestId: "r".repeat(1_000),
+                  revision: fixtures.askUserRequest.revision,
+                  action: "cancel",
+                  answers: {},
+                },
+                deadlineAt: deadlineFrom(controller.now()),
+              });
+              assert(
+                !answered.ok && answered.error.code === "validation",
+                "invalid answerInteraction input must return validation",
+              );
+              assertEqual(
+                controller.calls,
+                [],
+                "invalid answerInteraction input must not reach the transport",
+              );
+            },
+            options,
+          ),
+          gatewayCase(
+            "isolates replacement revisions that reuse a request ID",
+            factory,
+            async ({ controller, gateway }, fixtures) => {
+              assert(
+                gateway.answerInteraction !== undefined,
+                "answerInteraction capability requires a Gateway command",
+              );
+              assert(
+                controller.setSnapshot !== undefined &&
+                  controller.setAnswerInteractionResult !== undefined,
+                "answerInteraction revision contracts require mutable fake-server state",
+              );
+              const hold = controller.holdNext("answerInteraction");
+              const originalAnswer: AnswerInteractionInput = {
+                conversationId: fixtures.conversation.id,
+                answer: {
+                  requestId: fixtures.askUserRequest.requestId,
+                  revision: fixtures.askUserRequest.revision,
+                  action: "cancel",
+                  answers: {},
+                },
+                deadlineAt: deadlineFrom(controller.now()),
+              };
+              const original = gateway.answerInteraction(originalAnswer);
+              await hold.started;
+
+              const replacement = {
+                ...fixtures.askUserRequest,
+                revision: "replacement-revision",
+                title: "Replacement interaction",
+              };
+              await controller.setSnapshot({
+                ...fixtures.initialSnapshot,
+                pendingInteraction: replacement,
+              });
+              await controller.setAnswerInteractionResult({
+                ok: true,
+                value: {
+                  requestId: replacement.requestId,
+                  revision: replacement.revision,
+                },
+              });
+              const replacementAnswer: AnswerInteractionInput = {
+                conversationId: fixtures.conversation.id,
+                answer: {
+                  requestId: replacement.requestId,
+                  revision: replacement.revision,
+                  action: "cancel",
+                  answers: {},
+                },
+                deadlineAt: deadlineFrom(controller.now()),
+              };
+              const replacementResult =
+                await gateway.answerInteraction(replacementAnswer);
+              assert(
+                replacementResult.ok,
+                "the replacement revision must be independently answerable",
+              );
+
+              hold.release();
+              const stale = await original;
+              assert(
+                !stale.ok && stale.error.code === "conflict",
+                "the old revision must not affect its replacement",
+              );
+              assertEqual(
+                controller.calls,
+                [
+                  { operation: "answerInteraction", input: originalAnswer },
+                  { operation: "answerInteraction", input: replacementAnswer },
+                ],
+                "each interaction revision must keep its complete payload",
+              );
+            },
+            options,
+          ),
+          gatewayCase(
+            "rejects stale answerInteraction requests",
+            factory,
+            async ({ controller, gateway }, fixtures) => {
+              assert(
+                gateway.answerInteraction !== undefined,
+                "answerInteraction capability requires a Gateway command",
+              );
+              const answered = await gateway.answerInteraction({
+                conversationId: fixtures.conversation.id,
+                answer: {
+                  requestId: "stale-request",
+                  revision: "stale-revision",
+                  action: "cancel",
+                  answers: {},
+                },
+                deadlineAt: deadlineFrom(controller.now()),
+              });
+              assert(
+                !answered.ok && answered.error.code === "conflict",
+                "answerInteraction must reject stale request IDs",
+              );
+            },
+            options,
+          ),
+          gatewayCase(
+            "returns structured answerInteraction failures",
+            factory,
+            async ({ controller, gateway }, fixtures) => {
+              assert(
+                gateway.answerInteraction !== undefined,
+                "answerInteraction capability requires a Gateway command",
+              );
+              await controller.failNext(
+                "answerInteraction",
+                fixtures.authenticationError,
+              );
+              const answered = await gateway.answerInteraction({
+                conversationId: fixtures.conversation.id,
+                answer: {
+                  requestId: fixtures.askUserRequest.requestId,
+                  revision: fixtures.askUserRequest.revision,
+                  action: "cancel",
+                  answers: {},
+                },
+                deadlineAt: deadlineFrom(controller.now()),
+              });
+              assertEqual(
+                answered,
+                { ok: false, error: fixtures.authenticationError },
+                "answerInteraction failures must remain structured",
+              );
+            },
+            options,
+          ),
+          gatewayCase(
+            "bounds answerInteraction by its deadline",
+            factory,
+            async ({ controller, gateway }, fixtures) => {
+              assert(
+                gateway.answerInteraction !== undefined,
+                "answerInteraction capability requires a Gateway command",
+              );
+              const hold = controller.holdNext("answerInteraction");
+              const deadlineAt = controller.now() + 1_000;
+              const answering = gateway.answerInteraction({
+                conversationId: fixtures.conversation.id,
+                answer: {
+                  requestId: fixtures.askUserRequest.requestId,
+                  revision: fixtures.askUserRequest.revision,
+                  action: "cancel",
+                  answers: {},
+                },
+                deadlineAt,
+              });
+              await hold.started;
+              await controller.advanceTimeTo(deadlineAt);
+              const answered = await answering;
+              assert(
+                !answered.ok && answered.error.code === "timeout",
+                "answerInteraction must return a structured deadline failure",
+              );
+              hold.release();
+            },
+            options,
+          ),
+        ]
+      : []),
     gatewayCase(
       "loads normalized conversations and snapshots",
       factory,

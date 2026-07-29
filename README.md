@@ -4,7 +4,7 @@ TFRobot 聊天能力的可复用模块。项目采用 Headless Runtime、宿主�
 
 ## 当前状态
 
-项目处于 V1 纵向切片建设阶段。六包 workspace、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-protocol` 提供标准模型、运行时 schema 与 Gateway/SessionProvider 端口，`@turingfocus/chat-testing` 提供内存 Gateway、标准 fixtures 与框架无关契约套件，`@turingfocus/chat-runtime` 提供实例化 ChatClient、不可变快照、历史/实时归并、聊天命令和显式释放，`@turingfocus/chat-gateway-tfrobot` 提供实例隔离的 TFRobotServer REST/Socket.IO、DTO 校验、短期认证注入和安全映射，`@turingfocus/chat-react` 提供无样式 Provider、选择性订阅 hooks 和明确的实例所有权，`@turingfocus/chat-ui-antd` 提供会话壳、虚拟化时间轴、文本发送、Run/中断控件和可扩展渲染器。真实 Gateway 的生产 Socket 验证仍受 TFRS-297 安全门禁约束。
+项目处于 V1 纵向切片建设阶段。六包 workspace、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-protocol` 提供标准模型、运行时 schema 与 Gateway/SessionProvider 端口，`@turingfocus/chat-testing` 提供内存 Gateway、标准 fixtures 与框架无关契约套件，`@turingfocus/chat-runtime` 提供实例化 ChatClient、不可变快照、历史/实时归并、聊天命令和显式释放，`@turingfocus/chat-gateway-tfrobot` 提供实例隔离的 TFRobotServer REST/Socket.IO、DTO 校验、短期认证注入和安全映射，`@turingfocus/chat-react` 提供无样式 Provider、选择性订阅 hooks 和明确的实例所有权，`@turingfocus/chat-ui-antd` 提供会话壳、虚拟化时间轴、安全 Markdown、文本发送、Run/中断控件、Ask User 交互和可扩展渲染器。真实 Gateway 的生产 Socket 验证仍受 TFRS-297 安全门禁约束；TFRobot `/remote-tool` 的多 Provider 与会话路由完成前，实时 Ask User 回答能力保持关闭。
 
 ## V1 承诺
 
@@ -73,7 +73,8 @@ React 宿主通过 `ChatProvider` 注入自行持有的 `ChatClient`；该 Provi
 
 Ant Design 宿主可以在自己的页面布局中组合 `ChatUiShell` 与 `ChatConversationView`。会话列表、
 当前选择和切换回调均由宿主控制；当前会话视图只通过 `ChatProvider` 的 hooks 和 `ChatClient`
-执行历史/实时展示、文本发送与 Run 中断，不读取 Gateway、SessionProvider、路由或全局 Store。
+执行历史/实时展示、文本发送、Run 中断与受控 Ask User 回答，不读取 Gateway、SessionProvider、路由或全局 Store。
+Ask User 的“聊聊这个”按具体问题通过显式宿主回调交还给页面草稿流程，不冒充 Gateway answer action。
 时间轴默认虚拟化，离开底部后不会抢滚动，并通过提示返回最新消息。渲染器注册表支持宿主覆盖，
-未知事件和单个渲染器异常均安全降级。自定义文案通过 `labels` 注入，主题沿用宿主的 Ant Design
+文本内容默认按经过清洗的 GFM Markdown 渲染；未知事件和单个渲染器异常均安全降级。自定义文案通过 `labels` 注入，主题沿用宿主的 Ant Design
 `ConfigProvider` token。

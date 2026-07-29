@@ -111,7 +111,13 @@ export const PACKAGE_POLICY = Object.freeze({
       "react-dom": ">=18.2.0 <19.0.0",
     },
     allowedExternalDependencies: {
-      dependencies: [...heavyRendererDependencyPatterns, "react-virtuoso"],
+      dependencies: [
+        ...heavyRendererDependencyPatterns,
+        "react-markdown",
+        "react-virtuoso",
+        "rehype-sanitize",
+        "remark-gfm",
+      ],
       peerDependencies: ["antd", "react", "react-dom"],
     },
   },

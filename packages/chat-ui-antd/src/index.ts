@@ -1,5 +1,12 @@
 export { ChatComposer, type ChatComposerProps } from "./chat-composer.js";
 export {
+  AskUserInteractionCard,
+  AskUserInteractionResultView,
+  type AskUserChatAboutThisRequest,
+  type AskUserInteractionCardProps,
+  type AskUserInteractionResultViewProps,
+} from "./ask-user-interaction.js";
+export {
   ChatConversationView,
   type ChatConversationViewProps,
   type ChatUiCommand,
@@ -16,6 +23,7 @@ export { ChatTimeline, type ChatTimelineProps } from "./chat-timeline.js";
 export { ChatUiShell, type ChatUiShellProps } from "./chat-ui-shell.js";
 export { defaultChatUiLabels, resolveChatUiLabels } from "./labels.js";
 export {
+  ChatMessageContent,
   ChatTimelineItem,
   createChatRendererRegistry,
   defaultChatRendererRegistry,
@@ -26,8 +34,13 @@ export {
   type ChatRendererKey,
   type ChatRendererProps,
   type ChatRendererRegistry,
+  type ChatMessageContentProps,
   type ChatTimelineItemProps,
 } from "./renderer-registry.js";
+export {
+  ChatMarkdownContent,
+  type ChatMarkdownContentProps,
+} from "./markdown-content.js";
 export type {
   ChatContentState,
   ChatConversationListItem,

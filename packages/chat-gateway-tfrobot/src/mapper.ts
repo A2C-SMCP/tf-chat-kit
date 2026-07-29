@@ -1,5 +1,10 @@
 import {
+  ASK_USER_MAX_ANSWER_VALUES,
+  ASK_USER_MAX_OPTIONS,
+  ASK_USER_MAX_QUESTIONS,
+  ASK_USER_MAX_TEXT_CHARACTERS,
   agentEventSchema,
+  askUserInteractionResultSchema,
   chatErrorSchema,
   chatSnapshotSchema,
   chatUpdateSchema,
@@ -13,6 +18,9 @@ import {
   type AgentEvent,
   type AgentEventStatus,
   type AgentEventTransition,
+  type AskUserInteractionQuestion,
+  type AskUserInteractionResult,
+  type AskUserInteractionValue,
   type ChatError,
   type ChatSnapshot,
   type ChatUpdate,
@@ -290,6 +298,223 @@ const parseJsonIfPossible = (value: unknown): unknown => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
+const askUserToolNames = new Set([
+  "askuser",
+  "askuserquestions",
+  "askusertool",
+]);
+
+const isAskUserToolName = (value: unknown): boolean =>
+  typeof value === "string" &&
+  askUserToolNames.has(
+    value
+      .trim()
+      .toLocaleLowerCase("en-US")
+      .replace(/[^a-z0-9]/g, ""),
+  );
+
+const stringValue = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim().length > 0
+    ? sanitizeDiagnosticText(value)
+    : typeof value === "number" || typeof value === "boolean"
+      ? String(value)
+      : undefined;
+
+const displayStringValue = (value: unknown): string | undefined => {
+  const normalized = stringValue(value);
+  if (normalized === undefined) return undefined;
+  return normalized.slice(0, ASK_USER_MAX_TEXT_CHARACTERS);
+};
+
+const mapAskUserInteractionValue = (
+  value: unknown,
+): AskUserInteractionValue | undefined => {
+  if (!Array.isArray(value)) return displayStringValue(value);
+  const normalized = value
+    .slice(0, ASK_USER_MAX_ANSWER_VALUES)
+    .flatMap((item) => {
+      const entry = displayStringValue(item);
+      return entry === undefined ? [] : [entry];
+    });
+  return normalized.length > 0 || value.length === 0 ? normalized : undefined;
+};
+
+const mapAskUserOptions = (
+  value: unknown,
+): AskUserInteractionQuestion["options"] => {
+  if (!Array.isArray(value)) return [];
+  const options = value.slice(0, ASK_USER_MAX_OPTIONS).flatMap((option) => {
+    if (typeof option === "string") {
+      const label = displayStringValue(option);
+      return label === undefined ? [] : [{ label, value: label }];
+    }
+    if (!isRecord(option)) return [];
+    const label = displayStringValue(option["label"]);
+    if (label === undefined) return [];
+    const normalizedValue = displayStringValue(option["value"]) ?? label;
+    const description = displayStringValue(option["description"]);
+    return [
+      {
+        label,
+        value: normalizedValue,
+        ...(description === undefined ? {} : { description }),
+      },
+    ];
+  });
+  const seenValues = new Set<string>();
+  return options.filter(({ value: optionValue }) => {
+    if (seenValues.has(optionValue)) return false;
+    seenValues.add(optionValue);
+    return true;
+  });
+};
+
+const mapAskUserQuestions = (
+  value: unknown,
+): readonly AskUserInteractionQuestion[] => {
+  const record = isRecord(value) ? value : undefined;
+  const candidates = Array.isArray(value)
+    ? value
+    : Array.isArray(record?.["questions"])
+      ? record["questions"]
+      : record === undefined
+        ? []
+        : [record];
+  return candidates
+    .slice(0, ASK_USER_MAX_QUESTIONS)
+    .flatMap((candidate, index) => {
+      if (!isRecord(candidate)) return [];
+      const prompt =
+        displayStringValue(candidate["question"]) ??
+        displayStringValue(candidate["prompt"]) ??
+        displayStringValue(candidate["message"]);
+      if (prompt === undefined) return [];
+      const title =
+        displayStringValue(candidate["title"]) ??
+        displayStringValue(candidate["header"]);
+      const description = displayStringValue(candidate["description"]);
+      const placeholder = displayStringValue(candidate["placeholder"]);
+      const defaultValue = mapAskUserInteractionValue(candidate["default"]);
+      const options = mapAskUserOptions(
+        candidate["options"] ?? candidate["choices"],
+      );
+      return [
+        {
+          id: String(index),
+          prompt,
+          ...(title === undefined ? {} : { title }),
+          ...(description === undefined ? {} : { description }),
+          ...(placeholder === undefined ? {} : { placeholder }),
+          required:
+            typeof candidate["required"] === "boolean"
+              ? candidate["required"]
+              : true,
+          multiple:
+            candidate["multiSelect"] === true ||
+            candidate["multi_select"] === true,
+          ...(defaultValue === undefined ? {} : { defaultValue }),
+          options,
+        },
+      ];
+    });
+};
+
+const mapAnswerRecord = (
+  value: unknown,
+  questionSource: unknown,
+  questions: readonly AskUserInteractionQuestion[],
+): Readonly<Record<string, AskUserInteractionValue>> | undefined => {
+  if (!isRecord(value)) return undefined;
+  const questionRecord = isRecord(questionSource) ? questionSource : undefined;
+  const candidates = Array.isArray(questionSource)
+    ? questionSource
+    : Array.isArray(questionRecord?.["questions"])
+      ? questionRecord["questions"]
+      : questionRecord === undefined
+        ? []
+        : [questionRecord];
+  const answers: Record<string, AskUserInteractionValue> = {};
+  for (const question of questions) {
+    const index = Number(question.id);
+    const candidate = candidates[index];
+    const sourceId = isRecord(candidate)
+      ? (stringValue(candidate["id"]) ?? question.id)
+      : question.id;
+    const answer = Object.hasOwn(value, sourceId)
+      ? value[sourceId]
+      : value[question.id];
+    const normalized = mapAskUserInteractionValue(answer);
+    if (normalized !== undefined) answers[question.id] = normalized;
+  }
+  return Object.keys(answers).length === 0 ? undefined : answers;
+};
+
+const mapAskUserResult = (
+  toolName: unknown,
+  toolCall: Record<string, unknown> | undefined,
+  toolReturn: Record<string, unknown> | undefined,
+): AskUserInteractionResult | undefined => {
+  const originValue = parseJsonIfPossible(toolReturn?.["origin"]);
+  const origin = isRecord(originValue) ? originValue : undefined;
+  if (
+    origin === undefined ||
+    (!isAskUserToolName(toolName) && !isAskUserToolName(origin["type"]))
+  ) {
+    return undefined;
+  }
+  const response = isRecord(origin["response"])
+    ? origin["response"]
+    : undefined;
+  const requestId =
+    stringValue(origin["requestId"]) ??
+    stringValue(response?.["requestId"]) ??
+    stringValue(toolCall?.["toolId"]);
+  const functionCall = isRecord(toolCall?.["functionCall"])
+    ? toolCall["functionCall"]
+    : undefined;
+  const parameters = parseJsonIfPossible(functionCall?.["parameters"]);
+  const questionSource = origin["questions"] ?? parameters;
+  const questions = mapAskUserQuestions(questionSource);
+  if (requestId === undefined || questions.length === 0) return undefined;
+
+  const rawStatus = stringValue(origin["status"])?.toLocaleLowerCase("en-US");
+  const originError = displayStringValue(origin["error"]);
+  const responseError = displayStringValue(response?.["error"]);
+  const meta = isRecord(toolReturn?.["meta"]) ? toolReturn["meta"] : undefined;
+  const status: AskUserInteractionResult["status"] =
+    rawStatus === "failed"
+      ? "failed"
+      : rawStatus === "timeout" || response?.["timedOut"] === true
+        ? "timeout"
+        : rawStatus === "cancelled" || response?.["cancelled"] === true
+          ? "cancelled"
+          : rawStatus === "chat-about-this" ||
+              response?.["chatAboutThis"] === true
+            ? "chat-about-this"
+            : originError !== undefined ||
+                responseError !== undefined ||
+                origin["success"] === false ||
+                response?.["success"] === false ||
+                meta?.["success"] === false
+              ? "failed"
+              : "answered";
+  const answers = mapAnswerRecord(
+    response?.["answers"] ?? origin["answers"],
+    questionSource,
+    questions,
+  );
+  const error = originError ?? responseError;
+  const parsed = askUserInteractionResultSchema.safeParse({
+    kind: "ask-user",
+    requestId,
+    status,
+    questions,
+    ...(answers === undefined ? {} : { answers }),
+    ...(error === undefined ? {} : { error }),
+  });
+  return parsed.success ? parsed.data : undefined;
+};
+
 const eventIdentity = (dto: EventDto): string =>
   dto.eventId == null
     ? `event:${asId(dto.conversationId)}:${dto.createTimestamp}:${dto.eventScene}`
@@ -372,6 +597,7 @@ const mapToolTransition = (
   if (normalizedToolCall === undefined && normalizedToolReturn === undefined) {
     return undefined;
   }
+  const interaction = mapAskUserResult(name, toolCall, toolReturn);
   return {
     id: transitionId,
     status: mapEventStatus(dto.status),
@@ -386,6 +612,7 @@ const mapToolTransition = (
     ...(normalizedToolReturn === undefined
       ? {}
       : { toolReturn: normalizedToolReturn }),
+    ...(interaction === undefined ? {} : { interaction }),
     ...extraRaw(dto, EVENT_KEYS),
   };
 };

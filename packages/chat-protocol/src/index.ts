@@ -1,6 +1,20 @@
 export * from "./gateway.js";
 export {
+  ASK_USER_MAX_ANSWER_VALUES,
+  ASK_USER_MAX_OPTIONS,
+  ASK_USER_MAX_QUESTIONS,
+  ASK_USER_MAX_QUESTION_ID_CHARACTERS,
+  ASK_USER_MAX_REQUEST_ID_CHARACTERS,
+  ASK_USER_MAX_TEXT_CHARACTERS,
+  getAskUserInteractionAnswerValidationError,
+  isAskUserInteractionValueCompatible,
+  isSafeAskUserQuestionId,
+} from "./ask-user.js";
+export {
   agentEventSchema,
+  askUserInteractionAnswerSchema,
+  askUserInteractionRequestSchema,
+  askUserInteractionResultSchema,
   capabilitiesSchema,
   chatErrorSchema,
   chatSnapshotSchema,
@@ -21,6 +35,12 @@ export type {
   AgentEventTransition,
   AgentEventTransitionPayload,
   AgentEventTransitionUpdate,
+  AskUserInteractionAnswer,
+  AskUserInteractionOption,
+  AskUserInteractionQuestion,
+  AskUserInteractionRequest,
+  AskUserInteractionResult,
+  AskUserInteractionValue,
   Capabilities,
   ChatError,
   ChatErrorCode,

@@ -5,6 +5,10 @@ import type { ChatError, ChatSnapshot } from "@turingfocus/chat-protocol";
 import { useChatClient, useChatSelector } from "@turingfocus/chat-react";
 
 import { ChatComposer } from "./chat-composer.js";
+import {
+  AskUserInteractionCard,
+  type AskUserChatAboutThisRequest,
+} from "./ask-user-interaction.js";
 import { ChatRunStatus } from "./chat-run-status.js";
 import { ChatStateView } from "./chat-state-view.js";
 import { ChatTimeline } from "./chat-timeline.js";
@@ -29,6 +33,8 @@ export interface ChatConversationViewProps {
   readonly labels?: ChatUiLabelOverrides | undefined;
   readonly onCommandError?:
     ((failure: ChatUiCommandFailure) => void) | undefined;
+  readonly onChatAboutThis?:
+    ((request: AskUserChatAboutThisRequest) => void) | undefined;
   readonly onRendererError?:
     ((failure: ChatRendererFailure) => void) | undefined;
   readonly renderers?: ChatRendererRegistry | undefined;
@@ -39,6 +45,7 @@ interface ChatConversationViewSnapshot {
   readonly capabilities: ChatSnapshot["capabilities"];
   readonly conversationId: string;
   readonly error: ChatError | undefined;
+  readonly pendingInteraction: ChatSnapshot["pendingInteraction"];
   readonly run: ChatSnapshot["run"];
   readonly timeline: ChatSnapshot["timeline"];
 }
@@ -52,6 +59,7 @@ const selectChatConversationViewSnapshot = (
         capabilities: snapshot.capabilities,
         conversationId: snapshot.conversation.id,
         error: snapshot.error,
+        pendingInteraction: snapshot.pendingInteraction,
         run: snapshot.run,
         timeline: snapshot.timeline,
       };
@@ -66,6 +74,7 @@ const equalChatConversationViewSnapshot = (
     left.capabilities === right.capabilities &&
     left.conversationId === right.conversationId &&
     left.error === right.error &&
+    left.pendingInteraction === right.pendingInteraction &&
     left.run === right.run &&
     left.timeline === right.timeline);
 
@@ -74,6 +83,7 @@ export const ChatConversationView = ({
   formatTimestamp,
   getDeadlineAt,
   labels: labelOverrides,
+  onChatAboutThis,
   onCommandError,
   onRendererError,
   renderers,
@@ -87,6 +97,7 @@ export const ChatConversationView = ({
     equalChatConversationViewSnapshot,
   );
   const {
+    answerInteraction,
     dismissFailure,
     interrupt,
     sendText,
@@ -94,10 +105,18 @@ export const ChatConversationView = ({
     visibleCommandFailures,
     visibleSnapshotError,
   } = useChatCommandCoordinator({
+    canAnswerInteraction: snapshot?.capabilities.answerInteraction === true,
     canInterrupt: snapshot?.capabilities.interrupt ?? false,
     client,
     conversationId: snapshot?.conversationId ?? null,
     getDeadlineAt,
+    interactionRequest:
+      snapshot?.pendingInteraction === undefined
+        ? undefined
+        : {
+            requestId: snapshot.pendingInteraction.requestId,
+            revision: snapshot.pendingInteraction.revision,
+          },
     onCommandError,
     run: snapshot?.run ?? null,
     snapshotError: snapshot?.error,
@@ -159,6 +178,22 @@ export const ChatConversationView = ({
           renderers={renderers}
         />
       </div>
+      {snapshot.pendingInteraction === undefined ? null : (
+        <div style={{ padding: token.paddingXS }}>
+          <AskUserInteractionCard
+            key={JSON.stringify([
+              conversationId,
+              snapshot.pendingInteraction.requestId,
+              snapshot.pendingInteraction.revision,
+            ])}
+            answerDisabled={snapshot.capabilities.answerInteraction !== true}
+            labels={labels}
+            onAnswer={answerInteraction}
+            onChatAboutThis={onChatAboutThis}
+            request={snapshot.pendingInteraction}
+          />
+        </div>
+      )}
       <ChatComposer
         key={viewResetKey}
         disabled={!snapshot.capabilities.sendText}

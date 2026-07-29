@@ -91,6 +91,225 @@ const renderInDom = async (node: ReactNode): Promise<DomRender> => {
 };
 
 describe("@turingfocus/chat-ui-antd renderer registry", () => {
+  it("renders GFM Markdown while dropping raw HTML, active URLs, and images", () => {
+    const maliciousMessage: Message = {
+      ...textMessage,
+      content: {
+        kind: "text",
+        text: [
+          "~~removed~~",
+          "",
+          "| A | B |",
+          "| - | - |",
+          "| 1 | 2 |",
+          "",
+          '<script>alert("xss")</script>',
+          "[unsafe](javascript:alert(1))",
+          "![tracking](https://example.invalid/pixel.png)",
+        ].join("\n"),
+      },
+    };
+    const markup = renderToStaticMarkup(
+      createElement(ChatTimelineItem, {
+        item: maliciousMessage,
+        registry: createChatRendererRegistry(),
+      }),
+    );
+
+    expect(markup).toContain("<del>removed</del>");
+    expect(markup).toContain("<table>");
+    expect(markup).not.toContain("<script");
+    expect(markup).not.toContain("javascript:");
+    expect(markup).not.toContain("<img");
+    expect(markup).toContain("[Image: tracking]");
+  });
+
+  it("renders normalized Ask User history without reading raw Tool payloads", () => {
+    const toolEvent: AgentEvent = {
+      kind: "agent-event",
+      eventCategory: "tool",
+      id: "ask-user-event",
+      conversationId,
+      eventType: "Tool",
+      status: "success",
+      createdAt: textMessage.createdAt,
+      transitions: [
+        {
+          id: "ask-user-transition",
+          status: "success",
+          occurredAt: textMessage.createdAt,
+          toolCall: { name: "ask_user" },
+          toolReturn: { success: true },
+          interaction: {
+            kind: "ask-user",
+            requestId: "request-1",
+            status: "answered",
+            questions: [
+              {
+                id: "0",
+                prompt: "Choose one",
+                required: true,
+                multiple: false,
+                options: [],
+              },
+            ],
+            answers: { "0": "Safe answer" },
+          },
+          raw: { secret: "must-not-render" },
+        },
+      ],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(ChatTimelineItem, {
+        item: toolEvent,
+        registry: createChatRendererRegistry(),
+      }),
+    );
+
+    expect(markup).toContain("Ask User");
+    expect(markup).toContain("Choose one");
+    expect(markup).toContain("Safe answer");
+    expect(markup).not.toContain("must-not-render");
+  });
+
+  it("renders bounded normalized Tool results without reading raw payloads", () => {
+    const toolEvent: AgentEvent = {
+      kind: "agent-event",
+      eventCategory: "tool",
+      id: "generic-tool-event",
+      conversationId,
+      eventType: "Tool",
+      status: "success",
+      createdAt: textMessage.createdAt,
+      transitions: [
+        {
+          id: "generic-tool-transition",
+          status: "success",
+          occurredAt: textMessage.createdAt,
+          toolCall: { name: "search" },
+          toolReturn: {
+            result: {
+              summary: "VISIBLE_RESULT",
+              oversized: "x".repeat(5_000),
+            },
+            success: true,
+            done: true,
+            raw: { secret: "must-not-render" },
+          },
+        },
+      ],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(ChatTimelineItem, {
+        item: toolEvent,
+        registry: createChatRendererRegistry(),
+      }),
+    );
+
+    expect(markup).toContain("VISIBLE_RESULT");
+    expect(markup).toContain("Result truncated");
+    expect(markup).toContain("success");
+    expect(markup).toContain("done");
+    expect(markup).not.toContain("must-not-render");
+    expect(markup.length).toBeLessThan(8_000);
+  });
+
+  it("renders normalized Ask User failures as failures even when the event status is success", () => {
+    const toolEvent: AgentEvent = {
+      kind: "agent-event",
+      eventCategory: "tool",
+      id: "failed-ask-user-event",
+      conversationId,
+      eventType: "Tool",
+      status: "success",
+      createdAt: textMessage.createdAt,
+      transitions: [
+        {
+          id: "failed-ask-user-transition",
+          status: "success",
+          occurredAt: textMessage.createdAt,
+          toolCall: { name: "ask_user" },
+          toolReturn: { success: false },
+          interaction: {
+            kind: "ask-user",
+            requestId: "request-failed",
+            status: "failed",
+            questions: [
+              {
+                id: "0",
+                prompt: "Choose one",
+                required: true,
+                multiple: false,
+                options: [],
+              },
+            ],
+            error: "backend exploded",
+          },
+        },
+      ],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(ChatTimelineItem, {
+        item: toolEvent,
+        registry: createChatRendererRegistry(),
+      }),
+    );
+
+    expect(markup).toContain("failed");
+    expect(markup).toContain("backend exploded");
+    expect(markup).not.toContain(">success<");
+  });
+
+  it("bounds oversized normalized Ask User history within one timeline item", () => {
+    const questions = Array.from({ length: 40 }, (_, index) => ({
+      id: String(index),
+      prompt: `Question ${index} ${"p".repeat(800)}`,
+      required: true,
+      multiple: false,
+      options: [],
+    }));
+    const toolEvent: AgentEvent = {
+      kind: "agent-event",
+      eventCategory: "tool",
+      id: "oversized-ask-user-event",
+      conversationId,
+      eventType: "Tool",
+      status: "success",
+      createdAt: textMessage.createdAt,
+      transitions: [
+        {
+          id: "oversized-ask-user-transition",
+          status: "success",
+          occurredAt: textMessage.createdAt,
+          interaction: {
+            kind: "ask-user",
+            requestId: "oversized-request",
+            status: "answered",
+            questions,
+            answers: Object.fromEntries(
+              questions.map(({ id }, index) => [
+                id,
+                index === 0
+                  ? Array.from({ length: 5_000 }, () => "array-value")
+                  : "a".repeat(4_000),
+              ]),
+            ),
+          },
+        },
+      ],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(ChatTimelineItem, {
+        item: toolEvent,
+        registry: createChatRendererRegistry(),
+      }),
+    );
+
+    expect(markup).toContain("Ask User history truncated");
+    expect(markup).not.toContain("Question 39");
+    expect(markup.length).toBeLessThan(40_000);
+  });
+
   it("prefers host-specific overrides and falls back to safe defaults", () => {
     const Override: ChatRenderer = ({ item }) =>
       createElement("strong", null, `Host renderer: ${item.id}`);

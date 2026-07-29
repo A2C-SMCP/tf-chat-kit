@@ -1,4 +1,6 @@
 import {
+  answerInteractionInputSchema,
+  answerInteractionResultSchema,
   chatErrorSchema,
   chatSnapshotSchema,
   chatUpdateSchema,
@@ -14,6 +16,8 @@ import {
   sendTextResultSchema,
   subscribeConversationInputSchema,
   type ChatError,
+  type AnswerInteractionInput,
+  type AnswerInteractionSuccess,
   type ChatGateway,
   type ChatSnapshot,
   type ChatUpdate,
@@ -52,6 +56,10 @@ export type {
 } from "./memory-gateway-holds.js";
 
 export type MemoryGatewayCall =
+  | {
+      readonly operation: "answerInteraction";
+      readonly input: AnswerInteractionInput;
+    }
   | { readonly operation: "interrupt"; readonly input: InterruptRunInput }
   | {
       readonly operation: "listConversations";
@@ -87,6 +95,9 @@ export interface MemoryGatewayController {
   advanceTimeTo(timestamp: number): void;
   reconnect(): void;
   setConversationPage(page: ConversationPage): void;
+  setAnswerInteractionResult(
+    result: GatewayResult<AnswerInteractionSuccess>,
+  ): void;
   setInterruptResult(result: GatewayResult<InterruptRunSuccess>): void;
   setSendTextResult(result: GatewayResult<SendTextSuccess>): void;
   setSnapshot(snapshot: ChatSnapshot): void;
@@ -172,6 +183,7 @@ class MemoryChatGateway implements ChatGateway {
   readonly #holds = new Map<MemoryGatewayHoldPoint, PendingHold[]>();
   readonly #observers = new Set<ObserverRegistration>();
   #connected: boolean;
+  #answerInteractionResult: GatewayResult<AnswerInteractionSuccess>;
   #conversationPage: ConversationPage;
   #disposed = false;
   #disposePromise: Promise<void> | undefined;
@@ -189,6 +201,10 @@ class MemoryChatGateway implements ChatGateway {
       conversations: [fixtures.conversation],
     });
     this.#snapshot = fixtures.initialSnapshot;
+    this.#answerInteractionResult = answerInteractionResultSchema.parse({
+      ok: true,
+      value: fixtures.answerInteractionSuccess,
+    });
     this.#sendTextResult = sendTextResultSchema.parse({
       ok: true,
       value: fixtures.sendTextSuccess,
@@ -331,6 +347,61 @@ class MemoryChatGateway implements ChatGateway {
       return unsupported("Conversation listing is unavailable");
     }
     return { ok: true, value: this.#conversationPage };
+  }
+
+  async answerInteraction(
+    input: AnswerInteractionInput,
+  ): Promise<GatewayResult<AnswerInteractionSuccess>> {
+    const parsed = answerInteractionInputSchema.safeParse(input);
+    if (!parsed.success) {
+      return {
+        ok: false,
+        error: chatErrorSchema.parse({
+          code: "validation",
+          message: "Interaction answer input is invalid",
+          retryable: false,
+          ...(typeof input.conversationId === "string"
+            ? { conversationId: input.conversationId }
+            : {}),
+        }),
+      };
+    }
+    const parsedInput = parsed.data;
+    this.#record({ operation: "answerInteraction", input: parsedInput });
+    const guarded = this.#guard<AnswerInteractionSuccess>(
+      "answerInteraction",
+      parsedInput,
+    );
+    if (guarded !== undefined) return guarded;
+    const held = await this.#waitForOperation("answerInteraction", parsedInput);
+    if (held?.failure !== undefined) return held.failure;
+    if (parsedInput.conversationId !== this.#snapshot.conversation.id) {
+      return notFound(parsedInput.conversationId);
+    }
+    if (
+      !isGatewayOperationSupported(
+        this.#snapshot.capabilities,
+        "answerInteraction",
+      )
+    ) {
+      return unsupported("Interaction answers are unavailable");
+    }
+    if (
+      this.#snapshot.pendingInteraction?.requestId !==
+        parsedInput.answer.requestId ||
+      this.#snapshot.pendingInteraction.revision !== parsedInput.answer.revision
+    ) {
+      return {
+        ok: false,
+        error: chatErrorSchema.parse({
+          code: "conflict",
+          message: "The interaction request is no longer pending",
+          retryable: false,
+          conversationId: parsedInput.conversationId,
+        }),
+      };
+    }
+    return this.#answerInteractionResult;
   }
 
   async loadConversation(
@@ -540,6 +611,12 @@ class MemoryChatGateway implements ChatGateway {
     this.#conversationPage = conversationPageSchema.parse(page);
   }
 
+  setAnswerInteractionResult(
+    result: GatewayResult<AnswerInteractionSuccess>,
+  ): void {
+    this.#answerInteractionResult = answerInteractionResultSchema.parse(result);
+  }
+
   setInterruptResult(result: GatewayResult<InterruptRunSuccess>): void {
     this.#interruptResult = interruptRunResultSchema.parse(result);
   }
@@ -580,6 +657,8 @@ export const createMemoryChatGateway = (
     advanceTimeTo: (timestamp) => implementation.advanceTimeTo(timestamp),
     reconnect: () => implementation.reconnect(),
     setConversationPage: (page) => implementation.setConversationPage(page),
+    setAnswerInteractionResult: (result) =>
+      implementation.setAnswerInteractionResult(result),
     setInterruptResult: (result) => implementation.setInterruptResult(result),
     setSendTextResult: (result) => implementation.setSendTextResult(result),
     setSnapshot: (snapshot) => implementation.setSnapshot(snapshot),

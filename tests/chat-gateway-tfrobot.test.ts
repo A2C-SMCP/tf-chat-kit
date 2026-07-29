@@ -8,6 +8,7 @@ import {
   type TFRobotSocketFactoryInput,
   type TFRobotSocketListener,
 } from "../packages/chat-gateway-tfrobot/src/index.js";
+import { mapEvent } from "../packages/chat-gateway-tfrobot/src/mapper.js";
 import type {
   ChatError,
   ChatUpdate,
@@ -142,6 +143,343 @@ const createSocketFixture = () => {
 };
 
 describe("TFRobotChatGateway REST boundary", () => {
+  it("normalizes historical Ask User tool results without enabling live answers", async () => {
+    const askUserEvent = {
+      ...eventDto,
+      eventId: "ask-user-event",
+      eventScene: "Tool",
+      content: {
+        toolCall: {
+          toolId: "ask-request-1",
+          functionCall: {
+            name: "ask_user",
+            parameters: JSON.stringify({
+              title: "Need input",
+              questions: [
+                {
+                  id: "choice",
+                  question: "Choose a release channel",
+                  multiSelect: false,
+                  options: [
+                    {
+                      label: "Stable",
+                      value: "stable",
+                      description: "Production channel",
+                    },
+                  ],
+                },
+              ],
+            }),
+          },
+        },
+        toolReturn: {
+          origin: {
+            type: "askUser",
+            requestId: "ask-request-1",
+            status: "answered",
+            questions: [
+              {
+                question: "Choose a release channel",
+                header: "Release channel",
+                multiSelect: true,
+                default: ["Stable, canary", "Beta"],
+                options: [
+                  { label: "Stable", description: "Production channel" },
+                ],
+              },
+            ],
+            response: {
+              requestId: "ask-request-1",
+              answers: { "0": ["Stable, canary", "Beta"] },
+              cancelled: false,
+              chatAboutThis: false,
+              timedOut: false,
+            },
+          },
+          meta: { success: true, done: true },
+        },
+      },
+    };
+    const fetch = vi.fn(
+      async (input: Parameters<typeof globalThis.fetch>[0]) => {
+        const path = new URL(input instanceof Request ? input.url : input)
+          .pathname;
+        if (path.endsWith("/conversations")) {
+          return envelope({ conversations: [conversationDto], cursor: null });
+        }
+        if (path.endsWith("/messages")) {
+          return envelope({
+            messages: [],
+            events: [askUserEvent],
+            cursor: null,
+          });
+        }
+        if (path.endsWith("/status")) return envelope({ working: false });
+        throw new Error(`Unexpected request: ${path}`);
+      },
+    );
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch,
+      socketFactory: createSocketFixture().factory,
+    });
+    const loaded = await gateway.loadConversation({
+      conversationId: "42",
+      deadlineAt: deadline(),
+    });
+
+    expect(loaded).toMatchObject({
+      ok: true,
+      value: {
+        timeline: [
+          {
+            eventCategory: "tool",
+            transitions: [
+              {
+                interaction: {
+                  kind: "ask-user",
+                  requestId: "ask-request-1",
+                  status: "answered",
+                  answers: { "0": ["Stable, canary", "Beta"] },
+                  questions: [
+                    {
+                      prompt: "Choose a release channel",
+                      title: "Release channel",
+                      defaultValue: ["Stable, canary", "Beta"],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    if (!loaded.ok) return;
+    expect(loaded.value.capabilities.answerInteraction).not.toBe(true);
+    expect(gateway.answerInteraction).toBeUndefined();
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("filters malformed Ask User options without losing the Tool event", () => {
+    const event = mapEvent({
+      ...eventDto,
+      eventId: "malformed-ask-user-event",
+      eventScene: "Tool",
+      content: {
+        toolCall: {
+          toolId: "malformed-request",
+          functionCall: {
+            name: "ask_user",
+            parameters: JSON.stringify({
+              questions: [
+                {
+                  question: "Choose safely",
+                  options: [""],
+                },
+              ],
+            }),
+          },
+        },
+        toolReturn: {
+          origin: {
+            type: "askUser",
+            requestId: "malformed-request",
+            status: "answered",
+            questions: [
+              {
+                question: "Choose safely",
+                options: [""],
+              },
+            ],
+            response: {
+              requestId: "malformed-request",
+              answers: { "0": "" },
+            },
+          },
+          meta: { success: true, done: true },
+        },
+      },
+    });
+
+    expect(event.eventCategory).toBe("tool");
+    if (event.eventCategory !== "tool") return;
+    expect(event.transitions[0]?.toolCall?.name).toBe("ask_user");
+    expect(event.transitions[0]?.toolReturn?.success).toBe(true);
+    expect(event.transitions[0]?.interaction?.questions[0]?.options).toEqual(
+      [],
+    );
+  });
+
+  it("maps Ask User origin and Tool metadata failures to a failed interaction", () => {
+    const event = mapEvent({
+      ...eventDto,
+      eventId: "failed-ask-user-event",
+      eventScene: "Tool",
+      status: "success",
+      content: {
+        toolCall: {
+          toolId: "failed-request",
+          functionCall: {
+            name: "ask_user",
+            parameters: JSON.stringify({
+              questions: [{ id: "choice", question: "Choose safely" }],
+            }),
+          },
+        },
+        toolReturn: {
+          origin: {
+            type: "askUser",
+            requestId: "failed-request",
+            error: "backend exploded",
+            questions: [{ id: "choice", question: "Choose safely" }],
+          },
+          meta: { success: false, done: true },
+        },
+      },
+    });
+
+    expect(event.eventCategory).toBe("tool");
+    if (event.eventCategory !== "tool") return;
+    expect(event.transitions[0]?.interaction).toMatchObject({
+      requestId: "failed-request",
+      status: "failed",
+      error: "backend exploded",
+    });
+  });
+
+  it.each([
+    {
+      name: "timeout",
+      origin: { status: "timeout" },
+      expected: "timeout",
+    },
+    {
+      name: "cancelled",
+      origin: { response: { cancelled: true } },
+      expected: "cancelled",
+    },
+    {
+      name: "chat-about-this",
+      origin: { response: { chatAboutThis: true } },
+      expected: "chat-about-this",
+    },
+  ])(
+    "preserves the explicit Ask User $name terminal when Tool success is false",
+    ({ origin, expected }) => {
+      const event = mapEvent({
+        ...eventDto,
+        eventId: `ask-user-${expected}`,
+        eventScene: "Tool",
+        status: "success",
+        content: {
+          toolCall: {
+            toolId: `request-${expected}`,
+            functionCall: {
+              name: "ask_user",
+              parameters: JSON.stringify({
+                questions: [{ id: "choice", question: "Choose safely" }],
+              }),
+            },
+          },
+          toolReturn: {
+            origin: {
+              type: "askUser",
+              requestId: `request-${expected}`,
+              questions: [{ id: "choice", question: "Choose safely" }],
+              ...origin,
+            },
+            meta: { success: false, done: true },
+          },
+        },
+      });
+
+      expect(event.eventCategory).toBe("tool");
+      if (event.eventCategory !== "tool") return;
+      expect(event.transitions[0]?.interaction?.status).toBe(expected);
+    },
+  );
+
+  it("normalizes reserved historical Ask User IDs to stable safe indexes", () => {
+    const event = mapEvent({
+      ...eventDto,
+      eventId: "ask-user-reserved-id",
+      eventScene: "Tool",
+      status: "success",
+      content: {
+        toolCall: {
+          toolId: "request-reserved-id",
+          functionCall: { name: "ask_user", parameters: "{}" },
+        },
+        toolReturn: {
+          origin: {
+            type: "askUser",
+            requestId: "request-reserved-id",
+            status: "answered",
+            questions: [
+              {
+                id: "__proto__",
+                question: "Choose safely",
+                options: [],
+              },
+            ],
+            response: {
+              answers: JSON.parse('{"__proto__":"visible answer"}'),
+            },
+          },
+          meta: { success: true, done: true },
+        },
+      },
+    });
+
+    expect(event.eventCategory).toBe("tool");
+    if (event.eventCategory !== "tool") return;
+    expect(event.transitions[0]?.interaction).toMatchObject({
+      questions: [{ id: "0" }],
+      answers: { "0": "visible answer" },
+    });
+  });
+
+  it("sanitizes and bounds string Ask User option values", () => {
+    const secret = `api_key=sk-${"a".repeat(60)}`;
+    const event = mapEvent({
+      ...eventDto,
+      eventId: "ask-user-string-option",
+      eventScene: "Tool",
+      status: "success",
+      content: {
+        toolCall: {
+          toolId: "request-string-option",
+          functionCall: { name: "ask_user", parameters: "{}" },
+        },
+        toolReturn: {
+          origin: {
+            type: "askUser",
+            requestId: "request-string-option",
+            status: "answered",
+            questions: [
+              {
+                question: "Choose safely",
+                options: [secret, "x".repeat(5_000)],
+              },
+            ],
+          },
+          meta: { success: true, done: true },
+        },
+      },
+    });
+
+    expect(event.eventCategory).toBe("tool");
+    if (event.eventCategory !== "tool") return;
+    const options =
+      event.transitions[0]?.interaction?.questions[0]?.options ?? [];
+    expect(options[0]).toEqual({ label: "[REDACTED]", value: "[REDACTED]" });
+    expect(options[1]?.label).toHaveLength(2_000);
+    expect(options[1]?.value).toHaveLength(2_000);
+  });
+
   it("loads conversations, history and status through validated DTOs", async () => {
     const requests: Request[] = [];
     const fetch = vi.fn(

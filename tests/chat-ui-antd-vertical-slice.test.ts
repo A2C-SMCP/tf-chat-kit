@@ -8,12 +8,13 @@ import {
   type ReactNode,
 } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { ChatSnapshot } from "../packages/chat-protocol/src/index.js";
 import { ChatProvider } from "../packages/chat-react/src/index.js";
 import {
   ChatConversationView,
+  type AskUserChatAboutThisRequest,
   type ChatRenderer,
   type ChatUiCommandFailure,
 } from "../packages/chat-ui-antd/src/index.js";
@@ -22,6 +23,23 @@ import {
   deadlineAt,
   flushMicrotasks,
 } from "./support/chat-react.js";
+
+beforeAll(() => {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: (query: string): MediaQueryList =>
+      ({
+        addEventListener: () => undefined,
+        addListener: () => undefined,
+        dispatchEvent: () => false,
+        matches: false,
+        media: query,
+        onchange: null,
+        removeEventListener: () => undefined,
+        removeListener: () => undefined,
+      }) as MediaQueryList,
+  });
+});
 
 interface DomRender {
   readonly container: HTMLDivElement;
@@ -117,6 +135,557 @@ const moveSnapshotToConversation = (
 });
 
 describe("@turingfocus/chat-ui-antd vertical slice", () => {
+  it("renders and submits a conversation-scoped Ask User request", async () => {
+    const { client, memory } = await createLoadedClient();
+    const pendingInteraction = {
+      ...memory.fixtures.askUserRequest,
+      questions: [
+        {
+          ...memory.fixtures.askUserRequest.questions[0]!,
+          multiple: true,
+          defaultValue: ["first, canary"],
+          options: [
+            { label: "First", value: "first, canary" },
+            { label: "Second", value: "second" },
+          ],
+        },
+      ],
+    };
+    const pendingSnapshot = {
+      ...memory.fixtures.initialSnapshot,
+      capabilities: {
+        ...memory.fixtures.initialSnapshot.capabilities,
+        answerInteraction: true,
+      },
+      pendingInteraction,
+    };
+    memory.controller.setSnapshot(pendingSnapshot);
+    memory.controller.emitUpdateToAll({
+      kind: "capabilities.replace",
+      conversationId: memory.fixtures.conversation.id,
+      capabilities: pendingSnapshot.capabilities,
+    });
+    memory.controller.emitUpdateToAll({
+      kind: "interaction.replace",
+      conversationId: memory.fixtures.conversation.id,
+      interaction: pendingInteraction,
+    });
+    const rendered = await renderInDom(
+      createElement(
+        ChatProvider,
+        { client },
+        createElement(ChatConversationView, {
+          getDeadlineAt: deadlineAt,
+        }),
+      ),
+    );
+
+    try {
+      expect(rendered.container.textContent).toContain("Need your input");
+      const option = rendered.container.querySelector<HTMLInputElement>(
+        'input[value="first, canary"]',
+      );
+      if (option === null) throw new Error("Ask User option not found");
+      expect(option.checked).toBe(true);
+      const second = rendered.container.querySelector<HTMLInputElement>(
+        'input[value="second"]',
+      );
+      if (second === null) throw new Error("Second Ask User option not found");
+      await act(async () => {
+        second.click();
+        await flushMicrotasks();
+      });
+      await clickButton(rendered.container, "Submit answers");
+
+      expect(
+        memory.controller.calls.find(
+          ({ operation }) => operation === "answerInteraction",
+        ),
+      ).toMatchObject({
+        operation: "answerInteraction",
+        input: {
+          answer: {
+            requestId: memory.fixtures.askUserRequest.requestId,
+            revision: memory.fixtures.askUserRequest.revision,
+            action: "submit",
+            answers: { "0": ["first, canary", "second"] },
+          },
+        },
+      });
+      expect(client.getSnapshot()?.pendingInteraction).toBeUndefined();
+    } finally {
+      await rendered.unmount();
+      await client.dispose({ deadlineAt: deadlineAt() });
+    }
+  });
+
+  it("routes per-question chat-about-this through the host without answering the interaction", async () => {
+    const { client, memory } = await createLoadedClient();
+    const pendingInteraction = {
+      ...memory.fixtures.askUserRequest,
+      questions: [
+        {
+          ...memory.fixtures.askUserRequest.questions[0]!,
+          id: "first-question",
+          defaultValue: "first",
+        },
+        {
+          ...memory.fixtures.askUserRequest.questions[0]!,
+          id: "second-question",
+          prompt: "Which fallback should be discussed?",
+          defaultValue: "second",
+        },
+      ],
+    };
+    const pendingSnapshot = {
+      ...memory.fixtures.initialSnapshot,
+      capabilities: {
+        ...memory.fixtures.initialSnapshot.capabilities,
+        answerInteraction: true,
+      },
+      pendingInteraction,
+    };
+    memory.controller.setSnapshot(pendingSnapshot);
+    memory.controller.emitUpdateToAll({
+      kind: "snapshot.replace",
+      snapshot: pendingSnapshot,
+    });
+    const discussions: AskUserChatAboutThisRequest[] = [];
+    const rendered = await renderInDom(
+      createElement(
+        ChatProvider,
+        { client },
+        createElement(ChatConversationView, {
+          getDeadlineAt: deadlineAt,
+          onChatAboutThis: (request) => discussions.push(request),
+        }),
+      ),
+    );
+
+    try {
+      const discussionButtons = [
+        ...rendered.container.querySelectorAll("button"),
+      ].filter((button) => button.textContent?.includes("Chat about this"));
+      expect(discussionButtons).toHaveLength(2);
+      await act(async () => {
+        discussionButtons[1]!.click();
+        await flushMicrotasks();
+      });
+
+      expect(discussions).toMatchObject([
+        {
+          answers: {
+            "first-question": "first",
+            "second-question": "second",
+          },
+          conversationId: memory.fixtures.conversation.id,
+          question: {
+            id: "second-question",
+            prompt: "Which fallback should be discussed?",
+          },
+          questionId: "second-question",
+          requestId: memory.fixtures.askUserRequest.requestId,
+          revision: memory.fixtures.askUserRequest.revision,
+        },
+      ]);
+      expect(
+        memory.controller.calls.filter(
+          ({ operation }) => operation === "answerInteraction",
+        ),
+      ).toHaveLength(0);
+      expect(client.getSnapshot()?.pendingInteraction?.requestId).toBe(
+        memory.fixtures.askUserRequest.requestId,
+      );
+    } finally {
+      await rendered.unmount();
+      await client.dispose({ deadlineAt: deadlineAt() });
+    }
+  });
+
+  it("explains when pending interaction answers are unavailable", async () => {
+    const { client, memory } = await createLoadedClient();
+    const pendingSnapshot = {
+      ...memory.fixtures.initialSnapshot,
+      capabilities: {
+        ...memory.fixtures.initialSnapshot.capabilities,
+        answerInteraction: false,
+      },
+      pendingInteraction: memory.fixtures.askUserRequest,
+    };
+    memory.controller.setSnapshot(pendingSnapshot);
+    memory.controller.emitUpdateToAll({
+      kind: "snapshot.replace",
+      snapshot: pendingSnapshot,
+    });
+    const rendered = await renderInDom(
+      createElement(
+        ChatProvider,
+        { client },
+        createElement(ChatConversationView, {
+          getDeadlineAt: deadlineAt,
+        }),
+      ),
+    );
+
+    try {
+      expect(rendered.container.textContent).toContain(
+        "Interaction answers are unavailable in the current session.",
+      );
+      const answerButtons = [
+        ...rendered.container.querySelectorAll("button"),
+      ].filter(
+        (button) =>
+          button.textContent?.includes("Submit answers") ||
+          button.textContent?.includes("Cancel"),
+      );
+      expect(answerButtons).toHaveLength(2);
+      expect(answerButtons.every((button) => button.disabled)).toBe(true);
+    } finally {
+      await rendered.unmount();
+      await client.dispose({ deadlineAt: deadlineAt() });
+    }
+  });
+
+  it("resets request-scoped form state and renders title, prompt, and description", async () => {
+    const { client, memory } = await createLoadedClient();
+    const firstRequest = {
+      kind: "ask-user" as const,
+      conversationId: memory.fixtures.conversation.id,
+      requestId: "request:shared",
+      revision: "revision",
+      title: "Need exact input",
+      questions: [
+        {
+          id: "value",
+          title: "Short header",
+          prompt: "What exact value should be deployed?",
+          description: "Critical context",
+          required: true,
+          multiple: false,
+          defaultValue: "old-secret",
+          options: [],
+        },
+      ],
+    };
+    const initial = {
+      ...memory.fixtures.initialSnapshot,
+      capabilities: {
+        ...memory.fixtures.initialSnapshot.capabilities,
+        answerInteraction: true,
+      },
+      pendingInteraction: firstRequest,
+    };
+    memory.controller.setSnapshot(initial);
+    memory.controller.emitUpdateToAll({
+      kind: "snapshot.replace",
+      snapshot: initial,
+    });
+    const rendered = await renderInDom(
+      createElement(
+        ChatProvider,
+        { client },
+        createElement(ChatConversationView, {
+          getDeadlineAt: deadlineAt,
+        }),
+      ),
+    );
+
+    try {
+      expect(rendered.container.textContent).toContain("Short header");
+      expect(rendered.container.textContent).toContain(
+        "What exact value should be deployed?",
+      );
+      expect(rendered.container.textContent).toContain("Critical context");
+      const selector = '[aria-label="User input requested"] textarea';
+      const oldInput =
+        rendered.container.querySelector<HTMLTextAreaElement>(selector);
+      if (oldInput === null) throw new Error("Ask User textarea not found");
+      expect(oldInput.maxLength).toBe(2_000);
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(
+          HTMLTextAreaElement.prototype,
+          "value",
+        )?.set;
+        setter?.call(oldInput, "edited-old-value");
+        oldInput.dispatchEvent(new Event("input", { bubbles: true }));
+        await flushMicrotasks();
+      });
+
+      const replacement = {
+        ...firstRequest,
+        requestId: "request",
+        revision: "shared:revision",
+        questions: [
+          {
+            ...firstRequest.questions[0]!,
+            defaultValue: "new-default",
+          },
+        ],
+      };
+      memory.controller.setSnapshot({
+        ...initial,
+        pendingInteraction: replacement,
+      });
+      await act(async () => {
+        memory.controller.emitUpdateToAll({
+          kind: "interaction.replace",
+          conversationId: memory.fixtures.conversation.id,
+          interaction: replacement,
+        });
+        await flushMicrotasks();
+      });
+
+      const replacementInput =
+        rendered.container.querySelector<HTMLTextAreaElement>(selector);
+      expect(replacementInput?.value).toBe("new-default");
+    } finally {
+      await rendered.unmount();
+      await client.dispose({ deadlineAt: deadlineAt() });
+    }
+  });
+
+  it("maps indexed form state back to an external question ID", async () => {
+    const { client, memory } = await createLoadedClient();
+    const request = {
+      ...memory.fixtures.askUserRequest,
+      questions: [
+        {
+          id: "release.channel",
+          prompt: "Which channel?",
+          required: true,
+          multiple: false,
+          options: [],
+        },
+      ],
+    };
+    const initial = {
+      ...memory.fixtures.initialSnapshot,
+      capabilities: {
+        ...memory.fixtures.initialSnapshot.capabilities,
+        answerInteraction: true,
+      },
+      pendingInteraction: request,
+    };
+    memory.controller.setSnapshot(initial);
+    memory.controller.emitUpdateToAll({
+      kind: "snapshot.replace",
+      snapshot: initial,
+    });
+    const rendered = await renderInDom(
+      createElement(
+        ChatProvider,
+        { client },
+        createElement(ChatConversationView, { getDeadlineAt: deadlineAt }),
+      ),
+    );
+
+    try {
+      const input = rendered.container.querySelector<HTMLTextAreaElement>(
+        '[aria-label="User input requested"] textarea',
+      );
+      if (input === null) throw new Error("Ask User textarea not found");
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(
+          HTMLTextAreaElement.prototype,
+          "value",
+        )?.set;
+        setter?.call(input, "stable");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        await flushMicrotasks();
+      });
+      await clickButton(rendered.container, "Submit answers");
+
+      expect(
+        memory.controller.calls.find(
+          ({ operation }) => operation === "answerInteraction",
+        ),
+      ).toMatchObject({
+        input: {
+          answer: { answers: { "release.channel": "stable" } },
+        },
+      });
+    } finally {
+      await rendered.unmount();
+      await client.dispose({ deadlineAt: deadlineAt() });
+    }
+  });
+
+  it("keeps an Ask User request visible when its controlled answer fails", async () => {
+    const { client, memory } = await createLoadedClient();
+    const pendingSnapshot = {
+      ...memory.fixtures.initialSnapshot,
+      capabilities: {
+        ...memory.fixtures.initialSnapshot.capabilities,
+        answerInteraction: true,
+      },
+      pendingInteraction: memory.fixtures.askUserRequest,
+    };
+    memory.controller.setSnapshot(pendingSnapshot);
+    memory.controller.emitUpdateToAll({
+      kind: "snapshot.replace",
+      snapshot: pendingSnapshot,
+    });
+    memory.controller.setAnswerInteractionResult({
+      ok: false,
+      error: {
+        code: "server",
+        conversationId: memory.fixtures.conversation.id,
+        message: "Answer failed safely",
+        retryable: true,
+      },
+    });
+    const failures: ChatUiCommandFailure[] = [];
+    const rendered = await renderInDom(
+      createElement(
+        ChatProvider,
+        { client },
+        createElement(ChatConversationView, {
+          getDeadlineAt: deadlineAt,
+          onCommandError: (failure) => failures.push(failure),
+        }),
+      ),
+    );
+
+    try {
+      await clickButton(rendered.container, "Cancel");
+      expect(rendered.container.textContent).toContain("Need your input");
+      expect(rendered.container.textContent).toContain("Answer failed safely");
+      expect(failures).toMatchObject([
+        {
+          command: "answerInteraction",
+          error: { code: "server" },
+        },
+      ]);
+    } finally {
+      await rendered.unmount();
+      await client.dispose({ deadlineAt: deadlineAt() });
+    }
+  });
+
+  it("hides an Ask User command failure after the pending request is replaced", async () => {
+    const { client, memory } = await createLoadedClient();
+    const pendingSnapshot = {
+      ...memory.fixtures.initialSnapshot,
+      capabilities: {
+        ...memory.fixtures.initialSnapshot.capabilities,
+        answerInteraction: true,
+      },
+      pendingInteraction: memory.fixtures.askUserRequest,
+    };
+    memory.controller.setSnapshot(pendingSnapshot);
+    memory.controller.emitUpdateToAll({
+      kind: "snapshot.replace",
+      snapshot: pendingSnapshot,
+    });
+    memory.controller.setAnswerInteractionResult({
+      ok: false,
+      error: {
+        code: "server",
+        conversationId: memory.fixtures.conversation.id,
+        message: "Old request failed",
+        retryable: true,
+      },
+    });
+    const rendered = await renderInDom(
+      createElement(
+        ChatProvider,
+        { client },
+        createElement(ChatConversationView, { getDeadlineAt: deadlineAt }),
+      ),
+    );
+
+    try {
+      await clickButton(rendered.container, "Cancel");
+      expect(rendered.container.textContent).toContain("Old request failed");
+
+      const replacement = {
+        ...memory.fixtures.askUserRequest,
+        revision: "replacement-revision",
+        title: "Replacement input",
+      };
+      memory.controller.setSnapshot({
+        ...pendingSnapshot,
+        pendingInteraction: replacement,
+      });
+      await act(async () => {
+        memory.controller.emitUpdateToAll({
+          kind: "interaction.replace",
+          conversationId: memory.fixtures.conversation.id,
+          interaction: replacement,
+        });
+        await flushMicrotasks();
+      });
+
+      expect(rendered.container.textContent).toContain("Replacement input");
+      expect(rendered.container.textContent).not.toContain(
+        "Old request failed",
+      );
+
+      await clickButton(rendered.container, "Cancel");
+      expect(rendered.container.textContent).toContain("Old request failed");
+      memory.controller.setSnapshot({
+        ...pendingSnapshot,
+        pendingInteraction: undefined,
+      });
+      await act(async () => {
+        memory.controller.emitUpdateToAll({
+          kind: "interaction.replace",
+          conversationId: memory.fixtures.conversation.id,
+          interaction: null,
+        });
+        await flushMicrotasks();
+      });
+      expect(rendered.container.textContent).not.toContain(
+        "Old request failed",
+      );
+
+      const capabilityProbe = {
+        ...replacement,
+        revision: "capability-revision",
+        title: "Capability input",
+      };
+      memory.controller.setSnapshot({
+        ...pendingSnapshot,
+        pendingInteraction: capabilityProbe,
+      });
+      await act(async () => {
+        memory.controller.emitUpdateToAll({
+          kind: "interaction.replace",
+          conversationId: memory.fixtures.conversation.id,
+          interaction: capabilityProbe,
+        });
+        await flushMicrotasks();
+      });
+      await clickButton(rendered.container, "Cancel");
+      expect(rendered.container.textContent).toContain("Old request failed");
+      memory.controller.setSnapshot({
+        ...pendingSnapshot,
+        capabilities: {
+          ...pendingSnapshot.capabilities,
+          answerInteraction: false,
+        },
+        pendingInteraction: capabilityProbe,
+      });
+      await act(async () => {
+        memory.controller.emitUpdateToAll({
+          kind: "capabilities.replace",
+          conversationId: memory.fixtures.conversation.id,
+          capabilities: {
+            ...pendingSnapshot.capabilities,
+            answerInteraction: false,
+          },
+        });
+        await flushMicrotasks();
+      });
+      expect(rendered.container.textContent).not.toContain(
+        "Old request failed",
+      );
+    } finally {
+      await rendered.unmount();
+      await client.dispose({ deadlineAt: deadlineAt() });
+    }
+  });
+
   it("renders history and realtime updates and routes send/interrupt through ChatClient", async () => {
     const { client, memory } = await createLoadedClient();
     const failures: ChatUiCommandFailure[] = [];

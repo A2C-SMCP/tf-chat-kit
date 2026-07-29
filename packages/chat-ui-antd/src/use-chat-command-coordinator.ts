@@ -7,12 +7,16 @@ import {
   useState,
 } from "react";
 
-import type { ChatError, Run } from "@turingfocus/chat-protocol";
+import type {
+  AskUserInteractionAnswer,
+  ChatError,
+  Run,
+} from "@turingfocus/chat-protocol";
 import type { ChatProviderProps } from "@turingfocus/chat-react";
 
 type ChatClient = ChatProviderProps["client"];
 
-export type ChatUiCommand = "interrupt" | "sendText";
+export type ChatUiCommand = "answerInteraction" | "interrupt" | "sendText";
 
 export interface ChatUiCommandFailure {
   readonly command: ChatUiCommand;
@@ -33,6 +37,7 @@ interface ChatRunScope {
 
 interface ChatUiCommandFailureEntry {
   readonly error: ChatError;
+  readonly interactionKey?: string | undefined;
   readonly runScope?: ChatRunScope | undefined;
   readonly visible: boolean;
 }
@@ -48,6 +53,7 @@ interface ChatUiCommandRequest {
   readonly client: ChatClient;
   readonly command: ChatUiCommand;
   readonly conversationId: string;
+  readonly interactionKey?: string | undefined;
   readonly requestId: number;
   readonly runId?: string | undefined;
   readonly runScope?: ChatRunScope | undefined;
@@ -55,10 +61,13 @@ interface ChatUiCommandRequest {
 }
 
 interface UseChatCommandCoordinatorInput {
+  readonly canAnswerInteraction: boolean;
   readonly canInterrupt: boolean;
   readonly client: ChatClient;
   readonly conversationId: string | null;
   readonly getDeadlineAt: () => number;
+  readonly interactionRequest?:
+    Pick<AskUserInteractionAnswer, "requestId" | "revision"> | undefined;
   readonly onCommandError?:
     ((failure: ChatUiCommandFailure) => void) | undefined;
   readonly run: Run | null;
@@ -66,6 +75,9 @@ interface UseChatCommandCoordinatorInput {
 }
 
 interface UseChatCommandCoordinatorResult {
+  readonly answerInteraction: (
+    answer: AskUserInteractionAnswer,
+  ) => Promise<boolean>;
   readonly dismissFailure: (command: ChatUiCommand) => void;
   readonly interrupt: () => Promise<boolean>;
   readonly sendText: (text: string) => Promise<boolean>;
@@ -85,7 +97,7 @@ interface ChatCommandScopes {
   readonly beginRequest: (
     command: ChatUiCommand,
     activeConversationId: string,
-    runId?: string | undefined,
+    targetId?: string | undefined,
   ) => ChatUiCommandRequest;
   readonly isFailureRelevant: (request: ChatUiCommandRequest) => boolean;
   readonly isLatestRequest: (request: ChatUiCommandRequest) => boolean;
@@ -114,7 +126,17 @@ const unexpectedCommandError = (conversationId: string): ChatError => ({
   retryable: true,
 });
 
-const chatUiCommands: readonly ChatUiCommand[] = ["sendText", "interrupt"];
+const chatUiCommands: readonly ChatUiCommand[] = [
+  "answerInteraction",
+  "sendText",
+  "interrupt",
+];
+
+const createInteractionKey = ({
+  requestId,
+  revision,
+}: Pick<AskUserInteractionAnswer, "requestId" | "revision">): string =>
+  `${requestId.length}:${requestId}:${revision.length}:${revision}`;
 
 const sameChatError = (left: ChatError, right: ChatError): boolean =>
   left === right ||
@@ -154,6 +176,7 @@ const useChatCommandScopes = ({
   const committedRunScope = useRef(runScope);
   const mounted = useRef(true);
   const commandRequestIds = useRef<Record<ChatUiCommand, number>>({
+    answerInteraction: 0,
     interrupt: 0,
     sendText: 0,
   });
@@ -167,6 +190,7 @@ const useChatCommandScopes = ({
     mounted.current = true;
     return () => {
       mounted.current = false;
+      commandRequestIds.current.answerInteraction += 1;
       commandRequestIds.current.interrupt += 1;
       commandRequestIds.current.sendText += 1;
     };
@@ -194,6 +218,15 @@ const useChatCommandScopes = ({
   const isFailureRelevant = useCallback(
     (request: ChatUiCommandRequest): boolean => {
       if (!isLatestRequest(request)) return false;
+      if (request.command === "answerInteraction") {
+        const current = request.client.getSnapshot();
+        return (
+          current?.capabilities.answerInteraction === true &&
+          current.pendingInteraction !== undefined &&
+          createInteractionKey(current.pendingInteraction) ===
+            request.interactionKey
+        );
+      }
       if (request.command !== "interrupt") return true;
       if (
         request.runScope === undefined ||
@@ -219,7 +252,7 @@ const useChatCommandScopes = ({
     (
       command: ChatUiCommand,
       activeConversationId: string,
-      runId?: string | undefined,
+      targetId?: string | undefined,
     ): ChatUiCommandRequest => {
       const requestId = commandRequestIds.current[command] + 1;
       commandRequestIds.current[command] = requestId;
@@ -229,7 +262,11 @@ const useChatCommandScopes = ({
         conversationId: activeConversationId,
         requestId,
         viewScope,
-        ...(command === "interrupt" ? { runId, runScope } : {}),
+        ...(command === "interrupt"
+          ? { runId: targetId, runScope }
+          : command === "answerInteraction"
+            ? { interactionKey: targetId }
+            : {}),
       };
     },
     [client, runScope, viewScope],
@@ -245,10 +282,12 @@ const useChatCommandScopes = ({
 };
 
 export const useChatCommandCoordinator = ({
+  canAnswerInteraction,
   canInterrupt,
   client,
   conversationId,
   getDeadlineAt,
+  interactionRequest,
   onCommandError,
   run,
   snapshotError,
@@ -280,6 +319,7 @@ export const useChatCommandCoordinator = ({
           ...(current.viewScope === request.viewScope ? current.failures : {}),
           [request.command]: {
             error,
+            interactionKey: request.interactionKey,
             runScope: request.runScope,
             visible,
           },
@@ -355,6 +395,37 @@ export const useChatCommandCoordinator = ({
     ],
   );
 
+  const answerInteraction = useCallback(
+    async (answer: AskUserInteractionAnswer): Promise<boolean> => {
+      if (conversationId === null) return false;
+      const request = beginRequest(
+        "answerInteraction",
+        conversationId,
+        createInteractionKey(answer),
+      );
+      try {
+        const result = await client.answerInteraction({
+          conversationId,
+          answer,
+          deadlineAt: getDeadlineAt(),
+        });
+        if (!result.ok) return reportFailure(request, result.error);
+      } catch {
+        return reportFailure(request, unexpectedCommandError(conversationId));
+      }
+      clearFailure(request);
+      return true;
+    },
+    [
+      beginRequest,
+      clearFailure,
+      client,
+      conversationId,
+      getDeadlineAt,
+      reportFailure,
+    ],
+  );
+
   const interrupt = useCallback(async (): Promise<boolean> => {
     if (conversationId === null) return false;
     const runId = run?.id;
@@ -388,6 +459,11 @@ export const useChatCommandCoordinator = ({
           if (
             entry === undefined ||
             !entry.visible ||
+            (command === "answerInteraction" &&
+              (!canAnswerInteraction ||
+                interactionRequest === undefined ||
+                entry.interactionKey !==
+                  createInteractionKey(interactionRequest))) ||
             (command === "interrupt" && entry.runScope !== runScope)
           ) {
             return [];
@@ -409,6 +485,7 @@ export const useChatCommandCoordinator = ({
       : undefined;
 
   return {
+    answerInteraction,
     dismissFailure,
     interrupt,
     sendText,

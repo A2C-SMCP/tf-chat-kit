@@ -28,6 +28,9 @@ const wrapGateway = (
   gateway: ChatGateway,
   overrides: Partial<ChatGateway>,
 ): ChatGateway => ({
+  ...(gateway.answerInteraction === undefined
+    ? {}
+    : { answerInteraction: (input) => gateway.answerInteraction!(input) }),
   dispose: (input) => gateway.dispose(input),
   interrupt: (input) => gateway.interrupt(input),
   listConversations: (input) => gateway.listConversations(input),
@@ -35,6 +38,855 @@ const wrapGateway = (
   sendText: (input) => gateway.sendText(input),
   subscribe: (input, observer) => gateway.subscribe(input, observer),
   ...overrides,
+});
+
+describe("ChatClient Ask User interactions", () => {
+  it("answers the current request and clears it after a matching acknowledgement", async () => {
+    const memory = createMemoryChatGateway();
+    memory.controller.setSnapshot(
+      withPendingInteraction(memory.fixtures.initialSnapshot),
+    );
+    const client = createChatClient({ gateway: memory.gateway });
+    await loadInitialSnapshot(client, memory.fixtures.conversation.id);
+
+    const result = await client.answerInteraction({
+      conversationId: memory.fixtures.conversation.id,
+      answer: {
+        requestId: memory.fixtures.askUserRequest.requestId,
+        revision: memory.fixtures.askUserRequest.revision,
+        action: "submit",
+        answers: { "0": "first" },
+      },
+      deadlineAt: deadlineAt(),
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      value: memory.fixtures.answerInteractionSuccess,
+    });
+    expect(client.getSnapshot()?.pendingInteraction).toBeUndefined();
+    expect(
+      memory.controller.calls.filter(
+        ({ operation }) => operation === "answerInteraction",
+      ),
+    ).toHaveLength(1);
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("rejects an acknowledgement for a different interaction revision", async () => {
+    const memory = createMemoryChatGateway();
+    memory.controller.setSnapshot(
+      withPendingInteraction(memory.fixtures.initialSnapshot),
+    );
+    memory.controller.setAnswerInteractionResult({
+      ok: true,
+      value: {
+        requestId: memory.fixtures.askUserRequest.requestId,
+        revision: "different-revision",
+      },
+    });
+    const client = createChatClient({ gateway: memory.gateway });
+    await loadInitialSnapshot(client, memory.fixtures.conversation.id);
+
+    await expect(
+      client.answerInteraction({
+        conversationId: memory.fixtures.conversation.id,
+        answer: {
+          requestId: memory.fixtures.askUserRequest.requestId,
+          revision: memory.fixtures.askUserRequest.revision,
+          action: "cancel",
+          answers: {},
+        },
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "validation" },
+    });
+    expect(client.getSnapshot()?.pendingInteraction).toEqual(
+      memory.fixtures.askUserRequest,
+    );
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("rejects a second answer before dispatch while the same request is in flight", async () => {
+    const memory = createMemoryChatGateway();
+    memory.controller.setSnapshot(
+      withPendingInteraction(memory.fixtures.initialSnapshot),
+    );
+    const client = createChatClient({ gateway: memory.gateway });
+    await loadInitialSnapshot(client, memory.fixtures.conversation.id);
+    const hold = memory.controller.holdNext("answerInteraction");
+    const first = client.answerInteraction({
+      conversationId: memory.fixtures.conversation.id,
+      answer: {
+        requestId: memory.fixtures.askUserRequest.requestId,
+        revision: memory.fixtures.askUserRequest.revision,
+        action: "cancel",
+        answers: {},
+      },
+      deadlineAt: deadlineAt(),
+    });
+    await hold.started;
+
+    await expect(
+      client.answerInteraction({
+        conversationId: memory.fixtures.conversation.id,
+        answer: {
+          requestId: memory.fixtures.askUserRequest.requestId,
+          revision: memory.fixtures.askUserRequest.revision,
+          action: "submit",
+          answers: {},
+        },
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(
+      memory.controller.calls.filter(
+        ({ operation }) => operation === "answerInteraction",
+      ),
+    ).toHaveLength(1);
+
+    hold.release();
+    await expect(first).resolves.toEqual({
+      ok: true,
+      value: memory.fixtures.answerInteractionSuccess,
+    });
+    expect(client.getSnapshot()?.pendingInteraction).toBeUndefined();
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("accepts a matching answer acknowledgement across a same-conversation reload", async () => {
+    const memory = createMemoryChatGateway();
+    memory.controller.setSnapshot(
+      withPendingInteraction(memory.fixtures.initialSnapshot),
+    );
+    const client = createChatClient({ gateway: memory.gateway });
+    await loadInitialSnapshot(client, memory.fixtures.conversation.id);
+    const hold = memory.controller.holdNext("answerInteraction");
+    const answering = client.answerInteraction({
+      conversationId: memory.fixtures.conversation.id,
+      answer: {
+        requestId: memory.fixtures.askUserRequest.requestId,
+        revision: memory.fixtures.askUserRequest.revision,
+        action: "cancel",
+        answers: {},
+      },
+      deadlineAt: deadlineAt(),
+    });
+    await hold.started;
+    memory.controller.setSnapshot({
+      ...withPendingInteraction(memory.fixtures.initialSnapshot),
+      pageInfo: {
+        hasPreviousPage: true,
+        previousCursor: "reload-cursor",
+      },
+    });
+
+    await expect(
+      client.loadConversation({
+        conversationId: memory.fixtures.conversation.id,
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    hold.release();
+
+    await expect(answering).resolves.toEqual({
+      ok: true,
+      value: memory.fixtures.answerInteractionSuccess,
+    });
+    expect(client.getSnapshot()?.pendingInteraction).toBeUndefined();
+    expect(client.getSnapshot()?.pageInfo.previousCursor).toBe("reload-cursor");
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("preserves a structured answer failure across a same-conversation reload", async () => {
+    const memory = createMemoryChatGateway();
+    memory.controller.setSnapshot(
+      withPendingInteraction(memory.fixtures.initialSnapshot),
+    );
+    const answerError: ChatError = {
+      code: "server",
+      conversationId: memory.fixtures.conversation.id,
+      message: "Answer failed after reload",
+      retryable: true,
+    };
+    memory.controller.setAnswerInteractionResult({
+      ok: false,
+      error: answerError,
+    });
+    const client = createChatClient({ gateway: memory.gateway });
+    await loadInitialSnapshot(client, memory.fixtures.conversation.id);
+    const hold = memory.controller.holdNext("answerInteraction");
+    const answering = client.answerInteraction({
+      conversationId: memory.fixtures.conversation.id,
+      answer: {
+        requestId: memory.fixtures.askUserRequest.requestId,
+        revision: memory.fixtures.askUserRequest.revision,
+        action: "cancel",
+        answers: {},
+      },
+      deadlineAt: deadlineAt(),
+    });
+    await hold.started;
+
+    await expect(
+      client.loadConversation({
+        conversationId: memory.fixtures.conversation.id,
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    hold.release();
+
+    await expect(answering).resolves.toEqual({
+      ok: false,
+      error: answerError,
+    });
+    expect(client.getSnapshot()?.pendingInteraction).toEqual(
+      memory.fixtures.askUserRequest,
+    );
+    expect(client.getSnapshot()?.error).toEqual(answerError);
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("rejects stale and unsupported answers without dispatching", async () => {
+    const memory = createMemoryChatGateway();
+    memory.controller.setSnapshot(
+      withPendingInteraction(memory.fixtures.initialSnapshot),
+    );
+    const client = createChatClient({ gateway: memory.gateway });
+    await loadInitialSnapshot(client, memory.fixtures.conversation.id);
+
+    await expect(
+      client.answerInteraction({
+        conversationId: memory.fixtures.conversation.id,
+        answer: {
+          requestId: "stale-request",
+          revision: "stale-revision",
+          action: "cancel",
+          answers: {},
+        },
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "conflict" } });
+
+    memory.controller.emitUpdateToAll({
+      kind: "capabilities.replace",
+      conversationId: memory.fixtures.conversation.id,
+      capabilities: {
+        ...memory.fixtures.initialSnapshot.capabilities,
+        answerInteraction: false,
+      },
+    });
+    await expect(
+      client.answerInteraction({
+        conversationId: memory.fixtures.conversation.id,
+        answer: {
+          requestId: memory.fixtures.askUserRequest.requestId,
+          revision: memory.fixtures.askUserRequest.revision,
+          action: "cancel",
+          answers: {},
+        },
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "unsupported" } });
+    expect(
+      memory.controller.calls.filter(
+        ({ operation }) => operation === "answerInteraction",
+      ),
+    ).toHaveLength(0);
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it.each([
+    {
+      name: "missing required answers",
+      answers: {},
+    },
+    {
+      name: "unknown question IDs",
+      answers: { unknown: "first" },
+    },
+    {
+      name: "arrays for single-select questions",
+      answers: { "0": ["first"] },
+    },
+    {
+      name: "scalars for multi-select questions",
+      request: {
+        questions: [
+          {
+            id: "0",
+            prompt: "Choose several",
+            required: true,
+            multiple: true,
+            options: [
+              { label: "First", value: "first" },
+              { label: "Second", value: "second" },
+            ],
+          },
+        ],
+      },
+      answers: { "0": "first" },
+    },
+    {
+      name: "values outside declared options",
+      answers: { "0": "third" },
+    },
+    {
+      name: "missing answers whose question ID shadows Object.prototype",
+      request: {
+        questions: [
+          {
+            id: "hasOwnProperty",
+            prompt: "Enter a value",
+            required: true,
+            multiple: false,
+            options: [],
+          },
+        ],
+      },
+      answers: {},
+    },
+  ])("rejects $name before dispatch", async ({ answers, request }) => {
+    const memory = createMemoryChatGateway();
+    memory.controller.setSnapshot(
+      withPendingInteraction(memory.fixtures.initialSnapshot, {
+        ...memory.fixtures.askUserRequest,
+        ...request,
+      }),
+    );
+    const client = createChatClient({ gateway: memory.gateway });
+    await loadInitialSnapshot(client, memory.fixtures.conversation.id);
+
+    await expect(
+      client.answerInteraction({
+        conversationId: memory.fixtures.conversation.id,
+        answer: {
+          requestId: memory.fixtures.askUserRequest.requestId,
+          revision: memory.fixtures.askUserRequest.revision,
+          action: "submit",
+          answers,
+        },
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "validation" },
+    });
+    expect(
+      memory.controller.calls.filter(
+        ({ operation }) => operation === "answerInteraction",
+      ),
+    ).toHaveLength(0);
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("rejects oversized answers before Gateway dispatch", async () => {
+    const memory = createMemoryChatGateway();
+    const request = {
+      ...memory.fixtures.askUserRequest,
+      questions: [
+        {
+          id: "free-text",
+          prompt: "Enter a value",
+          required: true,
+          multiple: false,
+          options: [],
+        },
+      ],
+    };
+    memory.controller.setSnapshot(
+      withPendingInteraction(memory.fixtures.initialSnapshot, request),
+    );
+    const client = createChatClient({ gateway: memory.gateway });
+    await loadInitialSnapshot(client, memory.fixtures.conversation.id);
+
+    await expect(
+      client.answerInteraction({
+        conversationId: memory.fixtures.conversation.id,
+        answer: {
+          requestId: request.requestId,
+          revision: request.revision,
+          action: "submit",
+          answers: { "free-text": "x".repeat(2_001) },
+        },
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "validation" },
+    });
+    expect(
+      memory.controller.calls.filter(
+        ({ operation }) => operation === "answerInteraction",
+      ),
+    ).toHaveLength(0);
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it.each(["interaction.replace", "snapshot.replace"] as const)(
+    "rejects conflicting metadata for an immutable interaction revision via %s",
+    async (kind) => {
+      const memory = createMemoryChatGateway();
+      const initial = withPendingInteraction(memory.fixtures.initialSnapshot);
+      memory.controller.setSnapshot(initial);
+      const client = createChatClient({ gateway: memory.gateway });
+      await loadInitialSnapshot(client, memory.fixtures.conversation.id);
+      const conflicting = {
+        ...memory.fixtures.askUserRequest,
+        title: "Conflicting title for the same revision",
+      };
+
+      memory.controller.emitUpdateToAll(
+        kind === "interaction.replace"
+          ? {
+              kind,
+              conversationId: memory.fixtures.conversation.id,
+              interaction: conflicting,
+            }
+          : {
+              kind,
+              snapshot: {
+                ...initial,
+                pendingInteraction: conflicting,
+              },
+            },
+      );
+
+      expect(client.getSnapshot()?.pendingInteraction).toEqual(
+        memory.fixtures.askUserRequest,
+      );
+      expect(client.getSnapshot()?.error).toMatchObject({
+        code: "validation",
+        retryable: false,
+      });
+      await client.dispose({ deadlineAt: deadlineAt() });
+    },
+  );
+
+  it("does not clear a replacement request when an old answer settles late", async () => {
+    const memory = createMemoryChatGateway();
+    const initial = withPendingInteraction(memory.fixtures.initialSnapshot);
+    memory.controller.setSnapshot(initial);
+    const client = createChatClient({ gateway: memory.gateway });
+    await loadInitialSnapshot(client, memory.fixtures.conversation.id);
+    const hold = memory.controller.holdNext("answerInteraction");
+    const pending = client.answerInteraction({
+      conversationId: memory.fixtures.conversation.id,
+      answer: {
+        requestId: memory.fixtures.askUserRequest.requestId,
+        revision: memory.fixtures.askUserRequest.revision,
+        action: "submit",
+        answers: { "0": "first" },
+      },
+      deadlineAt: deadlineAt(),
+    });
+    await hold.started;
+
+    const replacement = {
+      ...memory.fixtures.askUserRequest,
+      requestId: "replacement-request",
+    };
+    memory.controller.setSnapshot({
+      ...initial,
+      pendingInteraction: replacement,
+    });
+    memory.controller.emitUpdateToAll({
+      kind: "interaction.replace",
+      conversationId: memory.fixtures.conversation.id,
+      interaction: replacement,
+    });
+    hold.release();
+
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(client.getSnapshot()?.pendingInteraction?.requestId).toBe(
+      replacement.requestId,
+    );
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("answers a replacement revision independently when it reuses the same request ID", async () => {
+    const memory = createMemoryChatGateway();
+    const initial = withPendingInteraction(memory.fixtures.initialSnapshot);
+    memory.controller.setSnapshot(initial);
+    const client = createChatClient({ gateway: memory.gateway });
+    await loadInitialSnapshot(client, memory.fixtures.conversation.id);
+    const hold = memory.controller.holdNext("answerInteraction");
+    const pending = client.answerInteraction({
+      conversationId: memory.fixtures.conversation.id,
+      answer: {
+        requestId: memory.fixtures.askUserRequest.requestId,
+        revision: memory.fixtures.askUserRequest.revision,
+        action: "submit",
+        answers: { "0": "first" },
+      },
+      deadlineAt: deadlineAt(),
+    });
+    await hold.started;
+
+    const replacement = {
+      ...memory.fixtures.askUserRequest,
+      revision: "replacement-revision",
+      title: "Changed request with reused ID",
+      questions: [
+        {
+          ...memory.fixtures.askUserRequest.questions[0]!,
+          prompt: "A different question",
+        },
+      ],
+    };
+    memory.controller.setSnapshot({
+      ...initial,
+      pendingInteraction: replacement,
+    });
+    memory.controller.emitUpdateToAll({
+      kind: "interaction.replace",
+      conversationId: memory.fixtures.conversation.id,
+      interaction: replacement,
+    });
+    memory.controller.setAnswerInteractionResult({
+      ok: true,
+      value: {
+        requestId: replacement.requestId,
+        revision: replacement.revision,
+      },
+    });
+    await expect(
+      client.answerInteraction({
+        conversationId: memory.fixtures.conversation.id,
+        answer: {
+          requestId: replacement.requestId,
+          revision: replacement.revision,
+          action: "submit",
+          answers: { "0": "first" },
+        },
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      value: {
+        requestId: replacement.requestId,
+        revision: replacement.revision,
+      },
+    });
+    hold.release();
+
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(client.getSnapshot()?.pendingInteraction).toBeUndefined();
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("does not revive a retired revision from a late interaction update", async () => {
+    const memory = createMemoryChatGateway();
+    const initial = withPendingInteraction(memory.fixtures.initialSnapshot);
+    memory.controller.setSnapshot(initial);
+    const client = createChatClient({ gateway: memory.gateway });
+    await loadInitialSnapshot(client, memory.fixtures.conversation.id);
+    const hold = memory.controller.holdNext("answerInteraction");
+    const oldAnswer = client.answerInteraction({
+      conversationId: memory.fixtures.conversation.id,
+      answer: {
+        requestId: memory.fixtures.askUserRequest.requestId,
+        revision: memory.fixtures.askUserRequest.revision,
+        action: "cancel",
+        answers: {},
+      },
+      deadlineAt: deadlineAt(),
+    });
+    await hold.started;
+
+    const replacement = {
+      ...memory.fixtures.askUserRequest,
+      revision: "replacement-revision",
+      title: "Replacement input",
+    };
+    memory.controller.setSnapshot({
+      ...initial,
+      pendingInteraction: replacement,
+    });
+    memory.controller.emitUpdateToAll({
+      kind: "interaction.replace",
+      conversationId: memory.fixtures.conversation.id,
+      interaction: replacement,
+    });
+    memory.controller.setSnapshot(initial);
+    memory.controller.emitUpdateToAll({
+      kind: "interaction.replace",
+      conversationId: memory.fixtures.conversation.id,
+      interaction: memory.fixtures.askUserRequest,
+    });
+    hold.release();
+
+    await expect(oldAnswer).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(client.getSnapshot()?.pendingInteraction).toEqual(replacement);
+    expect(client.getSnapshot()?.error).toMatchObject({
+      code: "conflict",
+      retryable: false,
+    });
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("keeps an old answer superseded after its replacement is cleared", async () => {
+    const memory = createMemoryChatGateway();
+    const initial = withPendingInteraction(memory.fixtures.initialSnapshot);
+    memory.controller.setSnapshot(initial);
+    const client = createChatClient({ gateway: memory.gateway });
+    await loadInitialSnapshot(client, memory.fixtures.conversation.id);
+    const hold = memory.controller.holdNext("answerInteraction");
+    const oldAnswer = client.answerInteraction({
+      conversationId: memory.fixtures.conversation.id,
+      answer: {
+        requestId: memory.fixtures.askUserRequest.requestId,
+        revision: memory.fixtures.askUserRequest.revision,
+        action: "cancel",
+        answers: {},
+      },
+      deadlineAt: deadlineAt(),
+    });
+    await hold.started;
+
+    memory.controller.emitUpdateToAll({
+      kind: "interaction.replace",
+      conversationId: memory.fixtures.conversation.id,
+      interaction: {
+        ...memory.fixtures.askUserRequest,
+        revision: "replacement-revision",
+      },
+    });
+    memory.controller.emitUpdateToAll({
+      kind: "interaction.replace",
+      conversationId: memory.fixtures.conversation.id,
+      interaction: null,
+    });
+    memory.controller.setSnapshot(initial);
+    hold.release();
+
+    await expect(oldAnswer).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(client.getSnapshot()?.pendingInteraction).toBeUndefined();
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("does not revive a cleared revision with changed metadata", async () => {
+    const memory = createMemoryChatGateway();
+    const initial = withPendingInteraction(memory.fixtures.initialSnapshot);
+    memory.controller.setSnapshot(initial);
+    const client = createChatClient({ gateway: memory.gateway });
+    await loadInitialSnapshot(client, memory.fixtures.conversation.id);
+    memory.controller.emitUpdateToAll({
+      kind: "interaction.replace",
+      conversationId: memory.fixtures.conversation.id,
+      interaction: null,
+    });
+    const replayed = {
+      ...memory.fixtures.askUserRequest,
+      title: "Replayed cleared interaction",
+    };
+    memory.controller.emitUpdateToAll({
+      kind: "interaction.replace",
+      conversationId: memory.fixtures.conversation.id,
+      interaction: replayed,
+    });
+
+    expect(client.getSnapshot()?.pendingInteraction).toBeUndefined();
+    expect(client.getSnapshot()?.error).toMatchObject({
+      code: "conflict",
+      retryable: false,
+    });
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("keeps a successful acknowledgement when the matching request is cleared first", async () => {
+    const memory = createMemoryChatGateway();
+    memory.controller.setSnapshot(
+      withPendingInteraction(memory.fixtures.initialSnapshot),
+    );
+    let releaseAnswer!: () => void;
+    let markAnswerStarted!: () => void;
+    const answerStarted = new Promise<void>((resolve) => {
+      markAnswerStarted = resolve;
+    });
+    const answerRelease = new Promise<void>((resolve) => {
+      releaseAnswer = resolve;
+    });
+    const gateway = wrapGateway(memory.gateway, {
+      answerInteraction: async (input) => {
+        markAnswerStarted();
+        await answerRelease;
+        return {
+          ok: true,
+          value: {
+            requestId: input.answer.requestId,
+            revision: input.answer.revision,
+          },
+        };
+      },
+    });
+    const client = createChatClient({ gateway });
+    await loadInitialSnapshot(client, memory.fixtures.conversation.id);
+
+    const pending = client.answerInteraction({
+      conversationId: memory.fixtures.conversation.id,
+      answer: {
+        requestId: memory.fixtures.askUserRequest.requestId,
+        revision: memory.fixtures.askUserRequest.revision,
+        action: "submit",
+        answers: { "0": "first" },
+      },
+      deadlineAt: deadlineAt(),
+    });
+    await answerStarted;
+    memory.controller.emitUpdateToAll({
+      kind: "interaction.replace",
+      conversationId: memory.fixtures.conversation.id,
+      interaction: null,
+    });
+    releaseAnswer();
+
+    await expect(pending).resolves.toEqual({
+      ok: true,
+      value: memory.fixtures.answerInteractionSuccess,
+    });
+    expect(client.getSnapshot()?.pendingInteraction).toBeUndefined();
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("isolates pending requests across Runtime instances", async () => {
+    const firstMemory = createMemoryChatGateway();
+    const secondMemory = createMemoryChatGateway({
+      fixtures: createChatContractFixtures({
+        conversationId: "second-conversation",
+      }),
+    });
+    firstMemory.controller.setSnapshot(
+      withPendingInteraction(firstMemory.fixtures.initialSnapshot),
+    );
+    secondMemory.controller.setSnapshot(
+      withPendingInteraction(
+        secondMemory.fixtures.initialSnapshot,
+        secondMemory.fixtures.askUserRequest,
+      ),
+    );
+    const first = createChatClient({ gateway: firstMemory.gateway });
+    const second = createChatClient({ gateway: secondMemory.gateway });
+    await Promise.all([
+      loadInitialSnapshot(first, firstMemory.fixtures.conversation.id),
+      loadInitialSnapshot(second, secondMemory.fixtures.conversation.id),
+    ]);
+
+    await first.answerInteraction({
+      conversationId: firstMemory.fixtures.conversation.id,
+      answer: {
+        requestId: firstMemory.fixtures.askUserRequest.requestId,
+        revision: firstMemory.fixtures.askUserRequest.revision,
+        action: "cancel",
+        answers: {},
+      },
+      deadlineAt: deadlineAt(),
+    });
+
+    expect(first.getSnapshot()?.pendingInteraction).toBeUndefined();
+    expect(second.getSnapshot()?.pendingInteraction?.requestId).toBe(
+      secondMemory.fixtures.askUserRequest.requestId,
+    );
+    await Promise.all([
+      first.dispose({ deadlineAt: deadlineAt() }),
+      second.dispose({ deadlineAt: deadlineAt() }),
+    ]);
+  });
+
+  it("ignores an answer that settles after switching conversations", async () => {
+    const memory = createMemoryChatGateway();
+    memory.controller.setSnapshot(
+      withPendingInteraction(memory.fixtures.initialSnapshot),
+    );
+    const client = createChatClient({ gateway: memory.gateway });
+    await loadInitialSnapshot(client, memory.fixtures.conversation.id);
+    const hold = memory.controller.holdNext("answerInteraction");
+    const pending = client.answerInteraction({
+      conversationId: memory.fixtures.conversation.id,
+      answer: {
+        requestId: memory.fixtures.askUserRequest.requestId,
+        revision: memory.fixtures.askUserRequest.revision,
+        action: "cancel",
+        answers: {},
+      },
+      deadlineAt: deadlineAt(),
+    });
+    await hold.started;
+
+    const replacementFixtures = createChatContractFixtures({
+      conversationId: "replacement-conversation",
+    });
+    memory.controller.setSnapshot(replacementFixtures.initialSnapshot);
+    await loadInitialSnapshot(client, replacementFixtures.conversation.id);
+    hold.release();
+
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(client.getSnapshot()?.conversation.id).toBe(
+      replacementFixtures.conversation.id,
+    );
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("ignores an answer that settles after disposal", async () => {
+    const memory = createMemoryChatGateway();
+    memory.controller.setSnapshot(
+      withPendingInteraction(memory.fixtures.initialSnapshot),
+    );
+    const client = createChatClient({ gateway: memory.gateway });
+    await loadInitialSnapshot(client, memory.fixtures.conversation.id);
+    const hold = memory.controller.holdNext("answerInteraction");
+    const pending = client.answerInteraction({
+      conversationId: memory.fixtures.conversation.id,
+      answer: {
+        requestId: memory.fixtures.askUserRequest.requestId,
+        revision: memory.fixtures.askUserRequest.revision,
+        action: "cancel",
+        answers: {},
+      },
+      deadlineAt: deadlineAt(),
+    });
+    await hold.started;
+
+    await client.dispose({ deadlineAt: deadlineAt() });
+    hold.release();
+
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+  });
+});
+
+const withPendingInteraction = (
+  snapshot: ChatSnapshot,
+  request = createChatContractFixtures().askUserRequest,
+): ChatSnapshot => ({
+  ...snapshot,
+  capabilities: { ...snapshot.capabilities, answerInteraction: true },
+  pendingInteraction: {
+    ...request,
+    conversationId: snapshot.conversation.id,
+  },
 });
 
 const realtimeTextUpdate = (template: ChatUpdate, text: string): ChatUpdate => {
@@ -392,6 +1244,59 @@ describe("ChatClient lifecycle and merge behavior", () => {
         .getSnapshot()
         ?.timeline.some(({ id }) => id === "message-realtime"),
     ).toBe(true);
+
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("rejects conflicting interaction metadata from a same-conversation reload", async () => {
+    const memory = createMemoryChatGateway();
+    const initial = withPendingInteraction(memory.fixtures.initialSnapshot);
+    memory.controller.setSnapshot(initial);
+    const client = createChatClient({ gateway: memory.gateway });
+    await loadInitialSnapshot(client, memory.fixtures.conversation.id);
+    const conflicting = {
+      ...memory.fixtures.askUserRequest,
+      title: "Conflicting reload title for the same revision",
+      questions: [
+        {
+          ...memory.fixtures.askUserRequest.questions[0]!,
+          prompt: "Conflicting reload question",
+        },
+      ],
+    };
+    memory.controller.setSnapshot({
+      ...initial,
+      pendingInteraction: conflicting,
+    });
+    const hold = memory.controller.holdNext("loadConversation");
+    const reloading = client.loadConversation({
+      conversationId: memory.fixtures.conversation.id,
+      deadlineAt: deadlineAt(),
+    });
+    await hold.started;
+    expect(
+      memory.controller.emitUpdateToAll({
+        kind: "interaction.replace",
+        conversationId: memory.fixtures.conversation.id,
+        interaction: conflicting,
+      }),
+    ).toBe(2);
+    hold.release();
+
+    await expect(reloading).resolves.toMatchObject({
+      ok: true,
+      value: {
+        pendingInteraction: memory.fixtures.askUserRequest,
+        error: { code: "validation", retryable: false },
+      },
+    });
+    expect(client.getSnapshot()?.pendingInteraction).toEqual(
+      memory.fixtures.askUserRequest,
+    );
+    expect(client.getSnapshot()?.error).toMatchObject({
+      code: "validation",
+      retryable: false,
+    });
 
     await client.dispose({ deadlineAt: deadlineAt() });
   });

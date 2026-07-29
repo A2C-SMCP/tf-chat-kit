@@ -30,7 +30,10 @@
   "dependencies": {
     "@turingfocus/chat-protocol": "workspace:^",
     "@turingfocus/chat-react": "workspace:^",
-    "react-virtuoso": "4.17.0"
+    "react-markdown": "10.1.0",
+    "react-virtuoso": "4.17.0",
+    "rehype-sanitize": "6.0.0",
+    "remark-gfm": "4.0.1"
   },
   "peerDependencies": {
     "antd": ">=5.23.4 <6.0.0",

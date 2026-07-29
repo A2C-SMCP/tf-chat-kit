@@ -5,6 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ProtocolValidationError,
   agentEventSchema,
+  answerInteractionInputSchema,
+  askUserInteractionRequestSchema,
+  askUserInteractionResultSchema,
   chatErrorSchema,
   chatSnapshotSchema,
   chatUpdateSchema,
@@ -105,6 +108,282 @@ const snapshot: ChatSnapshot = {
 };
 
 describe("normalized protocol schemas", () => {
+  it("validates conversation-scoped Ask User requests, answers, and results", () => {
+    const request = askUserInteractionRequestSchema.parse({
+      kind: "ask-user",
+      conversationId: conversation.id,
+      requestId: "request-1",
+      revision: "revision-1",
+      title: "Need input",
+      questions: [
+        {
+          id: "0",
+          prompt: "Pick one",
+          required: true,
+          multiple: false,
+          options: [{ label: "A", value: "a" }],
+        },
+      ],
+    });
+    expect(
+      answerInteractionInputSchema.parse({
+        conversationId: conversation.id,
+        answer: {
+          requestId: request.requestId,
+          revision: request.revision,
+          action: "submit",
+          answers: { "0": ["a, first", "b"] },
+        },
+        deadlineAt: requestDeadlineAt,
+      }).answer.answers,
+    ).toEqual({ "0": ["a, first", "b"] });
+    expect(
+      askUserInteractionResultSchema.parse({
+        kind: "ask-user",
+        requestId: request.requestId,
+        status: "answered",
+        questions: request.questions,
+        answers: { "0": ["a, first", "b"] },
+      }),
+    ).toMatchObject({
+      status: "answered",
+      answers: { "0": ["a, first", "b"] },
+    });
+    expect(
+      answerInteractionInputSchema.safeParse({
+        conversationId: conversation.id,
+        answer: {
+          requestId: request.requestId,
+          revision: request.revision,
+          action: "chat-about-this",
+          answers: {},
+        },
+        deadlineAt: requestDeadlineAt,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects empty Ask User questions and cross-conversation pending requests", () => {
+    expect(
+      askUserInteractionRequestSchema.safeParse({
+        kind: "ask-user",
+        conversationId: conversation.id,
+        requestId: "request-1",
+        revision: "revision-empty",
+        title: "Need input",
+        questions: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      askUserInteractionRequestSchema.safeParse({
+        kind: "ask-user",
+        conversationId: conversation.id,
+        requestId: "request-duplicate-question",
+        revision: "revision-duplicate-question",
+        title: "Need input",
+        questions: [
+          {
+            id: "duplicate",
+            prompt: "First question",
+            required: true,
+            multiple: false,
+            options: [],
+          },
+          {
+            id: "duplicate",
+            prompt: "Second question",
+            required: true,
+            multiple: false,
+            options: [],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      chatSnapshotSchema.safeParse({
+        ...snapshot,
+        pendingInteraction: {
+          kind: "ask-user",
+          conversationId: "another-conversation",
+          requestId: "request-1",
+          revision: "revision-cross-conversation",
+          title: "Need input",
+          questions: [
+            {
+              id: "0",
+              prompt: "Pick one",
+              required: true,
+              multiple: false,
+              options: [],
+            },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("validates request defaults while tolerating historical result values", () => {
+    const questions = [
+      {
+        id: "0",
+        prompt: "Pick one",
+        required: true,
+        multiple: false,
+        defaultValue: ["a"],
+        options: [{ label: "A", value: "a" }],
+      },
+    ];
+    expect(
+      askUserInteractionRequestSchema.safeParse({
+        kind: "ask-user",
+        conversationId: conversation.id,
+        requestId: "request-invalid-default",
+        revision: "revision-invalid-default",
+        title: "Need input",
+        questions,
+      }).success,
+    ).toBe(false);
+    expect(
+      askUserInteractionResultSchema.safeParse({
+        kind: "ask-user",
+        requestId: "request-historical",
+        status: "answered",
+        questions,
+        answers: { "0": ["a"] },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects unsupported request shapes while keeping historical results readable", () => {
+    const unsupportedQuestions = [
+      {
+        id: "free-text-many",
+        prompt: "Enter several values",
+        required: true,
+        multiple: true,
+        options: [],
+      },
+    ];
+    expect(
+      askUserInteractionRequestSchema.safeParse({
+        kind: "ask-user",
+        conversationId: conversation.id,
+        requestId: "request-multi-free-text",
+        revision: "revision-multi-free-text",
+        title: "Need input",
+        questions: unsupportedQuestions,
+      }).success,
+    ).toBe(false);
+    expect(
+      askUserInteractionResultSchema.safeParse({
+        kind: "ask-user",
+        requestId: "historical-multi-free-text",
+        status: "answered",
+        questions: unsupportedQuestions,
+        answers: { "free-text-many": ["first", "second"] },
+      }).success,
+    ).toBe(true);
+
+    for (const reservedId of ["__proto__", "constructor", "prototype"]) {
+      expect(
+        askUserInteractionRequestSchema.safeParse({
+          kind: "ask-user",
+          conversationId: conversation.id,
+          requestId: `request-${reservedId}`,
+          revision: `revision-${reservedId}`,
+          title: "Need input",
+          questions: [
+            {
+              id: reservedId,
+              prompt: "Unsafe key",
+              required: true,
+              multiple: false,
+              options: [],
+            },
+          ],
+        }).success,
+      ).toBe(false);
+      expect(
+        answerInteractionInputSchema.safeParse({
+          conversationId: conversation.id,
+          answer: {
+            requestId: "request-reserved",
+            revision: "revision-reserved",
+            action: "submit",
+            answers: Object.fromEntries([[reservedId, "value"]]),
+          },
+          deadlineAt: requestDeadlineAt,
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("enforces Ask User resource budgets and unique option values", () => {
+    const question = {
+      id: "bounded",
+      prompt: "Choose",
+      required: true,
+      multiple: false,
+      options: [{ label: "A", value: "same" }],
+    };
+    expect(
+      askUserInteractionRequestSchema.safeParse({
+        kind: "ask-user",
+        conversationId: conversation.id,
+        requestId: "r".repeat(1_000),
+        revision: "revision-oversized-request-id",
+        title: "Need input",
+        questions: [question],
+      }).success,
+    ).toBe(false);
+    expect(
+      askUserInteractionRequestSchema.safeParse({
+        kind: "ask-user",
+        conversationId: conversation.id,
+        requestId: "too-many-questions",
+        revision: "revision-too-many-questions",
+        title: "Need input",
+        questions: Array.from({ length: 1_000 }, (_, index) => ({
+          ...question,
+          id: String(index),
+          prompt: "p".repeat(10_000),
+        })),
+      }).success,
+    ).toBe(false);
+    expect(
+      askUserInteractionRequestSchema.safeParse({
+        kind: "ask-user",
+        conversationId: conversation.id,
+        requestId: "duplicate-option-values",
+        revision: "revision-duplicate-option-values",
+        title: "Need input",
+        questions: [
+          {
+            ...question,
+            options: [
+              { label: "A", value: "same" },
+              { label: "B", value: "same" },
+            ],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      answerInteractionInputSchema.safeParse({
+        conversationId: conversation.id,
+        answer: {
+          requestId: "oversized-answer",
+          revision: "revision-oversized-answer",
+          action: "submit",
+          answers: {
+            bounded: Array.from({ length: 1_000 }, () => "value"),
+          },
+        },
+        deadlineAt: requestDeadlineAt,
+      }).success,
+    ).toBe(false);
+  });
+
   it("parses and recursively freezes a normalized snapshot", () => {
     const { parse } = chatSnapshotSchema;
     const parsed = parse(snapshot);
@@ -310,6 +589,42 @@ describe("normalized protocol schemas", () => {
         conversationId: "conversation-other",
       }),
     ).toBe(false);
+  });
+
+  it("accepts a normalized interaction as the only Tool event payload", () => {
+    expect(
+      agentEventSchema.safeParse({
+        kind: "agent-event",
+        eventCategory: "tool",
+        id: "interaction-only-event",
+        conversationId: conversation.id,
+        eventType: "ask_user",
+        status: "success",
+        createdAt: 1_773_705_600_100,
+        transitions: [
+          {
+            id: "interaction-only-transition",
+            status: "success",
+            occurredAt: 1_773_705_600_100,
+            interaction: {
+              kind: "ask-user",
+              requestId: "request-only",
+              status: "answered",
+              questions: [
+                {
+                  id: "0",
+                  prompt: "Choose one",
+                  required: true,
+                  multiple: false,
+                  options: [],
+                },
+              ],
+              answers: { "0": "answer" },
+            },
+          },
+        ],
+      }).success,
+    ).toBe(true);
   });
 
   it("rejects stale latest status and out-of-order event transitions", () => {

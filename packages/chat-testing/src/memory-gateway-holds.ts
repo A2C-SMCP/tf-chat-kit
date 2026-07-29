@@ -1,4 +1,5 @@
 export type MemoryGatewayOperation =
+  | "answerInteraction"
   | "interrupt"
   | "listConversations"
   | "loadConversation"

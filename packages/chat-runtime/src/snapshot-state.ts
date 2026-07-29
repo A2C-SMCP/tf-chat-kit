@@ -3,6 +3,7 @@ import {
   hasCompatibleAgentEventMetadata,
   type AgentEvent,
   type AgentEventTransitionUpdate,
+  type AskUserInteractionRequest,
   type ChatError,
   type ChatSnapshot,
   type ChatUpdate,
@@ -35,6 +36,9 @@ export const createSnapshotState = (snapshot: ChatSnapshot): SnapshotState => {
       run: cloneImmutable(snapshot.run),
       capabilities: cloneImmutable(snapshot.capabilities),
       pageInfo: cloneImmutable(snapshot.pageInfo),
+      ...(snapshot.pendingInteraction === undefined
+        ? {}
+        : { pendingInteraction: cloneImmutable(snapshot.pendingInteraction) }),
       ...(snapshot.error === undefined
         ? {}
         : { error: cloneImmutable(snapshot.error) }),
@@ -60,6 +64,30 @@ export const updateSnapshotState = (
 const rebaseValue = <T>(baseline: T, loaded: T, current: T): T =>
   deepEqual(current, baseline) ? loaded : current;
 
+const interactionMetadataError = (conversationId: string): ChatError =>
+  cloneImmutable({
+    code: "validation",
+    message: "Conflicting metadata was received for an interaction revision",
+    retryable: false,
+    conversationId,
+  });
+
+const hasSameInteractionIdentity = (
+  left: AskUserInteractionRequest | undefined,
+  right: AskUserInteractionRequest | undefined,
+): boolean =>
+  left !== undefined &&
+  right !== undefined &&
+  left.requestId === right.requestId &&
+  left.revision === right.revision;
+
+const hasConflictingInteractionMetadata = (
+  existing: AskUserInteractionRequest | undefined,
+  incoming: AskUserInteractionRequest | undefined,
+): boolean =>
+  hasSameInteractionIdentity(existing, incoming) &&
+  !deepEqual(existing, incoming);
+
 /**
  * Three-way merge a full reload with state published after that reload began.
  * This keeps reload publication atomic without discarding newer subscription or
@@ -75,11 +103,31 @@ export const rebaseSnapshotState = (
     loaded.timeline,
     current.timeline,
   );
-  const error = rebaseValue(
+  const rebasedError = rebaseValue(
     baseline.snapshot.error,
     loaded.snapshot.error,
     current.snapshot.error,
   );
+  const pendingWasUnchanged = deepEqual(
+    current.snapshot.pendingInteraction,
+    baseline.snapshot.pendingInteraction,
+  );
+  const hasLoadedInteractionConflict =
+    pendingWasUnchanged &&
+    hasConflictingInteractionMetadata(
+      current.snapshot.pendingInteraction,
+      loaded.snapshot.pendingInteraction,
+    );
+  const pendingInteraction = hasLoadedInteractionConflict
+    ? current.snapshot.pendingInteraction
+    : rebaseValue(
+        baseline.snapshot.pendingInteraction,
+        loaded.snapshot.pendingInteraction,
+        current.snapshot.pendingInteraction,
+      );
+  const error = hasLoadedInteractionConflict
+    ? interactionMetadataError(current.snapshot.conversation.id)
+    : rebasedError;
   const rebased: SnapshotState = {
     timeline,
     snapshot: freezeSnapshot({
@@ -104,6 +152,7 @@ export const rebaseSnapshotState = (
         loaded.snapshot.pageInfo,
         current.snapshot.pageInfo,
       ),
+      ...(pendingInteraction === undefined ? {} : { pendingInteraction }),
       ...(error === undefined ? {} : { error }),
     }),
   };
@@ -249,6 +298,17 @@ export const applySnapshotUpdate = (
   switch (update.kind) {
     case "snapshot.replace": {
       const replacement = createSnapshotState(update.snapshot);
+      if (
+        hasConflictingInteractionMetadata(
+          state.snapshot.pendingInteraction,
+          replacement.snapshot.pendingInteraction,
+        )
+      ) {
+        return updateSnapshotState(replacement, {
+          pendingInteraction: state.snapshot.pendingInteraction,
+          error: interactionMetadataError(activeConversationId),
+        });
+      }
       return deepEqual(replacement.snapshot, state.snapshot)
         ? state
         : replacement;
@@ -278,6 +338,25 @@ export const applySnapshotUpdate = (
       return deepEqual(capabilities, state.snapshot.capabilities)
         ? state
         : updateSnapshotState(state, { capabilities });
+    }
+    case "interaction.replace": {
+      const pendingInteraction = cloneImmutable(
+        update.interaction ?? undefined,
+      );
+      if (
+        hasConflictingInteractionMetadata(
+          state.snapshot.pendingInteraction,
+          pendingInteraction,
+        )
+      ) {
+        return applySnapshotError(
+          state,
+          interactionMetadataError(activeConversationId),
+        );
+      }
+      return deepEqual(pendingInteraction, state.snapshot.pendingInteraction)
+        ? state
+        : updateSnapshotState(state, { pendingInteraction });
     }
     case "error.reported":
       return applySnapshotError(state, update.error);

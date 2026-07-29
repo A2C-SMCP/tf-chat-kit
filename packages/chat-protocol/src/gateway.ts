@@ -1,12 +1,15 @@
 import { z } from "zod/v4";
 
 import {
+  askUserInteractionAnswerParser,
   chatErrorParser,
   chatSnapshotParser,
   conversationParser,
 } from "./internal-schemas.js";
+import { ASK_USER_MAX_REQUEST_ID_CHARACTERS } from "./ask-user.js";
 import { createRuntimeSchema } from "./internal-runtime-schema.js";
 import type {
+  AskUserInteractionAnswer,
   Capabilities,
   ChatError,
   ChatSnapshot,
@@ -60,7 +63,12 @@ export type GatewayResult<T> =
   | { readonly ok: false; readonly error: ChatError };
 
 export type GatewayOperation =
-  "interrupt" | "listConversations" | "loadHistory" | "sendText" | "subscribe";
+  | "answerInteraction"
+  | "interrupt"
+  | "listConversations"
+  | "loadHistory"
+  | "sendText"
+  | "subscribe";
 
 /**
  * Maps normalized capabilities to executable Gateway operations. Adapters use
@@ -74,6 +82,8 @@ export const isGatewayOperationSupported = (
   run?: Run | null,
 ): boolean => {
   switch (operation) {
+    case "answerInteraction":
+      return capabilities.answerInteraction === true;
     case "interrupt":
       return (
         capabilities.interrupt &&
@@ -125,6 +135,16 @@ export interface InterruptRunSuccess {
   readonly interruptedRunId?: RunId | undefined;
 }
 
+export interface AnswerInteractionInput extends GatewayRequestOptions {
+  readonly conversationId: ConversationId;
+  readonly answer: AskUserInteractionAnswer;
+}
+
+export interface AnswerInteractionSuccess {
+  readonly requestId: string;
+  readonly revision: string;
+}
+
 export interface GatewayObserver {
   next(update: ChatUpdate): void;
   error?(error: ChatError): void;
@@ -144,6 +164,13 @@ export interface GatewaySubscription {
  * Implementations own their connection and must become silent after dispose.
  */
 export interface ChatGateway {
+  /**
+   * Optional during migration. Runtime dispatches only when both the normalized
+   * capability and this method are present.
+   */
+  answerInteraction?(
+    input: AnswerInteractionInput,
+  ): Promise<GatewayResult<AnswerInteractionSuccess>>;
   listConversations(
     input: ListConversationsInput,
   ): Promise<GatewayResult<ConversationPage>>;
@@ -249,6 +276,19 @@ const interruptRunSuccessParser: z.ZodType<InterruptRunSuccess> = z.object({
   interruptedRunId: z.string().min(1).optional(),
 });
 
+const answerInteractionInputParser: z.ZodType<AnswerInteractionInput> =
+  z.object({
+    conversationId: z.string().min(1),
+    answer: askUserInteractionAnswerParser,
+    deadlineAt: deadlineParser,
+  });
+
+const answerInteractionSuccessParser: z.ZodType<AnswerInteractionSuccess> =
+  z.object({
+    requestId: z.string().min(1).max(ASK_USER_MAX_REQUEST_ID_CHARACTERS),
+    revision: z.string().min(1).max(ASK_USER_MAX_REQUEST_ID_CHARACTERS),
+  });
+
 const gatewayResultParser = <T>(
   valueParser: z.ZodType<T>,
 ): z.ZodType<GatewayResult<T>> =>
@@ -298,6 +338,12 @@ export const interruptRunInputSchema = createRuntimeSchema(
 );
 export const interruptRunResultSchema = createRuntimeSchema(
   gatewayResultParser(interruptRunSuccessParser),
+);
+export const answerInteractionInputSchema = createRuntimeSchema(
+  answerInteractionInputParser,
+);
+export const answerInteractionResultSchema = createRuntimeSchema(
+  gatewayResultParser(answerInteractionSuccessParser),
 );
 export const sessionRequestSchema = createRuntimeSchema(sessionRequestParser);
 export const sessionInvalidationSchema = createRuntimeSchema(

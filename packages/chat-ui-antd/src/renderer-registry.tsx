@@ -1,4 +1,4 @@
-import { Alert, Card, Skeleton, Tag, Typography, theme } from "antd";
+import { Alert, Card, Skeleton, Space, Tag, Typography, theme } from "antd";
 import {
   Component,
   Suspense,
@@ -7,7 +7,14 @@ import {
   type ReactNode,
 } from "react";
 
-import type { Message, TimelineItem } from "@turingfocus/chat-protocol";
+import type {
+  Message,
+  TimelineItem,
+  ToolAgentEvent,
+} from "@turingfocus/chat-protocol";
+
+import { AskUserInteractionResultView } from "./ask-user-interaction.js";
+import { ChatMarkdownContent } from "./markdown-content.js";
 
 export type ChatRendererKey =
   | "agent-event"
@@ -57,6 +64,19 @@ const getItemSummary = (item: TimelineItem): string => {
   );
 };
 
+export interface ChatMessageContentProps {
+  readonly message: Message;
+}
+
+export const ChatMessageContent = ({ message }: ChatMessageContentProps) =>
+  message.content.kind === "text" ? (
+    <ChatMarkdownContent>{message.content.text}</ChatMarkdownContent>
+  ) : (
+    <Typography.Paragraph style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+      {message.content.summary}
+    </Typography.Paragraph>
+  );
+
 const MessageRenderer = ({ formatTimestamp, item }: ChatRendererProps) => {
   if (item.kind !== "message") return null;
   const { token } = theme.useToken();
@@ -85,9 +105,7 @@ const MessageRenderer = ({ formatTimestamp, item }: ChatRendererProps) => {
           {item.author?.displayName ?? item.role} ·{" "}
           {formatTimestamp(item.createdAt)}
         </Typography.Text>
-        <Typography.Paragraph style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-          {getItemSummary(item)}
-        </Typography.Paragraph>
+        <ChatMessageContent message={item} />
       </div>
     </div>
   );
@@ -95,6 +113,8 @@ const MessageRenderer = ({ formatTimestamp, item }: ChatRendererProps) => {
 
 const AgentEventRenderer = ({ formatTimestamp, item }: ChatRendererProps) => {
   if (item.kind !== "agent-event") return null;
+  const { token } = theme.useToken();
+  const failed = item.status === "failed" || item.status === "timeout";
   const statusColor =
     item.status === "success"
       ? "success"
@@ -108,14 +128,155 @@ const AgentEventRenderer = ({ formatTimestamp, item }: ChatRendererProps) => {
     <Card
       extra={<Tag color={statusColor}>{item.status}</Tag>}
       size="small"
+      {...(failed ? { style: { borderColor: token.colorError } } : {})}
       title={item.eventType}
     >
+      {failed ? (
+        <Alert
+          message={
+            item.transitions.at(-1)?.error?.message ??
+            item.summary ??
+            "Event failed"
+          }
+          showIcon
+          style={{ marginBottom: token.marginXS }}
+          type="error"
+        />
+      ) : null}
       <Typography.Paragraph style={{ marginBottom: 4, whiteSpace: "pre-wrap" }}>
         {getItemSummary(item)}
       </Typography.Paragraph>
       <Typography.Text type="secondary">
         {formatTimestamp(item.createdAt)}
       </Typography.Text>
+    </Card>
+  );
+};
+
+const latestToolField = <T,>(
+  item: ToolAgentEvent,
+  select: (transition: ToolAgentEvent["transitions"][number]) => T | undefined,
+): T | undefined => {
+  for (let index = item.transitions.length - 1; index >= 0; index -= 1) {
+    const value = select(item.transitions[index]!);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+};
+
+const TOOL_RESULT_CHARACTER_LIMIT = 4_000;
+
+const formatToolResult = (
+  result: NonNullable<
+    ToolAgentEvent["transitions"][number]["toolReturn"]
+  >["result"],
+): string => {
+  const serialized =
+    typeof result === "string" ? result : JSON.stringify(result, null, 2);
+  if (serialized.length <= TOOL_RESULT_CHARACTER_LIMIT) return serialized;
+  return `${serialized.slice(0, TOOL_RESULT_CHARACTER_LIMIT)}\n[Result truncated]`;
+};
+
+const ToolEventRenderer = ({ formatTimestamp, item }: ChatRendererProps) => {
+  if (item.kind !== "agent-event" || item.eventCategory !== "tool") return null;
+  const { token } = theme.useToken();
+  const toolCall = latestToolField(item, (transition) => transition.toolCall);
+  const toolReturn = latestToolField(
+    item,
+    (transition) => transition.toolReturn,
+  );
+  const interaction = latestToolField(
+    item,
+    (transition) => transition.interaction,
+  );
+  const failed =
+    item.status === "failed" ||
+    item.status === "timeout" ||
+    interaction?.status === "failed" ||
+    interaction?.status === "timeout" ||
+    toolReturn?.success === false;
+  const displayStatus =
+    interaction?.status ??
+    (toolReturn?.success === false ? "failed" : item.status);
+  return (
+    <Card
+      extra={
+        <Tag
+          color={
+            failed
+              ? "error"
+              : displayStatus === "success" ||
+                  displayStatus === "answered" ||
+                  displayStatus === "chat-about-this"
+                ? "success"
+                : displayStatus === "running"
+                  ? "processing"
+                  : "default"
+          }
+        >
+          {displayStatus}
+        </Tag>
+      }
+      size="small"
+      {...(failed ? { style: { borderColor: token.colorError } } : {})}
+      title={toolCall?.name ?? item.eventType}
+    >
+      <Space direction="vertical" size="small">
+        {failed ? (
+          <Alert
+            message={
+              interaction?.error ??
+              item.transitions.at(-1)?.error?.message ??
+              item.summary ??
+              "Tool failed"
+            }
+            showIcon
+            type="error"
+          />
+        ) : null}
+        {interaction === undefined ? (
+          <>
+            <Typography.Text>{getItemSummary(item)}</Typography.Text>
+            {toolReturn === undefined ? null : (
+              <>
+                {toolReturn.result === undefined ? null : (
+                  <Typography.Paragraph
+                    code
+                    style={{
+                      margin: 0,
+                      maxWidth: "min(48rem, 80vw)",
+                      overflowWrap: "anywhere",
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    {formatToolResult(toolReturn.result)}
+                  </Typography.Paragraph>
+                )}
+                {toolReturn.success === undefined &&
+                toolReturn.done === undefined ? null : (
+                  <Typography.Text type="secondary">
+                    {[
+                      toolReturn.success === undefined
+                        ? undefined
+                        : `success: ${String(toolReturn.success)}`,
+                      toolReturn.done === undefined
+                        ? undefined
+                        : `done: ${String(toolReturn.done)}`,
+                    ]
+                      .filter((value) => value !== undefined)
+                      .join(" · ")}
+                  </Typography.Text>
+                )}
+              </>
+            )}
+          </>
+        ) : (
+          <AskUserInteractionResultView result={interaction} />
+        )}
+        <Typography.Text type="secondary">
+          {formatTimestamp(item.createdAt)}
+        </Typography.Text>
+      </Space>
     </Card>
   );
 };
@@ -145,6 +306,7 @@ const UnknownEventRenderer = ({ formatTimestamp, item }: ChatRendererProps) => {
 };
 
 export const defaultChatRendererRegistry: ChatRendererRegistry = Object.freeze({
+  "agent-event:tool": ToolEventRenderer,
   "agent-event": AgentEventRenderer,
   message: MessageRenderer,
   "unknown-event": UnknownEventRenderer,
