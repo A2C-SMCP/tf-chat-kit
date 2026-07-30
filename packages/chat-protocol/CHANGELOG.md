@@ -1,0 +1,27 @@
+# @turingfocus/chat-protocol
+
+## 0.1.0
+
+### Minor Changes
+
+- 00d8daa: Add normalized received-message and event-transition models, runtime schemas, stable timeline identity and ordering, sanitized raw data, and host-agnostic Gateway and SessionProvider contracts.
+- bc4606a: Add conversation-scoped Ask User request, answer, result, capability, update,
+  and optional Gateway contracts. Runtime now protects answers against stale
+  requests, invalid question/value combinations, conversation switches,
+  replacement requests (including new immutable revisions that reuse an ID), and
+  disposal. Answers and acknowledgements carry the request revision end to end,
+  and Runtime prevents delayed updates from reviving recently retired revisions,
+  while the memory Gateway exposes deterministic interaction controls.
+
+  Normalize historical TFRobot Ask User Tool results without enabling the unsafe
+  live remote-tool route. Add sanitized GFM Markdown, explicit failed-event
+  presentation, bounded normalized Tool-result and Ask User history rendering,
+  and a controlled Ant Design Ask User form with per-question host discussion
+  callbacks, index-isolated form state, request-scoped failures, and per-renderer
+  failure isolation. Protocol-wide question, option, answer, ID, and text budgets
+  bound pending interactions from every Gateway.
+
+### Patch Changes
+
+- 9547bea: Adopt the MIT license, npm public registry metadata, and GitHub source provenance for all packages.
+- 6c6ab42: Move the unpublished public package family to the verified `@turingfocus` npm organization.
