@@ -4,7 +4,7 @@ TFRobot 聊天能力的可复用模块。项目采用 Headless Runtime、宿主�
 
 ## 当前状态
 
-项目处于 V1 纵向切片建设阶段。六包 workspace、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-protocol` 提供标准模型、运行时 schema 与 Gateway/SessionProvider 端口，`@turingfocus/chat-testing` 提供内存 Gateway、标准 fixtures 与框架无关契约套件，`@turingfocus/chat-runtime` 提供实例化 ChatClient、不可变快照、历史/实时归并、聊天命令和显式释放，`@turingfocus/chat-gateway-tfrobot` 提供实例隔离的 TFRobotServer REST/Socket.IO、DTO 校验、短期认证注入和安全映射，`@turingfocus/chat-react` 提供无样式 Provider、选择性订阅 hooks 和明确的实例所有权，`@turingfocus/chat-ui-antd` 提供会话壳、虚拟化时间轴、安全 Markdown、文本发送、Run/中断控件、Ask User 交互和可扩展渲染器。真实 Gateway 的生产 Socket 验证仍受 TFRS-297 安全门禁约束；TFRobot `/remote-tool` 的多 Provider 与会话路由完成前，实时 Ask User 回答能力保持关闭。
+项目处于 V1 纵向切片建设阶段。六包 workspace、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-protocol` 提供标准模型、运行时 schema 与 Gateway/SessionProvider 端口，`@turingfocus/chat-testing` 提供内存 Gateway、标准 fixtures 与框架无关契约套件，`@turingfocus/chat-runtime` 提供实例化 ChatClient、不可变快照、历史/实时归并、聊天命令和显式释放，`@turingfocus/chat-gateway-tfrobot` 提供实例隔离的 TFRobotServer REST/Socket.IO、DTO 校验、短期认证注入和安全映射，`@turingfocus/chat-react` 提供无样式 Provider、选择性订阅 hooks 和明确的实例所有权，`@turingfocus/chat-ui-antd` 提供会话壳、虚拟化时间轴、安全 Markdown、文本发送、Run/中断控件、Ask User 交互和可扩展渲染器。真实 Gateway 与真实宿主 E2E 作为可选兼容观察记录；TFRobot `/remote-tool` 的多 Provider 与会话路由完成前，实时 Ask User 回答能力保持关闭。
 
 ## V1 承诺
 
@@ -13,6 +13,8 @@ TFRobot 聊天能力的可复用模块。项目采用 Headless Runtime、宿主�
 - Office Add-in 和第三方应用可以基于 React 接入层实现自己的 UI。
 - 在公开的 `A2C-SMCP/tf-chat-kit` GitHub 仓库维护，并通过 npm 官方 Registry 公开发布 MIT 包。
 - 以当前 TFRobotServer 契约为兼容基线，由 Gateway 隔离服务端差异。
+- 每个支持的接入形态在本仓库维护近似的版本化消费者或受控传输，并作为发布硬门禁；真实外部
+  E2E 不构成项目依赖。
 
 V1 不承诺 Fluent UI、Web Component、AG-UI、账号登录系统或为每个宿主提供独立视觉包。
 
@@ -45,6 +47,7 @@ chat-ui-antd -------------------------------> chat-protocol
 - [项目章程](docs/project-charter.md)
 - [架构决策记录](docs/adr/README.md)
 - [工程与发布基线](docs/engineering-baseline.md)
+- [受保护 npm 发布手册](docs/baselines/tfck-13/release-process.md)
 - [V1 建设与 TFRobotFront 迁移 Epic](docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md)
 
 ## 开发

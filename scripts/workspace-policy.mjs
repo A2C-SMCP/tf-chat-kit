@@ -77,6 +77,7 @@ const ROOT_DEV_ENGINE_POLICY = Object.freeze({
     onFail: "error",
   }),
 });
+const RELEASE_NPM_VERSION = "11.18.0";
 
 /** @type {Readonly<Record<string, PackageRule>>} */
 export const PACKAGE_POLICY = Object.freeze({
@@ -169,9 +170,9 @@ const ROOT_SCRIPT_POLICY = Object.freeze({
   "check:workspace": "node scripts/check-workspace.mjs",
   clean: "node scripts/clean-workspace.mjs",
   format:
-    'prettier --write "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.ts" "fixtures/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/{README,007-versioning-and-release,008-github-and-public-npm-release}.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
+    'prettier --write "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.ts" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/{README,007-versioning-and-release,008-github-and-public-npm-release,009-independent-compatibility-testing}.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
   "format:check":
-    'prettier --check "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.ts" "fixtures/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/{README,007-versioning-and-release,008-github-and-public-npm-release}.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
+    'prettier --check "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.ts" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/{README,007-versioning-and-release,008-github-and-public-npm-release,009-independent-compatibility-testing}.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
   lint: "eslint . --max-warnings=0",
   "pack:check": "node scripts/verify-packed-artifacts.mjs",
   "pack:workspace": "node scripts/pack-workspace.mjs",
@@ -203,6 +204,10 @@ const zeroMajorSemver =
   /^0\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
 /** @param {string} version */
 export const isZeroMajorVersion = (version) => zeroMajorSemver.test(version);
+/** @param {string} version */
+export const isPrereleaseVersion = (version) =>
+  isZeroMajorVersion(version) &&
+  /^0\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-/u.test(version);
 
 /**
  * @param {PackageManifest} manifest
@@ -2143,18 +2148,19 @@ const validatePublishScripts = (label, manifest, errors) => {
   for (const [name, command] of Object.entries(manifest.scripts ?? {})) {
     if (containsPublishCommand(command)) {
       errors.push(
-        `${label}: script ${name} must not publish before the TFCK-13 release workflow and npm identity are approved`,
+        `${label}: script ${name} must not publish outside the protected .github/workflows/release.yml workflow`,
       );
     }
   }
 };
 
 /**
- * Formal publication is deliberately unavailable in this Story. Treat the
- * complete script map as configuration, not as shell source to interpret: any
- * new or changed command requires an explicit policy review. This fail-closed
- * boundary also covers shell, corepack, task-runner, and package-manager
- * wrappers that a finite command parser cannot safely enumerate.
+ * Publication is deliberately restricted to the protected GitHub release
+ * workflow. Treat the complete script map as configuration, not as shell
+ * source to interpret: any local command change requires an explicit policy
+ * review. This fail-closed boundary also covers shell, corepack, task-runner,
+ * and package-manager wrappers that a finite command parser cannot safely
+ * enumerate.
  *
  * @param {string} label
  * @param {PackageManifest} manifest
@@ -2164,7 +2170,7 @@ const validatePublishScripts = (label, manifest, errors) => {
 const validateApprovedScripts = (label, manifest, expected, errors) => {
   if (!sameEntries(manifest.scripts ?? {}, expected)) {
     errors.push(
-      `${label}: scripts must exactly match the approved publish-disabled baseline`,
+      `${label}: scripts must exactly match the approved local command baseline`,
     );
   }
 };
@@ -2237,6 +2243,11 @@ export function validateWorkspaceSnapshot(snapshot) {
   ) {
     errors.push(
       "root devEngines.runtime must reject runtimes outside Node.js 24.x",
+    );
+  }
+  if (snapshot.rootManifest.devDependencies?.["npm"] !== RELEASE_NPM_VERSION) {
+    errors.push(
+      `root npm devDependency must be pinned to ${RELEASE_NPM_VERSION} for trusted publishing`,
     );
   }
   if (snapshot.rootManifest.license !== "MIT")

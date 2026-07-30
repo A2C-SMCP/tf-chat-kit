@@ -54,9 +54,14 @@ repository metadata。
 2026-07-17 的认证态探针已确认 `npm whoami` 为 `huruize`，且该账号是 `turingfocus`
 organization owner；`turingfocus:developers` 团队存在，当前尚无已发布包。正式发布前仍须重新
 验证登录身份、organization 权限和目标包状态；E404 只表示当前不可见，不能单独证明发布权限。
-TFCK-42 不执行正式发布；正式版本、dist-tag、兼容矩阵和回滚由 TFCK-13 负责。根脚本继续拒绝
-`changeset publish`、`npm publish`、
-`pnpm publish` 或 `yarn publish` 等绕过路径，直到 TFCK-13 建立受保护的发布 workflow。
+TFCK-13 提供版本 PR 与正式发布两个相互隔离的 workflow。版本 PR 只运行 Changesets version；
+正式发布只允许从 `main` 手工触发，并受 `npm-production` Environment 保护。根脚本继续拒绝
+`changeset publish`、`npm publish`、`pnpm publish` 或 `yarn publish` 等本地绕过路径。具体门禁、
+首发 bootstrap、Trusted Publishing 绑定和回滚步骤见
+[`docs/baselines/tfck-13/release-process.md`](baselines/tfck-13/release-process.md)。
+版本 workflow 只从仓库内版本化 Front/Office/Tauri 风格消费者、受控 TFRobot Gateway 契约和
+产物独立性证据推导发布许可；这些兼容 mock 对 `next` 与 `latest` 都是硬门禁，不能通过独立布尔
+开关放行。真实宿主和真实服务 E2E 状态仍进入发布报告，但缺失不会改变版本或阻塞发布。
 
 正式发布优先使用 npm Trusted Publishing 与 GitHub Actions OIDC。首次 bootstrap 如确需传统
 npm 凭据，只能进入受保护的 GitHub Environment；不得写入仓库、日志、tarball 或 source map，

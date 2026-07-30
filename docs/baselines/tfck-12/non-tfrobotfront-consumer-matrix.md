@@ -14,9 +14,9 @@ authentication.
 
 This evidence proves that the published package surface can support two
 non-TFRobotFront integration topologies. It does not prove that an Office
-Add-in or Tauri product has installed, released or accepted Chat Kit. The
-TFCK-1 requirement for a real second-host validation remains open until a Host
-Integrator supplies external product evidence.
+Add-in or Tauri product has installed, released or accepted Chat Kit. Real
+second-host validation remains optional compatibility evidence; TFCK-1 is
+gated by these repository-owned versioned consumer topologies instead.
 
 ## Read-only host evidence
 

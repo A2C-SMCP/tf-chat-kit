@@ -64,8 +64,9 @@ Node.js version is useful local evidence but does not replace that gate.
   the replacement until the selected path has disposed successfully.
 - TFCK-36 adds the V1 vertical behavior checks over memory and controlled
   TFRobot Gateways.
-- TFCK-37 collects the final Kit-side report. Production Socket validation
-  remains blocked by TFRS-297 until its negative authorization tests pass.
+- TFCK-37 collects the final Kit-side report. Production Socket validation is
+  an optional external E2E observation; the controlled Gateway contract remains
+  the repository-owned compatibility gate.
 
 ## Feature Flag lifecycle model
 

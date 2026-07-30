@@ -84,15 +84,18 @@ export async function generateConsumedReleaseOutput({
     );
 
     execFileSync(
-      path.join(rootDirectory, "node_modules", ".bin", "changeset"),
-      ["version"],
+      process.execPath,
+      [path.join(import.meta.dirname, "version-release.mjs")],
       {
         cwd: temporaryDirectory,
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
 
-    const outputFiles = listChangedFiles(temporaryDirectory, "packages");
+    const outputFiles = [
+      ...listChangedFiles(temporaryDirectory, "packages"),
+      ...listChangedFiles(temporaryDirectory, ".changeset/pre.json"),
+    ];
     /** @type {Record<string, Record<string, unknown>>} */
     const packageManifests = {};
     /** @type {Record<string, string>} */
