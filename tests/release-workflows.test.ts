@@ -54,6 +54,10 @@ describe("TFCK-13 release workflows", () => {
     const push = objectField(triggers, "push");
     const permissions = objectField(parsed, "permissions");
     const steps = jobSteps(parsed, "version");
+    const revalidateStep = namedStep(
+      steps,
+      "Revalidate main before versioning",
+    );
     const versionStep = namedStep(
       steps,
       "Create or update the fixed-group version pull request",
@@ -63,6 +67,9 @@ describe("TFCK-13 release workflows", () => {
     expect(permissions).toEqual({
       contents: "write",
       "pull-requests": "write",
+    });
+    expect(objectField(revalidateStep, "env")).toEqual({
+      GITHUB_EVENT_BEFORE: "${{ github.event.before }}",
     });
     expect(versionStep["uses"]).toBe(
       "changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d",

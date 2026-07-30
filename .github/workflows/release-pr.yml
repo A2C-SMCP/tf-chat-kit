@@ -39,7 +39,7 @@ jobs:
 
       - name: Revalidate main before versioning
         env:
-          CHANGESET_BASE_REF: HEAD^
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
         run: pnpm check
 
       - name: Create or update the fixed-group version pull request
