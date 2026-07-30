@@ -113,6 +113,10 @@ async function createReleaseFixture(): Promise<ReleaseFixture> {
     path.join(directory, ".changeset", "first-release.md"),
     '---\n"@turingfocus/chat-runtime": minor\n---\n\nCreate the first fixed-group release.\n',
   );
+  await writeFile(
+    path.join(directory, ".changeset", "quiet-chats-bootstrap.md"),
+    "---\n---\n\nRecord the initial unpublished six-package workspace bootstrap.\n",
+  );
 
   for (const [packageDirectory, { name }] of packageEntries) {
     const packagePath = path.join(directory, "packages", packageDirectory);
@@ -136,11 +140,8 @@ async function createReleaseFixture(): Promise<ReleaseFixture> {
   return { directory, baseCommit: runGit(directory, ["rev-parse", "HEAD"]) };
 }
 
-const expectedReleaseFiles = packageEntries
-  .flatMap(([directory]) => [
-    `packages/${directory}/CHANGELOG.md`,
-    `packages/${directory}/package.json`,
-  ])
+const expectedInitialReleaseFiles = packageEntries
+  .map(([directory]) => `packages/${directory}/CHANGELOG.md`)
   .sort();
 
 describe("changeset release integration", () => {
@@ -152,9 +153,15 @@ describe("changeset release integration", () => {
         comparisonBase: fixture.baseCommit,
       });
 
-      expect([...output.outputFiles].sort()).toEqual(expectedReleaseFiles);
+      expect([...output.outputFiles].sort()).toEqual(
+        expectedInitialReleaseFiles,
+      );
       for (const [, { name }] of packageEntries) {
+        expect(output.packageManifests[name]).toMatchObject({
+          version: "0.1.0",
+        });
         expect(output.changelogs[name]).toContain(`# ${name}`);
+        expect(output.changelogs[name]).toContain("## 0.1.0");
       }
       expect(
         runGit(fixture.directory, ["worktree", "list", "--porcelain"]),
@@ -185,14 +192,14 @@ describe("changeset release integration", () => {
             ),
           ),
         ).toMatchObject({
-          version: "0.2.0",
+          version: "0.1.0",
         });
         expect(
           await readFile(
             path.join(packageDirectoryPath, "CHANGELOG.md"),
             "utf8",
           ),
-        ).not.toBe("");
+        ).toContain("## 0.1.0");
       }
       runGit(fixture.directory, ["add", "--all"]);
       runGit(fixture.directory, ["commit", "-m", "version packages"]);
@@ -213,6 +220,81 @@ describe("changeset release integration", () => {
       expect(
         runGit(fixture.directory, ["worktree", "list", "--porcelain"]),
       ).not.toContain("tf-chat-kit-changesets-");
+    } finally {
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("applies the unpublished 0.1.0 bootstrap only once", async () => {
+    const fixture = await createReleaseFixture();
+    try {
+      execFileSync(process.execPath, [versionReleaseScript], {
+        cwd: fixture.directory,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      runGit(fixture.directory, ["add", "--all"]);
+      runGit(fixture.directory, ["commit", "-m", "release 0.1.0"]);
+
+      await writeFile(
+        path.join(fixture.directory, ".changeset", "second-release.md"),
+        '---\n"@turingfocus/chat-runtime": minor\n---\n\nCreate the next fixed-group release.\n',
+      );
+      execFileSync(process.execPath, [versionReleaseScript], {
+        cwd: fixture.directory,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+
+      for (const [packageDirectory] of packageEntries) {
+        expect(
+          JSON.parse(
+            await readFile(
+              path.join(
+                fixture.directory,
+                "packages",
+                packageDirectory,
+                "package.json",
+              ),
+              "utf8",
+            ),
+          ),
+        ).toMatchObject({
+          version: "0.2.0",
+        });
+      }
+    } finally {
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("fails closed when the initial bootstrap no longer matches repository state", async () => {
+    const fixture = await createReleaseFixture();
+    try {
+      const runtimeDirectory = path.join(
+        fixture.directory,
+        "packages",
+        "chat-runtime",
+      );
+      await writeFile(
+        path.join(runtimeDirectory, "CHANGELOG.md"),
+        "# @turingfocus/chat-runtime\n",
+      );
+
+      const result = spawnSync(process.execPath, [versionReleaseScript], {
+        cwd: fixture.directory,
+        encoding: "utf8",
+      });
+
+      expect(result.status).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain(
+        "quiet-chats-bootstrap requires @turingfocus/chat-runtime to have no existing changelog",
+      );
+      expect(
+        JSON.parse(
+          await readFile(path.join(runtimeDirectory, "package.json"), "utf8"),
+        ),
+      ).toMatchObject({
+        version: "0.1.0",
+      });
     } finally {
       await rm(fixture.directory, { recursive: true, force: true });
     }
