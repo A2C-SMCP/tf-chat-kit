@@ -27,6 +27,11 @@ const checkChangesetsScript = path.join(
   "scripts",
   "check-changesets.mjs",
 );
+const versionReleaseScript = path.join(
+  workspaceRoot,
+  "scripts",
+  "version-release.mjs",
+);
 const packageEntries = Object.entries(PACKAGE_POLICY);
 
 const runGit = (rootDirectory: string, args: string[]) =>
@@ -50,6 +55,7 @@ async function createReleaseFixture(): Promise<ReleaseFixture> {
   );
   await mkdir(path.join(directory, ".changeset"), { recursive: true });
   await mkdir(path.join(directory, "packages"), { recursive: true });
+  await mkdir(path.join(directory, "release"), { recursive: true });
   await symlink(
     path.join(workspaceRoot, "node_modules"),
     path.join(directory, "node_modules"),
@@ -79,6 +85,30 @@ async function createReleaseFixture(): Promise<ReleaseFixture> {
     bumpVersionsWithWorkspaceProtocolOnly: true,
     ignore: [],
   });
+  const compatibility = JSON.parse(
+    await readFile(
+      path.join(workspaceRoot, "release", "compatibility.json"),
+      "utf8",
+    ),
+  ) as {
+    server: { evidence: string };
+    consumers: Record<string, { evidence?: string }>;
+  };
+  await writeJson(
+    path.join(directory, "release", "compatibility.json"),
+    compatibility,
+  );
+  const evidenceFiles = [
+    compatibility.server.evidence,
+    ...Object.values(compatibility.consumers).flatMap(({ evidence }) =>
+      evidence ? [evidence] : [],
+    ),
+  ];
+  for (const evidence of evidenceFiles) {
+    const target = path.join(directory, evidence);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, `# Fixture evidence for ${evidence}\n`);
+  }
   await writeFile(
     path.join(directory, ".changeset", "first-release.md"),
     '---\n"@turingfocus/chat-runtime": minor\n---\n\nCreate the first fixed-group release.\n',
@@ -137,19 +167,29 @@ describe("changeset release integration", () => {
   it("accepts a version branch that consumes a target-branch changeset", async () => {
     const fixture = await createReleaseFixture();
     try {
-      execFileSync(changesetExecutable, ["version"], {
+      execFileSync(process.execPath, [versionReleaseScript], {
         cwd: fixture.directory,
         stdio: ["ignore", "pipe", "pipe"],
       });
       for (const [packageDirectory] of packageEntries) {
+        const packageDirectoryPath = path.join(
+          fixture.directory,
+          "packages",
+          packageDirectory,
+        );
+        expect(
+          JSON.parse(
+            await readFile(
+              path.join(packageDirectoryPath, "package.json"),
+              "utf8",
+            ),
+          ),
+        ).toMatchObject({
+          version: "0.2.0",
+        });
         expect(
           await readFile(
-            path.join(
-              fixture.directory,
-              "packages",
-              packageDirectory,
-              "CHANGELOG.md",
-            ),
+            path.join(packageDirectoryPath, "CHANGELOG.md"),
             "utf8",
           ),
         ).not.toBe("");

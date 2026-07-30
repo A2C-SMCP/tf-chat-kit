@@ -17,7 +17,8 @@ describe("GitHub Actions quality gate", () => {
     expect(workflow).toContain(
       "uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0",
     );
-    expect(workflow).toContain("node-version: 24.x");
+    expect(workflow).toContain("node-version-file: .nvmrc");
+    expect(workflow).not.toContain("node-version: 24.x");
     expect(workflow).toContain("GITHUB_BASE_SHA:");
     expect(workflow).toContain("GITHUB_EVENT_BEFORE:");
     expect(workflow).toContain("run: pnpm check");

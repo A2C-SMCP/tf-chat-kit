@@ -28,7 +28,9 @@
     }
   },
   "dependencies": {
-    "@turingfocus/chat-protocol": "workspace:^"
+    "@turingfocus/chat-protocol": "workspace:^",
+    "socket.io-client": "4.8.3",
+    "zod": "4.0.17"
   },
   "publishConfig": {
     "access": "public",

@@ -1,5 +1,8 @@
 import {
   agentEventParser,
+  askUserInteractionAnswerParser,
+  askUserInteractionRequestParser,
+  askUserInteractionResultParser,
   capabilitiesParser,
   chatErrorParser,
   chatSnapshotParser,
@@ -135,9 +138,63 @@ export type ToolReturn =
   | (ToolReturnFields & { readonly done: boolean })
   | (ToolReturnFields & { readonly raw: ReadonlyJsonValue });
 
+export interface AskUserInteractionOption {
+  readonly label: string;
+  readonly value: string;
+  readonly description?: string | undefined;
+}
+
+export interface AskUserInteractionQuestion {
+  readonly id: string;
+  readonly prompt: string;
+  readonly title?: string | undefined;
+  readonly description?: string | undefined;
+  readonly placeholder?: string | undefined;
+  readonly required: boolean;
+  readonly multiple: boolean;
+  readonly defaultValue?: AskUserInteractionValue | undefined;
+  readonly options: readonly AskUserInteractionOption[];
+}
+
+export type AskUserInteractionValue = string | readonly string[];
+
+/** One conversation-scoped request for structured user input. */
+export interface AskUserInteractionRequest {
+  readonly kind: "ask-user";
+  readonly conversationId: ConversationId;
+  readonly requestId: string;
+  /** Immutable Gateway-issued identity for this exact request envelope. */
+  readonly revision: string;
+  readonly eventId?: string | undefined;
+  readonly title: string;
+  readonly questions: readonly AskUserInteractionQuestion[];
+  readonly timeoutSeconds?: number | undefined;
+}
+
+export interface AskUserInteractionAnswer {
+  readonly requestId: string;
+  readonly revision: string;
+  readonly action: "cancel" | "submit";
+  readonly answers: Readonly<Record<string, AskUserInteractionValue>>;
+}
+
+/** Gateway-normalized terminal Ask User data suitable for history rendering. */
+export interface AskUserInteractionResult {
+  readonly kind: "ask-user";
+  readonly requestId: string;
+  readonly revision?: string | undefined;
+  readonly status:
+    "answered" | "cancelled" | "chat-about-this" | "failed" | "timeout";
+  readonly questions: readonly AskUserInteractionQuestion[];
+  readonly answers?:
+    Readonly<Record<string, AskUserInteractionValue>> | undefined;
+  readonly error?: string | undefined;
+}
+
 export interface ToolEventTransition extends AgentEventTransition {
   readonly toolCall?: ToolCall | undefined;
   readonly toolReturn?: ToolReturn | undefined;
+  readonly interaction?: AskUserInteractionResult | undefined;
 }
 
 interface AgentEventBase {
@@ -240,6 +297,8 @@ export interface ChatError {
 }
 
 export interface Capabilities {
+  /** Enables ChatGateway.answerInteraction when the optional method exists. */
+  readonly answerInteraction?: boolean | undefined;
   /** Enables interrupt only while the current run is running and interruptible. */
   readonly interrupt: boolean;
   /** Enables ChatGateway.listConversations. */
@@ -263,6 +322,7 @@ export interface ChatSnapshot {
   readonly run: Run | null;
   readonly capabilities: Capabilities;
   readonly pageInfo: TimelinePageInfo;
+  readonly pendingInteraction?: AskUserInteractionRequest | undefined;
   readonly error?: ChatError | undefined;
 }
 
@@ -301,12 +361,26 @@ export type ChatUpdate =
       readonly capabilities: Capabilities;
     }
   | {
+      readonly kind: "interaction.replace";
+      readonly conversationId: ConversationId;
+      readonly interaction: AskUserInteractionRequest | null;
+    }
+  | {
       readonly kind: "error.reported";
       readonly conversationId?: ConversationId | undefined;
       readonly error: ChatError;
     };
 
 export const conversationSchema = createRuntimeSchema(conversationParser);
+export const askUserInteractionRequestSchema = createRuntimeSchema(
+  askUserInteractionRequestParser,
+);
+export const askUserInteractionAnswerSchema = createRuntimeSchema(
+  askUserInteractionAnswerParser,
+);
+export const askUserInteractionResultSchema = createRuntimeSchema(
+  askUserInteractionResultParser,
+);
 export const messageSchema = createRuntimeSchema(messageParser);
 export const agentEventSchema = createRuntimeSchema(agentEventParser);
 export const unknownEventSchema = createRuntimeSchema(unknownEventParser);

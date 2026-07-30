@@ -28,8 +28,7 @@
     }
   },
   "dependencies": {
-    "@turingfocus/chat-protocol": "workspace:^",
-    "@turingfocus/chat-runtime": "workspace:^"
+    "@turingfocus/chat-protocol": "workspace:^"
   },
   "publishConfig": {
     "access": "public",

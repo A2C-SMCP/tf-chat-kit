@@ -16,6 +16,10 @@ import ts from "typescript";
  *   private?: boolean;
  *   license?: string;
  *   packageManager?: string;
+ *   engines?: DependencyMap;
+ *   devEngines?: {
+ *     runtime?: { name?: string; version?: string; onFail?: string };
+ *   };
  *   scripts?: Record<string, string>;
  *   files?: string[];
  *   sideEffects?: boolean | string[];
@@ -45,6 +49,7 @@ import ts from "typescript";
 /**
  * @typedef {{
  *   rootManifest: PackageManifest;
+ *   nodeVersion: string;
  *   changesetConfig: Record<string, unknown>;
  *   packages: WorkspacePackage[];
  *   sourceFiles: SourceFile[];
@@ -61,6 +66,18 @@ const PUBLIC_REGISTRY = "https://registry.npmjs.org/";
 const REPOSITORY_URL = "git+https://github.com/A2C-SMCP/tf-chat-kit.git";
 const HOMEPAGE_URL = "https://github.com/A2C-SMCP/tf-chat-kit#readme";
 const BUGS_URL = "https://github.com/A2C-SMCP/tf-chat-kit/issues";
+const ROOT_ENGINE_POLICY = Object.freeze({
+  node: ">=24 <25",
+  pnpm: ">=10 <11",
+});
+const ROOT_DEV_ENGINE_POLICY = Object.freeze({
+  runtime: Object.freeze({
+    name: "node",
+    version: ">=24 <25",
+    onFail: "error",
+  }),
+});
+const RELEASE_NPM_VERSION = "11.18.0";
 
 /** @type {Readonly<Record<string, PackageRule>>} */
 export const PACKAGE_POLICY = Object.freeze({
@@ -86,7 +103,7 @@ export const PACKAGE_POLICY = Object.freeze({
     allowedNodeBuiltins: [],
     peerDependencies: {},
     allowedExternalDependencies: {
-      dependencies: ["socket.io-client"],
+      dependencies: ["socket.io-client", "zod"],
     },
   },
   "chat-react": {
@@ -100,23 +117,30 @@ export const PACKAGE_POLICY = Object.freeze({
   },
   "chat-ui-antd": {
     name: "@turingfocus/chat-ui-antd",
-    internalDependencies: ["@turingfocus/chat-react"],
+    internalDependencies: [
+      "@turingfocus/chat-protocol",
+      "@turingfocus/chat-react",
+    ],
     allowedNodeBuiltins: [],
     peerDependencies: {
       antd: ">=5.23.4 <6.0.0",
       react: ">=18.2.0 <19.0.0",
+      "react-dom": ">=18.2.0 <19.0.0",
     },
     allowedExternalDependencies: {
-      dependencies: heavyRendererDependencyPatterns,
-      peerDependencies: ["antd", "react"],
+      dependencies: [
+        ...heavyRendererDependencyPatterns,
+        "react-markdown",
+        "react-virtuoso",
+        "rehype-sanitize",
+        "remark-gfm",
+      ],
+      peerDependencies: ["antd", "react", "react-dom"],
     },
   },
   "chat-testing": {
     name: "@turingfocus/chat-testing",
-    internalDependencies: [
-      "@turingfocus/chat-protocol",
-      "@turingfocus/chat-runtime",
-    ],
+    internalDependencies: ["@turingfocus/chat-protocol"],
     allowedNodeBuiltins: [],
     peerDependencies: {},
     allowedExternalDependencies: {},
@@ -146,12 +170,13 @@ const ROOT_SCRIPT_POLICY = Object.freeze({
   "check:workspace": "node scripts/check-workspace.mjs",
   clean: "node scripts/clean-workspace.mjs",
   format:
-    'prettier --write "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "vitest.config.ts" "packages/**/*.{json,ts}" "scripts/**/*.mjs" "tests/**/*.ts" "fixtures/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/{README,007-versioning-and-release,008-github-and-public-npm-release}.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
+    'prettier --write "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.ts" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/{README,007-versioning-and-release,008-github-and-public-npm-release,009-independent-compatibility-testing}.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
   "format:check":
-    'prettier --check "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "vitest.config.ts" "packages/**/*.{json,ts}" "scripts/**/*.mjs" "tests/**/*.ts" "fixtures/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/{README,007-versioning-and-release,008-github-and-public-npm-release}.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
+    'prettier --check "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.ts" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/{README,007-versioning-and-release,008-github-and-public-npm-release,009-independent-compatibility-testing}.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
   lint: "eslint . --max-warnings=0",
   "pack:check": "node scripts/verify-packed-artifacts.mjs",
   "pack:workspace": "node scripts/pack-workspace.mjs",
+  preinstall: "node scripts/check-node-version.mjs",
   test: "vitest run",
   typecheck:
     "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false",
@@ -179,6 +204,10 @@ const zeroMajorSemver =
   /^0\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
 /** @param {string} version */
 export const isZeroMajorVersion = (version) => zeroMajorSemver.test(version);
+/** @param {string} version */
+export const isPrereleaseVersion = (version) =>
+  isZeroMajorVersion(version) &&
+  /^0\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-/u.test(version);
 
 /**
  * @param {PackageManifest} manifest
@@ -2119,18 +2148,19 @@ const validatePublishScripts = (label, manifest, errors) => {
   for (const [name, command] of Object.entries(manifest.scripts ?? {})) {
     if (containsPublishCommand(command)) {
       errors.push(
-        `${label}: script ${name} must not publish before the TFCK-13 release workflow and npm identity are approved`,
+        `${label}: script ${name} must not publish outside the protected .github/workflows/release.yml workflow`,
       );
     }
   }
 };
 
 /**
- * Formal publication is deliberately unavailable in this Story. Treat the
- * complete script map as configuration, not as shell source to interpret: any
- * new or changed command requires an explicit policy review. This fail-closed
- * boundary also covers shell, corepack, task-runner, and package-manager
- * wrappers that a finite command parser cannot safely enumerate.
+ * Publication is deliberately restricted to the protected GitHub release
+ * workflow. Treat the complete script map as configuration, not as shell
+ * source to interpret: any local command change requires an explicit policy
+ * review. This fail-closed boundary also covers shell, corepack, task-runner,
+ * and package-manager wrappers that a finite command parser cannot safely
+ * enumerate.
  *
  * @param {string} label
  * @param {PackageManifest} manifest
@@ -2140,7 +2170,7 @@ const validatePublishScripts = (label, manifest, errors) => {
 const validateApprovedScripts = (label, manifest, expected, errors) => {
   if (!sameEntries(manifest.scripts ?? {}, expected)) {
     errors.push(
-      `${label}: scripts must exactly match the approved publish-disabled baseline`,
+      `${label}: scripts must exactly match the approved local command baseline`,
     );
   }
 };
@@ -2197,6 +2227,28 @@ export function validateWorkspaceSnapshot(snapshot) {
 
   if (snapshot.rootManifest.packageManager !== "pnpm@10.34.5") {
     errors.push("root packageManager must be pinned to pnpm@10.34.5");
+  }
+  if (snapshot.nodeVersion !== "24\n") {
+    errors.push("root .nvmrc must contain exactly Node.js major version 24");
+  }
+  if (
+    stableObjectJson(snapshot.rootManifest.engines ?? {}) !==
+    stableObjectJson(ROOT_ENGINE_POLICY)
+  ) {
+    errors.push("root engines must require Node.js 24.x and pnpm 10.x");
+  }
+  if (
+    stableObjectJson(snapshot.rootManifest.devEngines ?? {}) !==
+    stableObjectJson(ROOT_DEV_ENGINE_POLICY)
+  ) {
+    errors.push(
+      "root devEngines.runtime must reject runtimes outside Node.js 24.x",
+    );
+  }
+  if (snapshot.rootManifest.devDependencies?.["npm"] !== RELEASE_NPM_VERSION) {
+    errors.push(
+      `root npm devDependency must be pinned to ${RELEASE_NPM_VERSION} for trusted publishing`,
+    );
   }
   if (snapshot.rootManifest.license !== "MIT")
     errors.push("root license must be MIT");
@@ -2440,6 +2492,7 @@ export async function loadWorkspaceSnapshot(rootDirectory) {
         await readFile(path.join(rootDirectory, "package.json"), "utf8"),
       )
     ),
+    nodeVersion: await readFile(path.join(rootDirectory, ".nvmrc"), "utf8"),
     changesetConfig: /** @type {Record<string, unknown>} */ (
       JSON.parse(
         await readFile(

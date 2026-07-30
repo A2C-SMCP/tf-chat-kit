@@ -23,14 +23,27 @@ DOM lib；React/UI 才启用 DOM 和 JSX。这样可以在工程层阻止浏览�
 
 ## Peer dependency 基线
 
-| 包                          | Peer       | 范围               | 消费者证据                                                 |
-| --------------------------- | ---------- | ------------------ | ---------------------------------------------------------- |
-| `@turingfocus/chat-react`   | React      | `>=18.2.0 <19.0.0` | Office 使用 React 18.2；TFRobotFront/Tauri 使用 React 18.3 |
-| `@turingfocus/chat-ui-antd` | React      | `>=18.2.0 <19.0.0` | 与无样式 React 层保持一致                                  |
-| `@turingfocus/chat-ui-antd` | Ant Design | `>=5.23.4 <6.0.0`  | Tauri 使用 5.23.4；TFRobotFront 使用 5.28.x                |
+| 包                          | Peer       | 范围               | 消费者证据                                             |
+| --------------------------- | ---------- | ------------------ | ------------------------------------------------------ |
+| `@turingfocus/chat-react`   | React      | `>=18.2.0 <19.0.0` | Office 风格消费者验证 18.2 下界；已检查宿主锁定 18.3.1 |
+| `@turingfocus/chat-ui-antd` | React      | `>=18.2.0 <19.0.0` | 与无样式 React 层保持一致                              |
+| `@turingfocus/chat-ui-antd` | ReactDOM   | `>=18.2.0 <19.0.0` | 虚拟化 DOM 渲染；与宿主 React 主版本保持一致           |
+| `@turingfocus/chat-ui-antd` | Ant Design | `>=5.23.4 <6.0.0`  | 消费者验证 5.23.4 下界；已检查 Tauri 宿主锁定 5.29.3   |
 
 React 19 和 Ant Design 6 尚未经过目标宿主验证，不在 V1 支持矩阵中。扩大范围需要独立兼容
 验证，而不是直接放宽 peer range。
+
+宿主声明范围、锁定版本和只读 revision 的证据记录在
+`docs/baselines/tfck-12/non-tfrobotfront-consumer-matrix.md`。兼容下界消费者用于守护公共 peer
+契约，不表示外部宿主锁文件当前解析到该下界版本。
+
+仓库以支持下界 Ant Design 5.23.4 执行完整声明检查，不启用全局 `skipLibCheck`。该版本及其
+传递依赖中有三处已确认的声明生成缺陷（ErrorBoundary 的 ReactNode 返回类型、Cascader 在
+`exactOptionalPropertyTypes` 下误用 `Required`、PickerPanel 重复声明 `defaultValue`），由根
+目录 `patches/` 中的最小 `.d.ts` 补丁修正。补丁不改变运行时代码，并由锁文件校验及
+`pnpm check` 的完整 TypeScript 门禁持续验证；升级 Ant Design 时必须先删除补丁并重新确认
+上游声明已修复。`pack:check` 还会在不继承这些补丁的临时项目中，以 5.23.4 和当前 5.29.x
+分别安装、编译并服务端渲染已打包 UI，守护公开产物的最低版本兼容契约。
 
 ## GitHub 与 npm 官方 Registry
 
@@ -41,9 +54,14 @@ repository metadata。
 2026-07-17 的认证态探针已确认 `npm whoami` 为 `huruize`，且该账号是 `turingfocus`
 organization owner；`turingfocus:developers` 团队存在，当前尚无已发布包。正式发布前仍须重新
 验证登录身份、organization 权限和目标包状态；E404 只表示当前不可见，不能单独证明发布权限。
-TFCK-42 不执行正式发布；正式版本、dist-tag、兼容矩阵和回滚由 TFCK-13 负责。根脚本继续拒绝
-`changeset publish`、`npm publish`、
-`pnpm publish` 或 `yarn publish` 等绕过路径，直到 TFCK-13 建立受保护的发布 workflow。
+TFCK-13 提供版本 PR 与正式发布两个相互隔离的 workflow。版本 PR 只运行 Changesets version；
+正式发布只允许从 `main` 手工触发，并受 `npm-production` Environment 保护。根脚本继续拒绝
+`changeset publish`、`npm publish`、`pnpm publish` 或 `yarn publish` 等本地绕过路径。具体门禁、
+首发 bootstrap、Trusted Publishing 绑定和回滚步骤见
+[`docs/baselines/tfck-13/release-process.md`](baselines/tfck-13/release-process.md)。
+版本 workflow 只从仓库内版本化 Front/Office/Tauri 风格消费者、受控 TFRobot Gateway 契约和
+产物独立性证据推导发布许可；这些兼容 mock 对 `next` 与 `latest` 都是硬门禁，不能通过独立布尔
+开关放行。真实宿主和真实服务 E2E 状态仍进入发布报告，但缺失不会改变版本或阻塞发布。
 
 正式发布优先使用 npm Trusted Publishing 与 GitHub Actions OIDC。首次 bootstrap 如确需传统
 npm 凭据，只能进入受保护的 GitHub Environment；不得写入仓库、日志、tarball 或 source map，
@@ -53,11 +71,19 @@ npm 凭据，只能进入受保护的 GitHub Environment；不得写入仓库、
 ## 本地与 CI 门禁
 
 ```bash
+nvm install
+nvm use
+corepack enable
 corepack prepare pnpm@10.34.5 --activate
 pnpm install --frozen-lockfile
 pnpm check
 pnpm pack:workspace
 ```
+
+仓库根目录的 `.nvmrc` 是本地开发与 GitHub Actions 共用的 Node.js 24.x 版本来源。
+`package.json` 的 `engines` 与 `devEngines.runtime` 声明支持范围和失败语义；根 `preinstall`
+和 workspace 检查复用同一版本校验，确保 pnpm 10 下的普通安装与完整门禁都能 fail-fast。
+显式 `--ignore-scripts` 会跳过安装钩子，因此 CI 仍以 workspace 检查作为最终门禁。
 
 `pnpm check` 验证固定包集合、统一版本、Changesets 状态、依赖方向、宿主源码零依赖、peer
 归属、lint、格式、类型、测试、构建、tarball 最终内容，以及临时消费者的离线安装、TypeScript
@@ -69,8 +95,9 @@ fixed group 的 `package.json` 和 `CHANGELOG.md` 输出；版本提交必须保
 提供新的 changeset。根清单、
 pnpm override 与六包清单都禁止源码路径依赖；公共包外部依赖采用按 dependency section 划分的
 显式 allowlist，React 和 Ant Design 只允许作为 peer，`socket.io-client` 只允许作为
-`chat-gateway-tfrobot` 的生产依赖，Monaco/xterm 等重 renderer 只允许作为 `chat-ui-antd` 的生产
-依赖。六包必须显式声明 `sideEffects`；当前纯入口使用 `false`，未来引入 CSS 等副作用时改为明确
+`chat-gateway-tfrobot` 的生产依赖；`react-markdown`、`remark-gfm` 与 `rehype-sanitize`
+只允许作为 `chat-ui-antd` 的安全 Markdown 生产依赖，Monaco/xterm 等重 renderer 也只允许作为
+`chat-ui-antd` 的生产依赖。六包必须显式声明 `sideEffects`；当前纯入口使用 `false`，未来引入 CSS 等副作用时改为明确
 的文件模式列表。Changesets fixed-group release plan 是版本计算的唯一依据：
 待消费计划基于当前全部 pending changeset 计算且不得越过 0.x；已消费计划会在隔离 worktree 中
 使用固定版本的 Changesets CLI 在比较基线的全部 pending changeset 上重放，提交中的六包清单、

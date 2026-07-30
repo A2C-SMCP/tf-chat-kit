@@ -3,9 +3,15 @@
 Every public package change must include a changeset describing the SemVer impact. The six
 `@turingfocus/*` packages form one fixed group and are versioned together, as required by ADR-008.
 
-Run `pnpm changeset` to add an entry. The `turingfocus` organization ownership is verified;
-formal publication remains deferred to TFCK-13 until the GitHub Actions trusted publisher and
-release protections are configured.
+Run `pnpm changeset` to add an entry. A main-branch workflow creates or updates the fixed-group
+version pull request; it never publishes. Publication is a separate, manually dispatched,
+environment-protected workflow described in
+[`docs/baselines/tfck-13/release-process.md`](../docs/baselines/tfck-13/release-process.md).
+Repository-owned Front/Office/Tauri-style consumers, controlled Gateway contracts and artifact
+independence checks gate both `next` and `latest`. Real-host E2E remains optional compatibility
+metadata and never selects a release channel. An existing Changesets `next` prerelease mode remains
+explicit until maintainers exit it; otherwise version PRs produce stable fixed-group versions.
+Local package scripts remain publish-disabled.
 
 `pnpm check:changesets` compares public package changes with the target branch and requires a new
 changeset with a release entry. A documented empty changeset is allowed only when the comparison

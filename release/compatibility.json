@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "repository": "A2C-SMCP/tf-chat-kit",
+  "server": {
+    "baseline": "TFRobotServer source-and-test-derived V1 contract",
+    "evidence": "docs/baselines/tfck-7/tfrobot-gateway-compatibility.md",
+    "productionSocketStatus": "blocked",
+    "blockedBy": ["optional external E2E environment is not available"]
+  },
+  "consumers": {
+    "tfrobotfrontMock": {
+      "status": "passed",
+      "evidence": "docs/baselines/tfck-11/host-consumer-validation.md"
+    },
+    "officeMock": {
+      "status": "passed",
+      "evidence": "docs/baselines/tfck-12/non-tfrobotfront-consumer-matrix.md"
+    },
+    "tauriMock": {
+      "status": "passed",
+      "evidence": "docs/baselines/tfck-12/non-tfrobotfront-consumer-matrix.md"
+    },
+    "tfrobotfrontReal": {
+      "status": "missing",
+      "blockedBy": ["optional external E2E has not been run"]
+    },
+    "secondHostReal": {
+      "status": "missing",
+      "blockedBy": ["optional external E2E has not been run"]
+    }
+  },
+  "channels": {
+    "next": {
+      "versionKind": "prerelease",
+      "reason": "Deterministic package and mock-consumer evidence permits an explicitly versioned prerelease."
+    },
+    "latest": {
+      "versionKind": "stable",
+      "reason": "Stable releases require the fixed package group and all repository-owned compatibility mocks to pass."
+    }
+  },
+  "knownLimitations": [
+    "Mock consumers prove package-level integration shapes, not production host rollout.",
+    "Production Socket.IO and real-host E2E are optional compatibility observations and are not release dependencies.",
+    "Realtime Ask User answers remain disabled until the remote-tool routing and authorization gate is complete."
+  ]
+}

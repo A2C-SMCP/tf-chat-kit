@@ -6,8 +6,19 @@
     "composite": false,
     "declaration": false,
     "declarationMap": false,
-    "lib": ["ES2022"],
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "noEmit": true,
+    "paths": {
+      "@turingfocus/chat-gateway-tfrobot": [
+        "./packages/chat-gateway-tfrobot/src/index.ts"
+      ],
+      "@turingfocus/chat-protocol": ["./packages/chat-protocol/src/index.ts"],
+      "@turingfocus/chat-react": ["./packages/chat-react/src/index.ts"],
+      "@turingfocus/chat-runtime": ["./packages/chat-runtime/src/index.ts"],
+      "@turingfocus/chat-testing": ["./packages/chat-testing/src/index.ts"],
+      "@turingfocus/chat-ui-antd": ["./packages/chat-ui-antd/src/index.ts"]
+    },
     "rootDir": ".",
     "sourceMap": false,
     "types": ["node", "vitest/globals"]
