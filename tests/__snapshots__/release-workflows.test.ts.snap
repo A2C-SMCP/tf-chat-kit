@@ -37,7 +37,7 @@ corepack prepare pnpm@10.34.5 --activate
         },
         {
           "env": {
-            "CHANGESET_BASE_REF": "HEAD^",
+            "GITHUB_EVENT_BEFORE": "\${{ github.event.before }}",
           },
           "name": "Revalidate main before versioning",
           "run": "pnpm check",

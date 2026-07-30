@@ -25,14 +25,15 @@ const requireCommitSha = (value, variable) => {
 
 /**
  * Select the authoritative comparison base exposed by GitHub Actions. Returning
- * undefined means the caller is running outside GitHub Actions and may use its
- * local Git fallback.
+ * undefined means the caller is either outside GitHub Actions or supplied an
+ * explicit CHANGESET_BASE_REF and may resolve that override itself.
  *
  * @param {NodeJS.ProcessEnv} environment
  * @returns {ComparisonBase | undefined}
  */
 export function selectGithubComparisonBase(environment) {
   if (environment["GITHUB_ACTIONS"] !== "true") return undefined;
+  if (environment["CHANGESET_BASE_REF"]) return undefined;
 
   const event = environment["GITHUB_EVENT_NAME"];
   if (event === "push") {

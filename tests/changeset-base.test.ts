@@ -13,6 +13,16 @@ describe("changeset comparison base", () => {
     expect(selectGithubComparisonBase({})).toBeUndefined();
   });
 
+  it("leaves an explicit comparison base to the caller in GitHub Actions", () => {
+    expect(
+      selectGithubComparisonBase({
+        CHANGESET_BASE_REF: "HEAD^",
+        GITHUB_ACTIONS: "true",
+        GITHUB_EVENT_NAME: "workflow_dispatch",
+      }),
+    ).toBeUndefined();
+  });
+
   it("uses the pre-push branch head for the complete pushed commit range", () => {
     expect(
       selectGithubComparisonBase({
