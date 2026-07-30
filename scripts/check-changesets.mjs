@@ -5,6 +5,11 @@ import path from "node:path";
 import parseChangeset from "@changesets/parse";
 import readChangesets from "@changesets/read";
 
+import {
+  readChangesetPrereleaseState,
+  unconsumedChangesets,
+  validateChangesetPrereleaseState,
+} from "./changeset-pre-state.mjs";
 import { selectGithubComparisonBase } from "./changeset-base.mjs";
 import { validateChangesetCoverage } from "./changeset-policy.mjs";
 import { generateConsumedReleaseOutput } from "./changeset-release-output.mjs";
@@ -148,6 +153,14 @@ const readChangesetAtRef = (ref, file) => ({
   id: file.slice(".changeset/".length, -".md".length),
 });
 
+/** @param {string} ref */
+const readPrereleaseStateAtRef = (ref) =>
+  fileExistsAtRef(ref, ".changeset/pre.json")
+    ? validateChangesetPrereleaseState(
+        JSON.parse(runGit(["show", `${ref}:.changeset/pre.json`])),
+      )
+    : undefined;
+
 /**
  * @typedef {{
  *   name: string;
@@ -272,11 +285,17 @@ try {
     ]),
   ];
   const addedChangesetPaths = new Set(addedChangesetFiles);
-  const pendingChangesets = await readChangesets(rootDirectory);
+  const allChangesets = await readChangesets(rootDirectory);
+  const currentPrereleaseState =
+    await readChangesetPrereleaseState(rootDirectory);
+  const pendingChangesets = unconsumedChangesets(
+    allChangesets,
+    currentPrereleaseState,
+  );
   const addedChangesets = pendingChangesets.filter(({ id }) =>
     addedChangesetPaths.has(`.changeset/${id}.md`),
   );
-  const consumedChangesets = lines(
+  const deletedChangesetIds = lines(
     runGit([
       "diff",
       "--no-renames",
@@ -288,8 +307,21 @@ try {
     ]),
   )
     .filter(isChangesetFile)
-    .map((file) => readChangesetAtRef(comparisonBase, file));
-  const expectedConsumedChangesetIds = lines(
+    .map((file) => file.slice(".changeset/".length, -".md".length));
+  const basePrereleaseState = readPrereleaseStateAtRef(comparisonBase);
+  const basePrereleaseChangesets = new Set(
+    basePrereleaseState?.changesets ?? [],
+  );
+  const prereleaseConsumedIds = (
+    currentPrereleaseState?.changesets ?? []
+  ).filter((id) => !basePrereleaseChangesets.has(id));
+  const consumedChangesetIds = [
+    ...new Set([...deletedChangesetIds, ...prereleaseConsumedIds]),
+  ];
+  const consumedChangesets = consumedChangesetIds.map((id) =>
+    readChangesetAtRef(comparisonBase, `.changeset/${id}.md`),
+  );
+  const baseChangesetIds = lines(
     runGit([
       "ls-tree",
       "-r",
@@ -301,6 +333,10 @@ try {
   )
     .filter(isChangesetFile)
     .map((file) => file.slice(".changeset/".length, -".md".length));
+  const expectedConsumedChangesetIds =
+    currentPrereleaseState?.mode === "pre"
+      ? baseChangesetIds.filter((id) => !basePrereleaseChangesets.has(id))
+      : baseChangesetIds;
   const isInitialWorkspaceBootstrap = Object.keys(PACKAGE_POLICY).every(
     (directory) =>
       !fileExistsAtRef(comparisonBase, `packages/${directory}/package.json`),
@@ -312,22 +348,13 @@ try {
     rootManifest: currentRootManifest,
     packageManifests: currentPackageManifests,
     changesets: pendingChangesets,
+    ...(currentPrereleaseState
+      ? { prereleaseState: currentPrereleaseState }
+      : {}),
   });
-  const baseRootManifest = isInitialWorkspaceBootstrap
-    ? undefined
-    : readManifestAtRef(comparisonBase, "package.json");
   const basePackageManifests = isInitialWorkspaceBootstrap
     ? {}
     : readPackageManifestsAtRef(comparisonBase);
-  const consumedReleasePlan =
-    consumedChangesets.length === 0
-      ? { releases: [] }
-      : await assembleWorkspaceReleasePlan({
-          rootDirectory,
-          rootManifest: baseRootManifest ?? currentRootManifest,
-          packageManifests: basePackageManifests,
-          changesets: consumedChangesets,
-        });
   /** @type {{
    *   outputFiles: string[];
    *   packageManifests: Record<string, Record<string, unknown>>;
@@ -340,11 +367,26 @@ try {
           rootDirectory,
           comparisonBase,
         });
+  const consumedReleasePlan =
+    consumedChangesets.length === 0
+      ? { releases: [] }
+      : {
+          releases: Object.values(PACKAGE_POLICY).map(({ name }) => ({
+            name,
+            type: /** @type {const} */ ("patch"),
+            oldVersion: String(basePackageManifests[name]?.["version"]),
+            newVersion: String(
+              expectedConsumedReleaseOutput.packageManifests[name]?.["version"],
+            ),
+            changesets: consumedChangesets.map(({ id }) => id),
+          })),
+        };
   const errors = validateChangesetCoverage({
     changedFiles,
     addedChangesets,
     pendingChangesets,
     consumedChangesets,
+    consumedChangesetDeletionIds: deletedChangesetIds,
     expectedConsumedChangesetIds,
     pendingReleasePlan,
     consumedReleasePlan,

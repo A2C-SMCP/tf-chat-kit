@@ -15,6 +15,27 @@ import { validatePackedArtifact } from "./packed-artifact-policy.mjs";
 
 const rootDirectory = process.cwd();
 const approvedLicense = await readFile(path.join(rootDirectory, "LICENSE"));
+const sourceFlagIndex = process.argv.indexOf("--source");
+const versionFlagIndex = process.argv.indexOf("--version");
+const packageSource =
+  sourceFlagIndex < 0 ? "packed" : process.argv[sourceFlagIndex + 1];
+const registryVersion =
+  versionFlagIndex < 0 ? undefined : process.argv[versionFlagIndex + 1];
+if (packageSource !== "packed" && packageSource !== "registry") {
+  throw new Error("--source must be packed or registry.");
+}
+if (
+  packageSource === "registry" &&
+  (registryVersion === undefined ||
+    !/^0\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/u.test(
+      registryVersion,
+    ))
+) {
+  throw new Error("registry verification requires --version with 0.x SemVer.");
+}
+if (packageSource === "packed" && versionFlagIndex >= 0) {
+  throw new Error("--version is only valid with --source registry.");
+}
 
 /**
  * @param {string} command
@@ -198,29 +219,40 @@ const readExtractedFiles = async (directory, root = directory) => {
   return files;
 };
 
-run("node", ["scripts/pack-workspace.mjs"]);
+if (packageSource === "packed") {
+  run("node", ["scripts/pack-workspace.mjs"]);
 
-for (const directory of packageDirectories) {
-  const packageDirectory = path.join(rootDirectory, "packages", directory);
-  run("pnpm", ["exec", "publint", packageDirectory]);
-  run("pnpm", [
-    "exec",
-    "attw",
-    "--pack",
-    packageDirectory,
-    "--profile",
-    "esm-only",
-  ]);
+  for (const directory of packageDirectories) {
+    const packageDirectory = path.join(rootDirectory, "packages", directory);
+    run("pnpm", ["exec", "publint", packageDirectory]);
+    run("pnpm", [
+      "exec",
+      "attw",
+      "--pack",
+      packageDirectory,
+      "--profile",
+      "esm-only",
+    ]);
+  }
 }
 
-/** @typedef {{ name: string; version: string; tarball: string; files: string[] }} PackedPackage */
+/** @typedef {{ name: string; version: string; tarball?: string; files: string[] }} PackedPackage */
 /** @type {{ packages: PackedPackage[] }} */
-const packManifest = JSON.parse(
-  await readFile(
-    path.join(rootDirectory, ".artifacts", "packages", "manifest.json"),
-    "utf8",
-  ),
-);
+const packManifest =
+  packageSource === "packed"
+    ? JSON.parse(
+        await readFile(
+          path.join(rootDirectory, ".artifacts", "packages", "manifest.json"),
+          "utf8",
+        ),
+      )
+    : {
+        packages: Object.values(PACKAGE_POLICY).map(({ name }) => ({
+          name,
+          version: /** @type {string} */ (registryVersion),
+          files: [],
+        })),
+      };
 const verificationRoot = await mkdtemp(
   path.join(os.tmpdir(), "tf-chat-kit-packed-verification-"),
 );
@@ -254,45 +286,55 @@ try {
     mkdir(tauriStyleConsumerDirectory),
     mkdir(tfrobotfrontStyleConsumerDirectory),
   ]);
-  for (const packedPackage of packManifest.packages) {
-    const policyEntry = Object.entries(PACKAGE_POLICY).find(
-      ([, { name }]) => name === packedPackage.name,
-    );
-    if (!policyEntry) {
-      throw new Error(`unexpected packed package ${packedPackage.name}`);
+  if (packageSource === "packed") {
+    for (const packedPackage of packManifest.packages) {
+      const policyEntry = Object.entries(PACKAGE_POLICY).find(
+        ([, { name }]) => name === packedPackage.name,
+      );
+      if (!policyEntry) {
+        throw new Error(`unexpected packed package ${packedPackage.name}`);
+      }
+      const [directory] = policyEntry;
+      const extractionDirectory = path.join(extractionRoot, directory);
+      if (packedPackage.tarball === undefined) {
+        throw new Error(`missing packed tarball for ${packedPackage.name}`);
+      }
+      await run("tar", ["-xzf", packedPackage.tarball, "-C", extractionRoot]);
+      const extractedPackageDirectory = path.join(extractionRoot, "package");
+      const extractedFiles = await readExtractedFiles(
+        extractedPackageDirectory,
+      );
+      const sourceManifest = JSON.parse(
+        await readFile(
+          path.join(rootDirectory, "packages", directory, "package.json"),
+          "utf8",
+        ),
+      );
+      const packedManifest = JSON.parse(
+        await readFile(
+          path.join(extractedPackageDirectory, "package.json"),
+          "utf8",
+        ),
+      );
+      const errors = validatePackedArtifact({
+        packageName: packedPackage.name,
+        sourceManifest,
+        packedManifest,
+        declaredFiles: packedPackage.files,
+        extractedFiles,
+        expectedFileContents: { LICENSE: approvedLicense },
+      });
+      if (errors.length > 0) throw new Error(errors.join("\n"));
+      await rm(extractedPackageDirectory, { recursive: true, force: true });
+      await rm(extractionDirectory, { recursive: true, force: true });
     }
-    const [directory] = policyEntry;
-    const extractionDirectory = path.join(extractionRoot, directory);
-    await run("tar", ["-xzf", packedPackage.tarball, "-C", extractionRoot]);
-    const extractedPackageDirectory = path.join(extractionRoot, "package");
-    const extractedFiles = await readExtractedFiles(extractedPackageDirectory);
-    const sourceManifest = JSON.parse(
-      await readFile(
-        path.join(rootDirectory, "packages", directory, "package.json"),
-        "utf8",
-      ),
-    );
-    const packedManifest = JSON.parse(
-      await readFile(
-        path.join(extractedPackageDirectory, "package.json"),
-        "utf8",
-      ),
-    );
-    const errors = validatePackedArtifact({
-      packageName: packedPackage.name,
-      sourceManifest,
-      packedManifest,
-      declaredFiles: packedPackage.files,
-      extractedFiles,
-      expectedFileContents: { LICENSE: approvedLicense },
-    });
-    if (errors.length > 0) throw new Error(errors.join("\n"));
-    await rm(extractedPackageDirectory, { recursive: true, force: true });
-    await rm(extractionDirectory, { recursive: true, force: true });
   }
 
   const packageFiles = Object.fromEntries(
-    packManifest.packages.map(({ name, tarball }) => [name, `file:${tarball}`]),
+    packManifest.packages.map(({ name, version, tarball }) => [
+      name,
+      packageSource === "packed" ? `file:${tarball}` : version,
+    ]),
   );
   const consumerManifest = {
     name: "tf-chat-kit-package-smoke",
@@ -701,4 +743,8 @@ try {
   await rm(verificationRoot, { recursive: true, force: true });
 }
 
-console.log("Packed artifact validation passed.");
+console.log(
+  packageSource === "packed"
+    ? "Packed artifact validation passed."
+    : `Public Registry consumer validation passed for ${registryVersion}.`,
+);

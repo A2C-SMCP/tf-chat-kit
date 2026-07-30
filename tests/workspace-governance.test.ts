@@ -1258,7 +1258,7 @@ describe("workspace governance", () => {
     "true\nnpm publish",
     "true\r\nnpm publish",
   ])(
-    "rejects a release command before the TFCK-13 workflow is approved: %s",
+    "rejects a release command outside the protected workflow: %s",
     async (command) => {
       const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
       snapshot.rootManifest.scripts ??= {};
@@ -1266,7 +1266,7 @@ describe("workspace governance", () => {
 
       expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
         expect.stringContaining(
-          "must not publish before the TFCK-13 release workflow and npm identity are approved",
+          "must not publish outside the protected .github/workflows/release.yml workflow",
         ),
       );
     },
@@ -1305,7 +1305,7 @@ describe("workspace governance", () => {
 
       expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
         expect.stringContaining(
-          "scripts must exactly match the approved publish-disabled baseline",
+          "scripts must exactly match the approved local command baseline",
         ),
       );
     },
@@ -1324,13 +1324,13 @@ describe("workspace governance", () => {
 
       expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
         expect.stringContaining(
-          "scripts must exactly match the approved publish-disabled baseline",
+          "scripts must exactly match the approved local command baseline",
         ),
       );
     },
   );
 
-  it("rejects package-level publish commands before TFCK-13", async () => {
+  it("rejects package-level publish commands outside the protected workflow", async () => {
     const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
     const runtime = snapshot.packages.find(
       ({ directory }) => directory === "chat-runtime",
@@ -1339,12 +1339,12 @@ describe("workspace governance", () => {
 
     expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
       expect.stringContaining(
-        "@turingfocus/chat-runtime: script release must not publish before the TFCK-13 release workflow",
+        "@turingfocus/chat-runtime: script release must not publish outside the protected .github/workflows/release.yml workflow",
       ),
     );
   });
 
-  it("rejects package-level npm pub commands before TFCK-13", async () => {
+  it("rejects package-level npm pub commands outside the protected workflow", async () => {
     const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
     const runtime = snapshot.packages.find(
       ({ directory }) => directory === "chat-runtime",
@@ -1353,7 +1353,7 @@ describe("workspace governance", () => {
 
     expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
       expect.stringContaining(
-        "@turingfocus/chat-runtime: script release must not publish before the TFCK-13 release workflow",
+        "@turingfocus/chat-runtime: script release must not publish outside the protected .github/workflows/release.yml workflow",
       ),
     );
   });
@@ -1374,7 +1374,7 @@ describe("workspace governance", () => {
 
     expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
       expect.stringContaining(
-        "@turingfocus/chat-runtime: script release must not publish before the TFCK-13 release workflow",
+        "@turingfocus/chat-runtime: script release must not publish outside the protected .github/workflows/release.yml workflow",
       ),
     );
   });

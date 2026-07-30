@@ -94,6 +94,7 @@ const validateFixedGroupReleasePlan = (label, plan, errors) => {
  * @param {{
  *   changedFiles: readonly string[];
  *   consumedChangesetIds: readonly string[];
+ *   consumedChangesetDeletionIds: readonly string[];
  *   expectedConsumedChangesetIds: readonly string[];
  *   consumedReleasePlan: ReleasePlan;
  *   basePackageManifests: PackageManifestMap;
@@ -108,6 +109,7 @@ const validateFixedGroupReleasePlan = (label, plan, errors) => {
 const validateConsumedReleaseOutput = ({
   changedFiles,
   consumedChangesetIds,
+  consumedChangesetDeletionIds,
   expectedConsumedChangesetIds,
   consumedReleasePlan,
   basePackageManifests,
@@ -172,7 +174,7 @@ const validateConsumedReleaseOutput = ({
   const actualFiles = sortedUnique(changedFiles);
   const expectedFiles = sortedUnique([
     ...expectedReleaseOutputFiles,
-    ...consumedChangesetIds.map((id) => `.changeset/${id}.md`),
+    ...consumedChangesetDeletionIds.map((id) => `.changeset/${id}.md`),
   ]);
   if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {
     errors.push(
@@ -189,6 +191,7 @@ const validateConsumedReleaseOutput = ({
  *   addedChangesets: readonly ParsedChangeset[];
  *   pendingChangesets?: readonly ParsedChangeset[];
  *   consumedChangesets?: readonly ParsedChangeset[];
+ *   consumedChangesetDeletionIds?: readonly string[];
  *   expectedConsumedChangesetIds?: readonly string[];
  *   pendingReleasePlan?: ReleasePlan;
  *   consumedReleasePlan?: ReleasePlan;
@@ -207,6 +210,7 @@ export function validateChangesetCoverage({
   addedChangesets,
   pendingChangesets = [],
   consumedChangesets = [],
+  consumedChangesetDeletionIds,
   expectedConsumedChangesetIds = [],
   pendingReleasePlan = { releases: [] },
   consumedReleasePlan = { releases: [] },
@@ -265,6 +269,9 @@ export function validateChangesetCoverage({
       ...validateConsumedReleaseOutput({
         changedFiles,
         consumedChangesetIds: consumedChangesets.map(({ id }) => id),
+        consumedChangesetDeletionIds:
+          consumedChangesetDeletionIds ??
+          consumedChangesets.map(({ id }) => id),
         expectedConsumedChangesetIds,
         consumedReleasePlan,
         basePackageManifests,

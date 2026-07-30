@@ -8,7 +8,11 @@
 
 ## Epic 摘要
 
-从 TFRobotFront 当前 `chat-player` 中提取稳定的聊天语义和用户可观察行为，按照已接受的六包架构建设可复用 `tf-chat-kit`。先完成“会话加载 → 历史时间轴 → 实时更新 → 文本发送 → 运行状态 → 中断 → 事件 fallback”的最小纵向切片，再通过 TFRobotFront Feature Flag 和至少一个非 TFRobotFront 消费者验证公共边界，最终形成可发布、可回滚、可逐步替代旧实现的 V1。
+从 TFRobotFront 当前 `chat-player` 中提取稳定的聊天语义和用户可观察行为，按照已接受的六包架构建设可复用 `tf-chat-kit`。先完成“会话加载 → 历史时间轴 → 实时更新 → 文本发送 → 运行状态 → 中断 → 事件 fallback”的最小纵向切片，再通过仓库内 Front、Office 与 Tauri 风格版本化消费者验证公共边界，最终形成可独立发布、可回滚的 V1。
+
+> **2026-07-30 决策更新（ADR-009）**：本 Epic 只由 tf-chat-kit 仓库内交付物闭环。外部项目
+> 不作为代码、构建、发布或任务依赖；每个支持的外部接入形态必须在本仓库有近似的契约型 mock
+> 并通过测试。真实外部 E2E 可补充兼容证据，但不阻塞发布或 Epic 关闭。
 
 本 Epic 不以复制旧目录为目标。旧实现用于确认行为、服务端契约、交互和性能基线；其中的 Next.js、全局 Store、Socket 单例、宿主认证、平台管理和产品工作流不进入 Chat Kit 核心。
 
@@ -72,15 +76,16 @@ ADR：无需新增；本 Epic 落实 ADR-001～007。若实施中改变既有边
 Epic 完成时必须同时满足：
 
 1. 六个 workspace 包按固定依赖方向构建、测试和统一版本发布。
-2. TFRobotFront 能通过发布包完成会话加载、历史展示、实时订阅、文本发送、运行状态展示和中断。
+2. Front 风格版本化消费者能通过发布包完成会话加载、历史展示、实时订阅、文本发送、运行状态展示和中断。
 3. 同一进程内两个 ChatClient 使用不同会话或认证时无消息、连接和凭证串扰。
-4. 内存 Gateway 与真实 TFRobot Gateway 通过同一 Runtime 契约测试。
+4. 内存 Gateway 与受控 TFRobot Gateway 适配器通过同一 Runtime 契约测试。
 5. 重复事件可幂等归并；未知服务端事件可通过 fallback 展示且不破坏主链路。
 6. ChatClient 释放后不再发出更新，并释放订阅、连接和内部资源。
-7. 至少一个非 TFRobotFront 真实宿主完成加载、订阅、发送和释放验证；最小消费者只能作为更早的边界探针，不能替代宿主验收。
-8. TFRobotFront 的关键交互和性能达到经记录的旧实现基线；未达标时保持或回滚 Feature Flag。
-9. 发布记录包含统一版本、TFRobotServer 基线、宿主验证结果、已知限制、Release Owner 和回滚信息。
-10. 旧实现只有在已确认的功能/性能门禁全部通过并稳定一个发布周期后删除；双轨期不超过两个迭代。
+7. Front、Office 与 Tauri 风格消费者从版本化产物完成安装、构建、运行和释放验证。
+8. mock Feature Flag 的切换、失败关闭、回滚和连接互斥可重复验证。
+9. 发布记录包含统一版本、服务端兼容基线、仓库内消费者结果、可选真实 E2E 状态、已知限制、
+   Release Owner 和回滚信息。
+10. 产物扫描确认不存在宿主源码、源码路径依赖、开发者路径或凭据。
 
 ## 固定范围
 
@@ -94,7 +99,7 @@ Epic 完成时必须同时满足：
 - React Provider/hooks 和无样式接入层。
 - Ant Design 会话/时间轴/输入/运行状态 UI，以及 renderer registry、文本/通用事件 renderer 和 unknown fallback。
 - 内存 Gateway、fixtures、跨 Gateway 契约测试和最小消费者。
-- TFRobotFront Feature Flag 接入、真实服务端验证、兼容矩阵和 npm 公开发布流程。
+- Front 风格 Feature Flag mock、受控服务适配器、版本化多宿主兼容矩阵和 npm 公开发布流程。
 
 ### 必须拆分的宿主工作
 
@@ -303,25 +308,25 @@ TFRobotServer DTO / Socket event
 - Tool 兼容嗅探只存在于 Gateway 映射或兼容层，不成为标准 UI 主分发方式。
 - renderer 加载失败不影响时间轴、输入和中断。
 
-### TK-10：TFRobotFront Feature Flag 集成
+### TK-10：Front 风格 Feature Flag 兼容验证
 
-**结果**：首个生产宿主通过发布包验证，而不是源码复制。
+**结果**：在本仓库用版本化消费者验证首个 Web + React + Ant Design 接入拓扑，而不是源码复制。
 
 **验收**：
 
-- TFRobotFront 只通过 `@turingfocus/*` 的版本化开发验证包、npm prerelease 或正式包接入，不引用本仓库源码；验证通过后由 TK-12 进入正式发布流程。
-- 宿主注入 endpoint、SessionProvider、主题和必要回调；路由、平台选择与登录仍在宿主。
-- Feature Flag 支持旧/新路径切换和快速回滚，且不会产生双重 Socket 订阅。
-- 在真实 TFRobotServer 下验证历史、实时、发送、运行状态和中断。
-- 记录功能差异、性能对比、错误率和回滚判据。
+- 临时消费者只安装 `@turingfocus/*` 的版本化 tarball、npm prerelease 或正式包，不引用本仓库源码路径。
+- mock 宿主注入 endpoint、SessionProvider、主题和必要回调；不复制路由、平台选择与登录实现。
+- mock Feature Flag 支持旧/新路径切换和快速回滚，且不会产生双重 Socket 订阅。
+- 在 Memory 与受控 TFRobot Gateway 下验证历史、实时、发送、运行状态和中断。
+- 记录功能差异、错误路径、资源释放和回滚判据；真实 E2E 状态单独标注。
 
 ### TK-11：非 TFRobotFront 消费者验证
 
-**结果**：用真实第二宿主证明边界，而不是只把旧代码换包名。
+**结果**：用仓库内第二、第三种近似宿主拓扑证明边界，而不是只把旧代码换包名。
 
 **验收**：
 
-- 选择实际计划最明确的 Tauri 或 Office Add-in 完成真实接入；在宿主环境就绪前可以先建立不依赖 Next.js/Ant Design 的最小消费者，但它不能关闭本 Story。
+- 建立 Office 风格无 Ant Design 消费者和 Tauri 风格 React + Ant Design 消费者，并验证支持的 peer 下界。
 - 完成实例创建、SessionProvider 注入、加载、订阅、文本发送和释放。
 - 消费者不需要 TFRobotFront Store、Router、Socket 管理器或全局浏览器状态。
 - 将发现的宿主假设修回公共边界，不在消费者中复制 Gateway 协议。
@@ -338,17 +343,17 @@ TFRobotServer DTO / Socket event
 - 发布凭证只存在于受控 CI secret，不进入仓库或产物。
 - TFRobotFront 纵向切片通过前，产物只标记为开发验证用途。
 
-### TK-13：功能门禁、冻结与旧模块退场
+### TK-13：兼容门禁、mock 迁移与回滚验证
 
-**结果**：以证据完成迁移，不形成长期双实现。
+**结果**：用仓库内证据验证外部接入可能需要的切换、回滚和独立性约束。
 
 **验收**：
 
-- 对旧能力清单逐项给出“已迁移 / 留宿主 / 明确延期 / 产品批准移除”。
-- 最小纵向切片稳定后立即冻结旧模块：新聊天功能只进入 Chat Kit，旧模块仅修复严重或阻塞性问题。
-- 新路径达到确认的功能、性能、稳定性和安全门禁后切为默认；门禁失败时修复新实现或回滚默认值。
-- 默认路径稳定一个发布周期后删除旧实现和 Feature Flag；从冻结到删除的双轨期最多两个迭代。
-- 删除 Feature Flag 和旧实现前完成最终回归、依赖扫描和回滚演练。
+- 对旧能力清单逐项给出“Kit 已覆盖 / 留宿主 / 明确延期 / 不支持”，并关联公共 API 与测试。
+- mock 新旧路径切换必须失败关闭、无双重连接，并可恢复到新的 legacy mock。
+- 版本化多宿主回归、依赖/敏感信息扫描和发布级回滚全部可重复执行。
+- 产物包含宿主源码、源码路径依赖或凭据时直接失败。
+- 真实宿主冻结、默认切换和旧模块删除由对应项目自行管理，不属于本任务。
 
 ### TK-14：跨包最终集成回归
 
@@ -360,7 +365,7 @@ TFRobotServer DTO / Socket event
 - 同一套契约覆盖内存 Gateway 与真实 TFRobot Gateway，验证历史/实时归并、重复、乱序、unknown event、断线恢复和认证错误。
 - 覆盖多 ChatClient、多会话和不同 SessionProvider 的状态、命令、连接与凭证隔离，以及 dispose 后无通知和资源释放。
 - 覆盖 TFRobotFront Feature Flag 新旧路径切换、回滚生效和无双重 Socket 订阅。
-- 覆盖 TFRobotFront 与第二真实宿主的加载、订阅、发送、中断和释放关键链路。
+- 覆盖 Front、Office 与 Tauri 风格版本化消费者的加载、订阅、发送、中断和释放关键链路。
 - 核对 Epic 每条成功标准均有自动化测试或可复现验收记录，输出最终回归报告；本 Story 只提交测试、fixture 和报告。
 
 ## 依赖关系
@@ -379,10 +384,10 @@ TK-13                  -> TK-14
 
 - TK-01 与 TK-02 可以并行开始。
 - TK-04 必须在 TK-05/TK-06 主体实现前形成最小契约测试能力。
-- TK-09 不阻塞最小纵向切片，但进入 TFRobotFront 默认切换前必须满足经批准的 renderer 范围。
-- TK-11 必须依赖真实 TFRobot Gateway（TK-06）；如果选用 Tauri 的 Ant Design 成品 UI，还条件依赖 TK-08。
+- TK-09 不阻塞最小纵向切片，但进入 Front 风格完整消费者前必须满足经批准的 renderer 范围。
+- TK-11 使用受控 TFRobot Gateway 适配器（TK-06）；Tauri 风格 Ant Design 消费者还条件依赖 TK-08。
 - TK-10 使用 TK-01 产生的版本化开发验证包，避免与验证完成后的 TK-12 正式发布形成循环依赖。
-- TK-10、TK-11 属于宿主验证，不能用本仓库单元测试替代。
+- TK-10、TK-11 是仓库内版本化兼容测试，不能用绕过打包边界的普通单元测试替代。
 - TK-14 是所有工作唯一汇聚点，只接受测试、fixture 和回归报告，不混入生产功能修复；发现问题应回到对应 Story 修复后重新执行。
 
 ## 跨 Story 质量门禁
@@ -410,16 +415,16 @@ TK-13                  -> TK-14
 
 - 历史批量加载与实时增量不会强制重建整条时间轴。
 - 重 renderer 不进入首屏主 chunk，并仅在事件实际展示时加载。
-- TFRobotFront 切换默认前完成与 TK-02 基线同口径的性能对比。
+- 仓库内时间轴、增量渲染和资源释放测试不得低于 TK-02 已冻结的可复现基线口径。
 
 ## 上下游依赖
 
-| 依赖方                 | 需要确认/交付                                                             | 阻塞范围            |
-| ---------------------- | ------------------------------------------------------------------------- | ------------------- |
-| TFRobotServer          | 当前 REST/Socket 契约、认证字段、事件语义、错误码和测试环境               | TK-02、TK-06、TK-10 |
-| TFRobotFront           | Feature Flag、SessionProvider、主题/路由接入、旧基线与灰度计划            | TK-10、TK-13        |
-| Tauri 或 Office Add-in | 第二宿主选择、最小接入环境和 Host Integrator                              | TK-11、Epic 完成    |
-| GitHub/npm 发布        | `@turingfocus` scope 权限、Trusted Publishing/OIDC、provenance 和回滚机制 | TK-12               |
+| 依赖方                 | 需要确认/交付                                                             | 阻塞范围 |
+| ---------------------- | ------------------------------------------------------------------------- | -------- |
+| TFRobotServer          | 可选真实 E2E 与兼容反馈；稳定契约由仓库内 fixture/受控传输守护            | 不阻塞   |
+| TFRobotFront           | 可选真实 E2E 与兼容反馈；Front 风格 mock 由本仓库维护                     | 不阻塞   |
+| Tauri 或 Office Add-in | 可选真实 E2E 与兼容反馈；对应版本化消费者由本仓库维护                     | 不阻塞   |
+| GitHub/npm 发布        | `@turingfocus` scope 权限、Trusted Publishing/OIDC、provenance 和回滚机制 | TK-12    |
 
 服务端破坏性变化必须由 Core Maintainers、Gateway Maintainers 和 Server Contract Reviewer 共同评审。不得在 Kit 中用 DTO 泄漏或跨层补丁绕过上游不确定性。
 
@@ -441,16 +446,16 @@ TK-13                  -> TK-14
 
 1. 确认 package manager、Node/TypeScript、React/Ant Design peer 版本和构建工具。
 2. 确认 GitHub 仓库、`@turingfocus` scope public publish 权限和 GitHub Actions 发布身份。
-3. 冻结开始实现时的 TFRobotServer commit/version、测试环境和真实契约样本。
-4. 选择 TK-11 的真实第二宿主；默认优先已有接入计划的 Tauri 或 Office Add-in。
+3. 冻结开始实现时的 TFRobotServer 契约 revision 和去敏样本，转化为仓库内 fixture。
+4. 真实宿主 E2E 环境可用时记录运行 revision 与结果；不可用不阻塞仓库内工作。
 5. 用生产数据确认 Tool 类型、同 eventId 多状态、流式增量和 MCP transformed 数据的真实频率。
-6. 在 TK-02 中确认 TFRobotFront 默认切换前必须具备的 renderer、Ask User、附件和回放范围；附件未获纳入结论前不得预设公共接口。
+6. 在 TK-02 中确认 Front 风格兼容消费者必须具备的 renderer、Ask User、附件和回放范围；附件未获纳入结论前不得预设公共接口。
 
 ## Epic Definition of Done
 
 - TK-01～TK-13 的必需验收项完成，或有明确批准的范围调整和替代工作项。
-- 所有自动化质量门禁通过，真实 Gateway 和两个宿主验证证据可追溯。
+- 所有自动化质量门禁通过，受控 Gateway 和三个版本化宿主 mock 证据可追溯。
 - 没有 TFRobotFront、Office、Tauri 或第三方宿主源码依赖回流。
 - 没有未清理的全局实例、认证持久化、敏感日志或未经批准的轮询。
-- 兼容矩阵、发布记录、灰度结果、回滚方案和迁移状态完整。
+- 兼容矩阵、发布记录、可选真实 E2E 状态、回滚方案和 mock 迁移状态完整。
 - 独立代码审查无阻塞项；用户明确批准后方可提交、推送、发布或创建外部 Epic/PR。

@@ -36,6 +36,7 @@ import { PACKAGE_POLICY } from "./workspace-policy.mjs";
  *   rootManifest: ReleasePackageManifest;
  *   packageManifests: ReleasePackageManifestMap;
  *   changesets: readonly ReleaseChangeset[];
+ *   prereleaseState?: import("./changeset-pre-state.mjs").ChangesetPrereleaseState;
  * }} input
  */
 export async function assembleWorkspaceReleasePlan({
@@ -43,6 +44,7 @@ export async function assembleWorkspaceReleasePlan({
   rootManifest,
   packageManifests,
   changesets,
+  prereleaseState,
 }) {
   const packages = {
     tool: /** @type {const} */ ("pnpm"),
@@ -68,6 +70,6 @@ export async function assembleWorkspaceReleasePlan({
     })),
     packages,
     config,
-    undefined,
+    prereleaseState,
   );
 }

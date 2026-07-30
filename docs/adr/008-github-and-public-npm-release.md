@@ -4,6 +4,10 @@
 - 日期：2026-07-17
 - 替代：ADR-007 中的代码托管、许可证、Registry、发布身份与公开范围决策
 
+> **2026-07-30 决策更新**：发布兼容门禁由
+> [ADR-009](009-independent-compatibility-testing.md) 补充。仓库内版本化兼容 mock 是
+> `next`/`latest` 的硬门禁；真实宿主和真实服务 E2E 是非阻塞兼容证据。
+
 ## 背景
 
 ADR-007 以 CNB 私有 Registry 和专有许可证为前提建立统一版本治理。项目现已决定在
@@ -47,7 +51,8 @@ ADR-007 的以下决策继续有效：六包统一版本、SemVer 分类、初�
   `publishConfig.access` 与本 ADR 完全一致。
 - `pnpm check`、publint、Are the Types Wrong、tarball 内容检查和无认证消费者安装全部通过。
 - 仓库、Actions 日志、tarball、source map 和 provenance 中不包含 Token、Cookie 或开发者路径。
-- TFRobotFront 纵向切片通过前只允许明确标识的 prerelease，不把开发验证版本提升为 `latest`。
+- Front/Office/Tauri 风格版本化消费者、受控 TFRobot Gateway 契约和产物独立性扫描未全部通过
+  时，不允许发布 `next` 或 `latest`。
 - 发布失败时不得覆盖既有 npm 版本或移动既有 tag。先撤销失败批次新增的 dist-tag，再通过新
   patch 发布替代版本；失败 workflow run 必须关联一个发布事故 Issue，后续成功版本的 GitHub
   Release 链接该 Issue 并记录失败版本、已发布包、dist-tag 处置和替代版本。
@@ -67,4 +72,4 @@ ADR-007 的以下决策继续有效：六包统一版本、SemVer 分类、初�
 - 改名为 `@a2c-smcp/*`：已有 `turingfocus` npm organization 更贴近公共包品牌，无需再引入
   第二个 scope。
 - 保持源码私有但包公开：无法获得完整的公开 provenance 与源码审计链路。
-- 在 TFCK-42 直接执行正式首发：会绕过 TFCK-13 的宿主验证、兼容矩阵和回滚门禁。
+- 在 TFCK-42 直接执行正式首发：会绕过 TFCK-13 的仓库内兼容矩阵和回滚门禁。

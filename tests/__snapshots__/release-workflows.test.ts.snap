@@ -1,0 +1,332 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`TFCK-13 release workflows > keeps version PR creation separate from publication 1`] = `
+{
+  "concurrency": {
+    "cancel-in-progress": false,
+    "group": "tf-chat-kit-version-pr",
+  },
+  "jobs": {
+    "version": {
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "name": "Checkout complete history",
+          "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+          "with": {
+            "fetch-depth": 0,
+          },
+        },
+        {
+          "name": "Set up Node.js 24",
+          "uses": "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+          "with": {
+            "node-version-file": ".nvmrc",
+            "package-manager-cache": false,
+          },
+        },
+        {
+          "name": "Activate pinned pnpm",
+          "run": "corepack enable
+corepack prepare pnpm@10.34.5 --activate
+",
+        },
+        {
+          "name": "Install dependencies",
+          "run": "pnpm install --frozen-lockfile",
+        },
+        {
+          "env": {
+            "CHANGESET_BASE_REF": "HEAD^",
+          },
+          "name": "Revalidate main before versioning",
+          "run": "pnpm check",
+        },
+        {
+          "env": {
+            "GITHUB_TOKEN": "\${{ secrets.GITHUB_TOKEN }}",
+          },
+          "name": "Create or update the fixed-group version pull request",
+          "uses": "changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d",
+          "with": {
+            "commit": "chore: version tf-chat-kit packages",
+            "commitMode": "github-api",
+            "createGithubReleases": false,
+            "title": "chore: version tf-chat-kit packages",
+            "version": "node scripts/version-release.mjs",
+          },
+        },
+      ],
+      "timeout-minutes": 30,
+    },
+  },
+  "name": "tf-chat-kit version pull request",
+  "on": {
+    "push": {
+      "branches": [
+        "main",
+      ],
+    },
+  },
+  "permissions": {
+    "contents": "write",
+    "pull-requests": "write",
+  },
+}
+`;
+
+exports[`TFCK-13 release workflows > requires manual main deployment through the protected environment 1`] = `
+{
+  "concurrency": {
+    "cancel-in-progress": false,
+    "group": "tf-chat-kit-npm-production",
+  },
+  "jobs": {
+    "publish": {
+      "environment": {
+        "deployment": true,
+        "name": "npm-production",
+      },
+      "if": "github.ref == 'refs/heads/main'",
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "name": "Checkout the approved main commit",
+          "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+          "with": {
+            "fetch-depth": 0,
+            "ref": "\${{ github.sha }}",
+          },
+        },
+        {
+          "name": "Set up Node.js 24",
+          "uses": "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+          "with": {
+            "node-version-file": ".nvmrc",
+            "package-manager-cache": false,
+          },
+        },
+        {
+          "name": "Activate pinned pnpm",
+          "run": "corepack enable
+corepack prepare pnpm@10.34.5 --activate
+",
+        },
+        {
+          "name": "Install release dependencies",
+          "run": "pnpm install --frozen-lockfile",
+        },
+        {
+          "name": "Verify the pinned trusted-publishing npm CLI",
+          "run": "test "$(pnpm exec npm --version)" = "11.18.0"",
+        },
+        {
+          "env": {
+            "CHANGESET_BASE_REF": "HEAD^",
+          },
+          "name": "Run the complete release gate",
+          "run": "pnpm check",
+        },
+        {
+          "env": {
+            "EXPECTED_VERSION": "\${{ inputs.expected-version }}",
+            "RELEASE_CHANNEL": "\${{ inputs.channel }}",
+          },
+          "id": "manifest",
+          "name": "Build the immutable release manifest",
+          "run": "node scripts/create-release-manifest.mjs \\
+  --channel "\${RELEASE_CHANNEL}" \\
+  --commit "\${GITHUB_SHA}" \\
+  --run-url "\${GITHUB_SERVER_URL}/\${GITHUB_REPOSITORY}/actions/runs/\${GITHUB_RUN_ID}" \\
+  --expected-version "\${EXPECTED_VERSION}" \\
+  --output .artifacts/release/release-manifest.json
+version="$(node -p "JSON.parse(require('node:fs').readFileSync('.artifacts/release/release-manifest.json', 'utf8')).version")"
+echo "version=\${version}" >> "\${GITHUB_OUTPUT}"
+echo "tag=v\${version}" >> "\${GITHUB_OUTPUT}"
+",
+        },
+        {
+          "env": {
+            "GH_TOKEN": "\${{ secrets.GITHUB_TOKEN }}",
+            "RELEASE_TAG": "\${{ steps.manifest.outputs.tag }}",
+          },
+          "name": "Create or reconcile the immutable source tag",
+          "run": "existing="$(gh api "repos/\${GITHUB_REPOSITORY}/git/ref/tags/\${RELEASE_TAG}" --jq '.object.sha' 2>/dev/null || true)"
+if [ -n "\${existing}" ]; then
+  test "\${existing}" = "\${GITHUB_SHA}"
+else
+  gh api --method POST "repos/\${GITHUB_REPOSITORY}/git/refs" \\
+    -f "ref=refs/tags/\${RELEASE_TAG}" \\
+    -f "sha=\${GITHUB_SHA}"
+fi
+",
+        },
+        {
+          "env": {
+            "NODE_AUTH_TOKEN": "\${{ secrets.NPM_BOOTSTRAP_TOKEN }}",
+          },
+          "if": "inputs.auth-mode == 'bootstrap-token'",
+          "name": "Configure the one-time bootstrap npm credential",
+          "run": "test -n "\${NODE_AUTH_TOKEN}"
+printf '%s\\n' '//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}' > "\${RUNNER_TEMP}/tf-chat-kit-bootstrap.npmrc"
+",
+        },
+        {
+          "env": {
+            "NODE_AUTH_TOKEN": "\${{ secrets.NPM_BOOTSTRAP_TOKEN }}",
+            "NPM_CONFIG_USERCONFIG": "\${{ runner.temp }}/tf-chat-kit-bootstrap.npmrc",
+          },
+          "if": "inputs.auth-mode == 'bootstrap-token'",
+          "name": "Publish with the one-time bootstrap credential",
+          "run": "node scripts/publish-release.mjs \\
+  --manifest .artifacts/release/release-manifest.json \\
+  --progress .artifacts/release/publish-progress.json \\
+  --auth-mode bootstrap-token
+",
+        },
+        {
+          "if": "inputs.auth-mode == 'oidc'",
+          "name": "Publish with npm Trusted Publishing",
+          "run": "node scripts/publish-release.mjs \\
+  --manifest .artifacts/release/release-manifest.json \\
+  --progress .artifacts/release/publish-progress.json \\
+  --auth-mode oidc
+",
+        },
+        {
+          "name": "Verify unauthenticated Registry consumers",
+          "run": "node scripts/verify-packed-artifacts.mjs --source registry --version "\${{ steps.manifest.outputs.version }}"",
+        },
+        {
+          "name": "Render release notes",
+          "run": "node scripts/render-release-report.mjs \\
+  --kind release \\
+  --manifest .artifacts/release/release-manifest.json \\
+  --output .artifacts/release/release-notes.md
+",
+        },
+        {
+          "env": {
+            "GH_TOKEN": "\${{ secrets.GITHUB_TOKEN }}",
+            "RELEASE_TAG": "\${{ steps.manifest.outputs.tag }}",
+          },
+          "name": "Create or reconcile the GitHub Release after Registry verification",
+          "run": "if gh release view "\${RELEASE_TAG}" --repo "\${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+  reconcile_dir="\${RUNNER_TEMP}/tf-chat-kit-release-reconcile"
+  mkdir -p "\${reconcile_dir}"
+  for asset in .artifacts/release/release-manifest.json .artifacts/packages/*.tgz; do
+    asset_name="$(basename "\${asset}")"
+    if gh release view "\${RELEASE_TAG}" \\
+      --repo "\${GITHUB_REPOSITORY}" \\
+      --json assets \\
+      --jq '.assets[].name' | grep -Fxq "\${asset_name}"; then
+      gh release download "\${RELEASE_TAG}" \\
+        --repo "\${GITHUB_REPOSITORY}" \\
+        --pattern "\${asset_name}" \\
+        --dir "\${reconcile_dir}"
+      if [ "\${asset_name}" = "release-manifest.json" ]; then
+        node scripts/reconcile-release-manifest.mjs \\
+          --expected "\${asset}" \\
+          --existing "\${reconcile_dir}/\${asset_name}"
+      else
+        cmp "\${asset}" "\${reconcile_dir}/\${asset_name}"
+      fi
+    else
+      gh release upload "\${RELEASE_TAG}" \\
+        --repo "\${GITHUB_REPOSITORY}" \\
+        "\${asset}"
+    fi
+  done
+else
+  gh release create "\${RELEASE_TAG}" \\
+    --repo "\${GITHUB_REPOSITORY}" \\
+    --verify-tag \\
+    --title "tf-chat-kit \${RELEASE_TAG}" \\
+    --notes-file .artifacts/release/release-notes.md \\
+    .artifacts/release/release-manifest.json \\
+    .artifacts/packages/*.tgz
+fi
+",
+        },
+        {
+          "if": "failure() && steps.manifest.outcome == 'success'",
+          "name": "Render a failed-release incident",
+          "run": "if [ ! -f .artifacts/release/publish-progress.json ]; then
+  printf '%s\\n' '{"states":{},"error":"workflow failed before publication progress was recorded"}' > .artifacts/release/publish-progress.json
+fi
+node scripts/render-release-report.mjs \\
+  --kind incident \\
+  --manifest .artifacts/release/release-manifest.json \\
+  --progress .artifacts/release/publish-progress.json \\
+  --output .artifacts/release/release-incident.md
+",
+        },
+        {
+          "env": {
+            "GH_TOKEN": "\${{ secrets.GITHUB_TOKEN }}",
+            "RELEASE_TAG": "\${{ steps.manifest.outputs.tag }}",
+          },
+          "if": "failure() && steps.manifest.outcome == 'success'",
+          "name": "Create or update the Release Incident",
+          "run": "issue_number="$(gh issue list \\
+  --repo "\${GITHUB_REPOSITORY}" \\
+  --state all \\
+  --search "\\"[Release incident] \${RELEASE_TAG}\\" in:title" \\
+  --json number \\
+  --jq '.[0].number // empty' \\
+  --limit 1)"
+if [ -n "\${issue_number}" ]; then
+  gh issue comment "\${issue_number}" \\
+    --repo "\${GITHUB_REPOSITORY}" \\
+    --body-file .artifacts/release/release-incident.md
+else
+  gh issue create \\
+    --repo "\${GITHUB_REPOSITORY}" \\
+    --title "[Release incident] \${RELEASE_TAG}" \\
+    --body-file .artifacts/release/release-incident.md
+fi
+",
+        },
+      ],
+      "timeout-minutes": 60,
+    },
+  },
+  "name": "tf-chat-kit protected npm release",
+  "on": {
+    "workflow_dispatch": {
+      "inputs": {
+        "auth-mode": {
+          "default": "oidc",
+          "description": "Use bootstrap-token only for the initial package creation",
+          "options": [
+            "oidc",
+            "bootstrap-token",
+          ],
+          "required": true,
+          "type": "choice",
+        },
+        "channel": {
+          "default": "next",
+          "description": "npm dist-tag; both channels require repository-owned compatibility evidence",
+          "options": [
+            "next",
+            "latest",
+          ],
+          "required": true,
+          "type": "choice",
+        },
+        "expected-version": {
+          "description": "Exact unified 0.x package version on main",
+          "required": true,
+          "type": "string",
+        },
+      },
+    },
+  },
+  "permissions": {
+    "contents": "write",
+    "id-token": "write",
+    "issues": "write",
+  },
+}
+`;
