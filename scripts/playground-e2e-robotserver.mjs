@@ -4,9 +4,10 @@ import { Server as SocketServer } from "socket.io";
 
 const HOST = "127.0.0.1";
 const PORT = 4310;
-const PLAYGROUND_ORIGIN = "http://localhost:3000";
+const PLAYGROUND_ORIGIN =
+  process.env["TF_CHAT_PLAYGROUND_ORIGIN"] ?? "http://localhost:3000";
 /** @typedef {{ conversationId: number; description: null; title: string; updateTimestamp: number }} ConversationDto */
-/** @typedef {{ activeSockets: number; adminRequests: number; bearerRequests: number; contentTypeRequests: number; corsPreflights: number; interrupts: number; invalidOrigins: number; joins: number; rejectedRest: { missing: number; wrong: number }; rejectedSockets: { missing: number; wrong: number }; socketConnections: number; socketDisconnections: number }} Observations */
+/** @typedef {{ activeSockets: number; adminRequests: number; bearerRequests: number; contentTypeRequests: number; corsPreflights: number; interrupts: number; invalidOrigins: number; joins: number; passwordLogins: number; rejectedRest: { missing: number; wrong: number }; rejectedSockets: { missing: number; wrong: number }; routedRequests: number; socketConnections: number; socketDisconnections: number }} Observations */
 /** @type {Map<string, ConversationDto>} */
 const conversations = new Map();
 /** @type {Map<string, Array<Record<string, unknown>>>} */
@@ -24,8 +25,10 @@ let observations = {
   interrupts: 0,
   invalidOrigins: 0,
   joins: 0,
+  passwordLogins: 0,
   rejectedRest: { missing: 0, wrong: 0 },
   rejectedSockets: { missing: 0, wrong: 0 },
+  routedRequests: 0,
   socketConnections: 0,
   socketDisconnections: 0,
 };
@@ -54,8 +57,10 @@ const reset = () => {
     interrupts: 0,
     invalidOrigins: 0,
     joins: 0,
+    passwordLogins: 0,
     rejectedRest: { missing: 0, wrong: 0 },
     rejectedSockets: { missing: 0, wrong: 0 },
+    routedRequests: 0,
     socketConnections: 0,
     socketDisconnections: 0,
   };
@@ -142,9 +147,31 @@ const httpServer = createServer(async (request, response) => {
     response.end();
     return;
   }
-  if (request.headers.origin !== PLAYGROUND_ORIGIN) {
+  const hasRoutingHeaders =
+    request.headers["x-tf-namespace"] === "e2e-ns" &&
+    request.headers["x-tf-robotid"] === "e2e-robot" &&
+    request.headers["x-tf-robottype"] === "tfrobot";
+  if (request.headers.origin !== PLAYGROUND_ORIGIN && !hasRoutingHeaders) {
     observations.invalidOrigins += 1;
     error(response, 403, "Origin rejected");
+    return;
+  }
+  if (url.pathname === "/v1/auth/login" && request.method === "POST") {
+    if (!hasRoutingHeaders) {
+      error(response, 422, "Robot routing headers are required");
+      return;
+    }
+    const body = await readBody(request);
+    if (body["password"] !== "password-good") {
+      error(response, 401, "Wrong administrator password");
+      return;
+    }
+    observations.passwordLogins += 1;
+    observations.routedRequests += 1;
+    envelope(response, {
+      accessToken: "admin-good",
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+    });
     return;
   }
   const auth = authentication(request);
@@ -156,6 +183,11 @@ const httpServer = createServer(async (request, response) => {
     );
     return;
   }
+  if (!hasRoutingHeaders) {
+    error(response, 422, "Robot routing headers are required");
+    return;
+  }
+  observations.routedRequests += 1;
   if (request.headers["content-type"] === "application/json") {
     observations.contentTypeRequests += 1;
   }
@@ -207,8 +239,8 @@ const httpServer = createServer(async (request, response) => {
   if (request.method === "POST" && url.pathname.endsWith("/messages")) {
     const body = await readBody(request);
     if (
-      body["creator"]?.uid !== "developer-e2e" ||
-      body["creator"]?.name !== "Playwright developer"
+      body["creator"]?.uid !== "current-user" ||
+      body["creator"]?.name !== "CurrentUser"
     ) {
       error(response, 422, "Creator rejected");
       return;
@@ -271,7 +303,7 @@ const httpServer = createServer(async (request, response) => {
 
 const io = new SocketServer(httpServer, {
   cors: { methods: ["GET", "POST"], origin: PLAYGROUND_ORIGIN },
-  path: "/socket.io",
+  path: "/c/tfrobot/e2e-ns/e2e-robot/socket.io",
   transports: ["websocket"],
 });
 const chat = io.of("/chat");

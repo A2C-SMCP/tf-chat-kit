@@ -1,4 +1,8 @@
-import type { ChatError, ChatSnapshot } from "@turingfocus/chat-protocol";
+import type {
+  ChatError,
+  ChatSnapshot,
+  Conversation,
+} from "@turingfocus/chat-protocol";
 import { createChatClient, type ChatClient } from "@turingfocus/chat-runtime";
 import {
   createTFRobotChatGateway,
@@ -6,42 +10,61 @@ import {
   type TFRobotSocketFactory,
 } from "@turingfocus/chat-gateway-tfrobot";
 
-import type {
-  PlaygroundSession,
-  PlaygroundState,
-  RobotServerPlaygroundSession as RobotServerPlaygroundSessionContract,
+import {
+  orderConversationsByUpdatedAt,
+  type PlaygroundSession,
+  type PlaygroundState,
+  type RobotServerPlaygroundSession as RobotServerPlaygroundSessionContract,
 } from "./playground-session.js";
+import { parseTFRobotTarget } from "./robotserver-target.js";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_CREDENTIAL_CHARACTERS = 8_192;
 
 export type RobotServerAuthKind = "admin" | "bearer";
+export type RobotServerConnectionKind = "direct" | "standard";
 
-export interface RobotServerConnectionDraft {
-  readonly authKind: RobotServerAuthKind;
-  readonly credential: string;
+export interface RobotServerConnectionTargetDraft {
+  readonly allowedServerOrigins: readonly string[];
+  readonly connectionKind: RobotServerConnectionKind;
   readonly creatorName: string;
   readonly creatorUid: string;
   readonly httpBaseUrl: string;
+  readonly namespace: string;
   readonly platformId: string;
+  readonly proxyOrigin: string;
+  readonly robotId: string;
+  readonly serverOrigin: string;
   readonly socketNamespaceUrl: string;
   readonly socketPath: string;
 }
 
-export interface RobotServerConnectionConfig {
+export interface RobotServerConnectionDraft extends RobotServerConnectionTargetDraft {
+  readonly authKind: RobotServerAuthKind;
+  readonly credential: string;
+}
+
+export interface RobotServerConnectionTargetConfig {
   readonly creator: {
     readonly name: string;
     readonly uid: string;
   };
-  readonly credential: TFRobotSession;
   readonly httpBaseUrl: string;
-  readonly platformId: string;
+  readonly platformId?: string | undefined;
   readonly socketNamespaceUrl: string;
   readonly socketPath: string;
 }
 
+export interface RobotServerConnectionConfig extends RobotServerConnectionTargetConfig {
+  readonly credential: TFRobotSession;
+}
+
 export type RobotServerConnectionValidation =
   | { readonly ok: true; readonly value: RobotServerConnectionConfig }
+  | { readonly ok: false; readonly message: string };
+
+export type RobotServerTargetValidation =
+  | { readonly ok: true; readonly value: RobotServerConnectionTargetConfig }
   | { readonly ok: false; readonly message: string };
 
 export interface RobotServerSessionDependencies {
@@ -71,74 +94,112 @@ const parseEndpoint = (
   }
 };
 
-export const validateRobotServerConnection = (
-  draft: RobotServerConnectionDraft,
-): RobotServerConnectionValidation => {
-  const httpBaseUrl = parseEndpoint(draft.httpBaseUrl, ["http:", "https:"]);
-  if (httpBaseUrl === undefined) {
-    return {
-      ok: false,
-      message:
-        "Enter an HTTP or HTTPS RobotServer URL without credentials, query parameters or fragments.",
-    };
-  }
-  const socketNamespaceUrl = parseEndpoint(draft.socketNamespaceUrl, [
-    "http:",
-    "https:",
-    "ws:",
-    "wss:",
-  ]);
-  if (socketNamespaceUrl === undefined) {
-    return {
-      ok: false,
-      message:
-        "Enter a valid Socket namespace URL without credentials, query parameters or fragments.",
-    };
-  }
-  const socketPath = draft.socketPath.trim();
-  if (!socketPath.startsWith("/") || /\s/u.test(socketPath)) {
-    return {
-      ok: false,
-      message: "Socket path must start with / and contain no whitespace.",
-    };
+export const validateRobotServerTarget = (
+  draft: RobotServerConnectionTargetDraft,
+): RobotServerTargetValidation => {
+  let httpBaseUrl: string;
+  let socketNamespaceUrl: string;
+  let socketPath: string;
+  if (draft.connectionKind === "standard") {
+    const target = parseTFRobotTarget(
+      {
+        namespace: draft.namespace,
+        robotId: draft.robotId,
+        serverOrigin: draft.serverOrigin,
+      },
+      draft.proxyOrigin,
+      draft.allowedServerOrigins,
+    );
+    if (!target.ok) return target;
+    ({ httpBaseUrl, socketNamespaceUrl, socketPath } = target.value);
+  } else {
+    const parsedHttpBaseUrl = parseEndpoint(draft.httpBaseUrl, [
+      "http:",
+      "https:",
+    ]);
+    if (parsedHttpBaseUrl === undefined) {
+      return {
+        ok: false,
+        message:
+          "请输入不包含账号、查询参数或片段的 HTTP/HTTPS RobotServer 地址。",
+      };
+    }
+    const parsedSocketNamespaceUrl = parseEndpoint(draft.socketNamespaceUrl, [
+      "http:",
+      "https:",
+      "ws:",
+      "wss:",
+    ]);
+    if (parsedSocketNamespaceUrl === undefined) {
+      return {
+        ok: false,
+        message:
+          "请输入不包含账号、查询参数或片段的有效 Socket Namespace 地址。",
+      };
+    }
+    socketPath = draft.socketPath.trim();
+    if (!socketPath.startsWith("/") || /\s/u.test(socketPath)) {
+      return {
+        ok: false,
+        message: "Socket Path 必须以 / 开头，且不能包含空白字符。",
+      };
+    }
+    httpBaseUrl = parsedHttpBaseUrl;
+    socketNamespaceUrl = parsedSocketNamespaceUrl;
   }
   const platformId = draft.platformId.trim();
-  const creatorName = draft.creatorName.trim();
-  const creatorUid = draft.creatorUid.trim();
-  if (
-    platformId.length === 0 ||
-    creatorName.length === 0 ||
-    creatorUid.length === 0
-  ) {
-    return {
-      ok: false,
-      message: "platformId and creator ID/name are required.",
-    };
-  }
-  const credential = draft.credential.trim();
+  const creatorName = draft.creatorName.trim() || "CurrentUser";
+  const creatorUid = draft.creatorUid.trim() || "current-user";
+  return {
+    ok: true,
+    value: {
+      creator: { name: creatorName, uid: creatorUid },
+      httpBaseUrl,
+      ...(platformId.length > 0 ? { platformId } : {}),
+      socketNamespaceUrl,
+      socketPath,
+    },
+  };
+};
+
+export const createRobotServerConnectionConfig = (
+  target: RobotServerConnectionTargetConfig,
+  authKind: RobotServerAuthKind,
+  credentialValue: string,
+): RobotServerConnectionValidation => {
+  const credential = credentialValue.trim();
   if (
     credential.length === 0 ||
     credential.length > MAX_CREDENTIAL_CHARACTERS
   ) {
     return {
       ok: false,
-      message: "Enter a non-empty credential of at most 8192 characters.",
+      message: "请输入不超过 8192 个字符的有效凭据。",
     };
   }
   return {
     ok: true,
     value: {
-      creator: { name: creatorName, uid: creatorUid },
+      ...target,
       credential:
-        draft.authKind === "bearer"
+        authKind === "bearer"
           ? { kind: "bearer", token: credential }
           : { kind: "admin", adminKey: credential },
-      httpBaseUrl,
-      platformId,
-      socketNamespaceUrl,
-      socketPath,
     },
   };
+};
+
+export const validateRobotServerConnection = (
+  draft: RobotServerConnectionDraft,
+): RobotServerConnectionValidation => {
+  const target = validateRobotServerTarget(draft);
+  return target.ok
+    ? createRobotServerConnectionConfig(
+        target.value,
+        draft.authKind,
+        draft.credential,
+      )
+    : target;
 };
 
 export const robotServerTestConversationTitle = (now: number): string =>
@@ -147,19 +208,19 @@ export const robotServerTestConversationTitle = (now: number): string =>
 const safeErrorDescription = (error: ChatError): string => {
   switch (error.code) {
     case "authentication":
-      return "RobotServer rejected the credential (401).";
+      return "RobotServer 拒绝了当前凭据（401）。";
     case "authorization":
-      return "The credential cannot access this RobotServer resource (403).";
+      return "当前凭据无权访问该 RobotServer 资源（403）。";
     case "network":
-      return "RobotServer could not be reached. Check the URL, CORS and Socket settings.";
+      return "无法连接 RobotServer，请检查服务地址、跨域与 Socket 配置。";
     case "validation":
-      return "RobotServer returned data that is incompatible with the Chat Kit protocol.";
+      return "RobotServer 返回的数据不符合 Chat Kit 协议。";
     case "timeout":
-      return "RobotServer did not respond before the local request deadline.";
+      return "RobotServer 未在本地请求期限内响应。";
     case "server":
-      return "RobotServer reported an internal chat failure.";
+      return "RobotServer 发生内部聊天错误。";
     default:
-      return `RobotServer operation failed (${error.code}).`;
+      return `RobotServer 操作失败（${error.code}）。`;
   }
 };
 
@@ -174,7 +235,7 @@ const stateForError = (
         kind: "disconnected",
         description: safeErrorDescription(error),
       },
-      status: "RobotServer network or CORS connection failed.",
+      status: "RobotServer 网络或跨域连接失败。",
     };
   }
   if (error.code === "authentication" || error.code === "authorization") {
@@ -186,8 +247,8 @@ const stateForError = (
       },
       status:
         error.code === "authentication"
-          ? "RobotServer authentication failed."
-          : "RobotServer authorization failed.",
+          ? "RobotServer 鉴权失败。"
+          : "RobotServer 授权失败。",
     };
   }
   return {
@@ -196,7 +257,7 @@ const stateForError = (
       kind: "error",
       description: safeErrorDescription(error),
     },
-    status: `RobotServer ${error.code} error.`,
+    status: `RobotServer 发生 ${error.code} 错误。`,
   };
 };
 
@@ -206,6 +267,13 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
   #disposed = false;
   #intentRevision = 0;
   #lastClientSnapshot: ChatSnapshot | null = null;
+  #latestListRequest:
+    | {
+        readonly promise: Promise<readonly Conversation[] | undefined>;
+        readonly revision: number;
+      }
+    | undefined;
+  #listRevision = 0;
   readonly #listeners = new Set<() => void>();
   readonly #now: () => number;
   #state: PlaygroundState = {
@@ -213,7 +281,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
     contentState: { kind: "loading" },
     conversations: [],
     listLoading: true,
-    status: "Connecting to RobotServer…",
+    status: "正在连接 RobotServer…",
   };
   readonly #unsubscribeClient: () => void;
 
@@ -228,7 +296,9 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
       messageCreatorProvider: () => config.creator,
       now: this.#now,
       onDiagnostic: (error) => this.#handleDiagnostic(error),
-      platformId: config.platformId,
+      ...(config.platformId === undefined
+        ? {}
+        : { platformId: config.platformId }),
       sessionProvider: {
         getSession: () => config.credential,
       },
@@ -256,7 +326,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
         this.#setState({
           connected: true,
           contentState: { kind: "ready" },
-          status: "RobotServer resumed with a valid realtime update.",
+          status: "RobotServer 已通过有效实时更新恢复连接。",
         });
       } else {
         this.#emit();
@@ -285,70 +355,106 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
     await this.#refreshAndSelect(this.#beginIntent());
   }
 
+  async loadConversations(): Promise<void> {
+    await this.#beginListRequest().promise;
+  }
+
   async #refreshAndSelect(
     revision: number,
     preferredConversationId?: string,
   ): Promise<void> {
-    await this.#refresh(revision);
-    if (!this.#isCurrentIntent(revision)) return;
-    const selected = this.#state.selectedConversationId;
-    const target =
-      this.#state.conversations.find(
-        ({ id }) => id === preferredConversationId,
-      ) ??
-      this.#state.conversations.find(({ id }) => id === selected) ??
-      this.#state.conversations[0];
-    if (target !== undefined) {
-      await this.#selectConversation(target.id, revision);
-    }
-  }
-
-  async #refresh(revision: number): Promise<void> {
     if (!this.#isCurrentIntent(revision)) return;
     this.#setState({
       contentState:
         this.client.getSnapshot() === null
           ? { kind: "loading" }
           : this.#state.contentState,
-      listError: undefined,
-      listLoading: true,
       pendingConversationId: undefined,
-      status: "Querying RobotServer conversations…",
     });
-    const result = await this.client.listConversations(this.#requestOptions());
-    if (!this.#isCurrentIntent(revision)) return;
-    if (!result.ok) {
-      this.#setState({
-        ...stateForError(result.error, this.#state.connected),
-        listError: safeErrorDescription(result.error),
-        listLoading: false,
-      });
-      return;
+    let listRequest = this.#beginListRequest();
+    let conversations = await listRequest.promise;
+    while (true) {
+      const latestListRequest = this.#latestListRequest;
+      if (
+        latestListRequest === undefined ||
+        latestListRequest.revision <= listRequest.revision
+      ) {
+        break;
+      }
+      listRequest = latestListRequest;
+      conversations = await listRequest.promise;
     }
-    this.#setState({
-      connected: true,
-      conversations: result.value.conversations,
-      listError: undefined,
-      listLoading: false,
-      status: `Connected; loaded ${result.value.conversations.length} conversation(s).`,
-    });
+    if (!this.#isCurrentIntent(revision)) return;
+    const selected = this.#state.selectedConversationId;
+    const target =
+      conversations?.find(({ id }) => id === preferredConversationId) ??
+      conversations?.find(({ id }) => id === selected) ??
+      conversations?.[0];
+    if (target !== undefined) {
+      await this.#selectConversation(target.id, revision);
+    }
   }
 
-  async createConversation(): Promise<void> {
+  async #refresh(
+    revision: number,
+  ): Promise<readonly Conversation[] | undefined> {
+    if (!this.#isCurrentListRequest(revision)) return undefined;
+    this.#setState({
+      listError: undefined,
+      listLoading: true,
+      status: "正在查询 RobotServer 会话…",
+    });
+    const result = await this.client.listConversations(this.#requestOptions());
+    if (this.#disposed) return undefined;
+    if (!result.ok) {
+      if (this.#isCurrentListRequest(revision)) {
+        const errorPatch =
+          this.client.getSnapshot() === null
+            ? stateForError(result.error, this.#state.connected)
+            : {
+                connected: this.#state.connected,
+                contentState: this.#state.contentState,
+                status: "RobotServer 会话列表加载失败。",
+              };
+        this.#setState({
+          ...errorPatch,
+          listError: safeErrorDescription(result.error),
+          listLoading: false,
+        });
+      }
+      return undefined;
+    }
+    const conversations = orderConversationsByUpdatedAt(
+      result.value.conversations,
+    );
+    if (this.#isCurrentListRequest(revision)) {
+      this.#setState({
+        connected: true,
+        conversations,
+        listError: undefined,
+        listLoading: false,
+        status: `连接成功，已加载 ${conversations.length} 个会话。`,
+      });
+    }
+    return conversations;
+  }
+
+  async createConversation(): Promise<boolean> {
     const revision = this.#beginIntent();
-    if (!this.#isCurrentIntent(revision)) return;
+    if (!this.#isCurrentIntent(revision)) return false;
     const title = robotServerTestConversationTitle(this.#now());
-    this.#setState({ status: "Creating a retained Playground test session…" });
+    this.#setState({ status: "正在创建保留的 Playground 测试会话…" });
     const result = await this.client.createConversation({
       title,
       ...this.#requestOptions(),
     });
-    if (!this.#isCurrentIntent(revision)) return;
+    if (!this.#isCurrentIntent(revision)) return false;
     if (!result.ok) {
       this.#handleError(result.error);
-      return;
+      return false;
     }
     await this.#refreshAndSelect(revision, result.value.id);
+    return true;
   }
 
   async selectConversation(conversationId: string): Promise<void> {
@@ -363,7 +469,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
     this.#setState({
       contentState: { kind: "loading" },
       pendingConversationId: conversationId,
-      status: "Loading RobotServer conversation and Socket subscription…",
+      status: "正在加载 RobotServer 会话并建立 Socket 订阅…",
     });
     const result = await this.client.loadConversation({
       conversationId,
@@ -382,7 +488,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
       contentState: { kind: "ready" },
       pendingConversationId: undefined,
       selectedConversationId: conversationId,
-      status: `Viewing ${result.value.conversation.title}.`,
+      status: `正在查看「${result.value.conversation.title}」。`,
     });
   }
 
@@ -396,7 +502,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
       previousCursor === undefined
     ) {
       this.#setState({
-        status: "No earlier RobotServer history page is available.",
+        status: "没有更早的 RobotServer 历史记录。",
       });
       return;
     }
@@ -407,8 +513,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
     });
     if (!this.#isCurrentIntent(revision)) return;
     if (!result.ok) this.#handleError(result.error);
-    else
-      this.#setState({ status: "Loaded an earlier RobotServer history page." });
+    else this.#setState({ status: "已加载更早的 RobotServer 历史记录。" });
   }
 
   async interrupt(): Promise<void> {
@@ -418,7 +523,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
       snapshot?.run === null ||
       snapshot?.run === undefined
     ) {
-      this.#setState({ status: "No active RobotServer run to interrupt." });
+      this.#setState({ status: "当前没有可中断的 RobotServer 任务。" });
       return;
     }
     const result = await this.client.interrupt({
@@ -427,7 +532,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
       ...this.#requestOptions(),
     });
     if (!result.ok) this.#handleError(result.error);
-    else this.#setState({ status: "RobotServer interrupt request accepted." });
+    else this.#setState({ status: "RobotServer 已接受中断请求。" });
   }
 
   async reconnect(): Promise<void> {
@@ -440,6 +545,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
     if (this.#disposed) return;
     this.#disposed = true;
     this.#intentRevision += 1;
+    this.#listRevision += 1;
     this.#unsubscribeClient();
     this.#listeners.clear();
     await this.client.dispose({ deadlineAt: this.#now() + REQUEST_TIMEOUT_MS });
@@ -453,7 +559,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
   #handleDiagnostic(error: ChatError): void {
     if (this.#disposed) return;
     this.#setState({
-      status: `RobotServer reported a sanitized ${error.code} diagnostic.`,
+      status: `RobotServer 上报了已脱敏的 ${error.code} 诊断信息。`,
     });
   }
 
@@ -462,8 +568,25 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
     return this.#intentRevision;
   }
 
+  #beginListRequest(): {
+    readonly promise: Promise<readonly Conversation[] | undefined>;
+    readonly revision: number;
+  } {
+    this.#listRevision += 1;
+    const request = {
+      promise: this.#refresh(this.#listRevision),
+      revision: this.#listRevision,
+    };
+    this.#latestListRequest = request;
+    return request;
+  }
+
   #isCurrentIntent(revision: number): boolean {
     return !this.#disposed && revision === this.#intentRevision;
+  }
+
+  #isCurrentListRequest(revision: number): boolean {
+    return !this.#disposed && revision === this.#listRevision;
   }
 
   #requestOptions(): { readonly deadlineAt: number } {

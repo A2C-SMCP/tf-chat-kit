@@ -15,6 +15,23 @@ import type { ChatContentState } from "@turingfocus/chat-ui-antd";
 
 const requestOptions = () => ({ deadlineAt: Date.now() + 5_000 });
 
+export const orderConversationsByUpdatedAt = (
+  conversations: readonly Conversation[],
+): readonly Conversation[] =>
+  conversations
+    .map((conversation, index) => ({ conversation, index }))
+    .sort((left, right) => {
+      const leftUpdatedAt = left.conversation.updatedAt;
+      const rightUpdatedAt = right.conversation.updatedAt;
+      if (leftUpdatedAt === undefined && rightUpdatedAt === undefined) {
+        return left.index - right.index;
+      }
+      if (leftUpdatedAt === undefined) return 1;
+      if (rightUpdatedAt === undefined) return -1;
+      return rightUpdatedAt - leftUpdatedAt || left.index - right.index;
+    })
+    .map(({ conversation }) => conversation);
+
 export interface PlaygroundState {
   readonly connected: boolean;
   readonly contentState: ChatContentState;
@@ -29,9 +46,10 @@ export interface PlaygroundState {
 interface PlaygroundSessionBase {
   readonly client: ChatClient;
   readonly disposed: boolean;
-  createConversation(title: string): Promise<void>;
+  createConversation(title: string): Promise<boolean>;
   getState(): PlaygroundState;
   interrupt(): Promise<void>;
+  loadConversations(): Promise<void>;
   loadHistory(): Promise<void>;
   reconnect(): Promise<void>;
   refresh(): Promise<void>;
@@ -62,7 +80,7 @@ const initialState: PlaygroundState = {
   contentState: { kind: "loading" },
   conversations: [],
   listLoading: true,
-  status: "Starting the isolated Memory Gateway…",
+  status: "正在启动隔离的内存网关…",
 };
 
 class MockPlaygroundSessionImpl implements MockPlaygroundSession {
@@ -81,6 +99,10 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
     this.#controller = memory.controller;
     this.#controller.setSnapshot({
       ...memory.fixtures.initialSnapshot,
+      conversation: {
+        ...memory.fixtures.initialSnapshot.conversation,
+        title: "示例会话",
+      },
       run: null,
       timeline: [
         {
@@ -90,7 +112,7 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
           role: "assistant",
           content: {
             kind: "text",
-            text: "Welcome to the local Chat Kit playground.",
+            text: "欢迎使用本地 Chat Kit 调试台。",
           },
           createdAt: Date.now(),
           sequence: 0,
@@ -129,29 +151,34 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
       this.#setState({
         listError: result.error.message,
         listLoading: false,
-        status: "Conversation discovery failed.",
+        status: "会话列表加载失败。",
       });
       return;
     }
     this.#setState({
-      conversations: result.value.conversations,
+      conversations: orderConversationsByUpdatedAt(result.value.conversations),
       listLoading: false,
-      status: `Loaded ${result.value.conversations.length} conversation(s).`,
+      status: `已加载 ${result.value.conversations.length} 个会话。`,
     });
   }
 
-  async createConversation(title: string): Promise<void> {
-    if (this.#disposed) return;
+  async loadConversations(): Promise<void> {
+    await this.refresh();
+  }
+
+  async createConversation(title: string): Promise<boolean> {
+    if (this.#disposed) return false;
     const result = await this.client.createConversation({
       title,
       ...requestOptions(),
     });
     if (!result.ok) {
       this.#setState({ status: result.error.message });
-      return;
+      return false;
     }
     await this.refresh();
     await this.selectConversation(result.value.id);
+    return true;
   }
 
   async selectConversation(conversationId: string): Promise<void> {
@@ -160,7 +187,7 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
     this.#setState({
       contentState: { kind: "loading" },
       pendingConversationId: conversationId,
-      status: "Switching conversation…",
+      status: "正在切换会话…",
     });
     const result = await this.client.loadConversation({
       conversationId,
@@ -174,7 +201,7 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
           description: result.error.message,
         },
         pendingConversationId: undefined,
-        status: "Conversation load failed.",
+        status: "会话加载失败。",
       });
       return;
     }
@@ -182,7 +209,7 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
       contentState: { kind: "ready" },
       pendingConversationId: undefined,
       selectedConversationId: conversationId,
-      status: `Viewing ${result.value.conversation.title}.`,
+      status: `正在查看「${result.value.conversation.title}」。`,
     });
   }
 
@@ -198,14 +225,14 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
       this.#message(
         snapshot.conversation.id,
         "user",
-        "What changed earlier?",
+        "之前发生了什么变化？",
         0,
         oldestTimestamp - 2,
       ),
       this.#message(
         snapshot.conversation.id,
         "assistant",
-        "An older page was loaded without polling.",
+        "已在不轮询的情况下加载更早的一页记录。",
         1,
         oldestTimestamp - 1,
       ),
@@ -232,7 +259,7 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
     }
     this.#setState({
       status: result.ok
-        ? "Loaded a deterministic history page through the Runtime."
+        ? "已通过 Runtime 加载确定性的历史记录。"
         : result.error.message,
     });
   }
@@ -240,11 +267,7 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
   startStreaming(): void {
     const snapshot = this.client.getSnapshot();
     if (snapshot === null || this.#disposed) return;
-    this.#beginStream(
-      snapshot,
-      "Run the streaming reply scenario.",
-      "mock-run",
-    );
+    this.#beginStream(snapshot, "运行流式回复场景。", "mock-run");
   }
 
   async interrupt(): Promise<void> {
@@ -254,7 +277,7 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
       snapshot?.run === undefined ||
       this.#disposed
     ) {
-      this.#setState({ status: "No active run to interrupt." });
+      this.#setState({ status: "当前没有可中断的任务。" });
       return;
     }
     await this.client.interrupt({
@@ -269,18 +292,18 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
     if (conversationId === undefined || this.#disposed) return;
     this.#controller.emitError({
       code: "server",
-      message: "Mock RobotServer rejected the active scenario.",
+      message: "Mock RobotServer 拒绝了当前场景。",
       retryable: true,
       conversationId,
     });
-    this.#setState({ status: "Emitted a structured server error." });
+    this.#setState({ status: "已发出结构化服务端错误。" });
   }
 
   disconnect(): void {
     if (this.#disposed || !this.#state.connected) return;
     this.#controller.disconnect({
       code: "network",
-      message: "Mock transport disconnected.",
+      message: "Mock 传输连接已断开。",
       retryable: true,
       ...(this.#state.selectedConversationId === undefined
         ? {}
@@ -289,14 +312,14 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
     this.#setState({
       connected: false,
       contentState: { kind: "disconnected" },
-      status: "Memory Gateway disconnected.",
+      status: "内存网关已断开。",
     });
   }
 
   async reconnect(): Promise<void> {
     if (this.#disposed || this.#state.connected) return;
     this.#controller.reconnect();
-    this.#setState({ connected: true, status: "Memory Gateway reconnected." });
+    this.#setState({ connected: true, status: "内存网关已重新连接。" });
     const selected = this.#state.selectedConversationId;
     if (selected !== undefined) await this.selectConversation(selected);
   }
@@ -355,7 +378,7 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
     const assistant = this.#message(
       snapshot.conversation.id,
       "assistant",
-      "Thinking…",
+      "正在思考…",
       snapshot.timeline.length + 1,
     );
     let next: ChatSnapshot = {
@@ -370,12 +393,12 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
       },
     };
     this.#replaceSnapshot(next);
-    this.#setState({ status: "Streaming an event-driven mock response…" });
+    this.#setState({ status: "正在流式输出事件驱动的 Mock 回复…" });
     this.#schedule(180, () => {
       next = this.#replaceMessage(
         next,
         assistant.id,
-        "Streaming from the Memory Gateway…",
+        "正在从内存网关流式输出…",
       );
       this.#replaceSnapshot(next);
     });
@@ -383,7 +406,7 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
       next = this.#replaceMessage(
         next,
         assistant.id,
-        "Streaming complete. The formal Runtime applied each update.",
+        "流式输出完成，正式 Runtime 已应用每次更新。",
       );
       next = {
         ...next,
@@ -395,7 +418,7 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
         },
       };
       this.#replaceSnapshot(next);
-      this.#setState({ status: "Streaming scenario completed." });
+      this.#setState({ status: "流式场景已完成。" });
     });
   }
 
@@ -416,7 +439,7 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
         finishedAt: Date.now(),
       },
     });
-    this.#setState({ status: "Active run interrupted." });
+    this.#setState({ status: "当前任务已中断。" });
   }
 
   #replaceMessage(

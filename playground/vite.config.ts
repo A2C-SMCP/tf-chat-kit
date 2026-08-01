@@ -3,11 +3,19 @@ import { fileURLToPath } from "node:url";
 
 import { defineConfig } from "vite";
 
+import { createRobotServerProxyPlugin } from "./robotserver-proxy.js";
+
 const workspaceRoot = fileURLToPath(new URL("..", import.meta.url));
 const packageSource = (directory: string): string =>
   path.join(workspaceRoot, "packages", directory, "src", "index.ts");
 
 export default defineConfig({
+  define: {
+    __TF_CHAT_PLAYGROUND_ALLOWED_SERVER_ORIGINS__: JSON.stringify(
+      process.env["TF_CHAT_PLAYGROUND_ALLOWED_SERVER_ORIGINS"] ?? "",
+    ),
+  },
+  plugins: [createRobotServerProxyPlugin()],
   root: fileURLToPath(new URL(".", import.meta.url)),
   resolve: {
     alias: {

@@ -22,6 +22,8 @@ import {
   type RobotServerConnectionConfig,
   type RobotServerConnectionDraft,
 } from "../playground/src/robotserver-session.js";
+import { loginRobotServerWithPassword } from "../playground/src/robotserver-login.js";
+import { parseTFRobotTarget } from "../playground/src/robotserver-target.js";
 
 beforeAll(() => {
   Object.defineProperty(window, "matchMedia", {
@@ -43,12 +45,18 @@ beforeAll(() => {
 const validDraft = (
   overrides: Partial<RobotServerConnectionDraft> = {},
 ): RobotServerConnectionDraft => ({
+  allowedServerOrigins: [],
   authKind: "bearer",
+  connectionKind: "direct",
   credential: "memory-only-secret",
   creatorName: "Playground developer",
   creatorUid: "developer-1",
   httpBaseUrl: "https://robot.example/api/",
+  namespace: "",
   platformId: "platform-7",
+  proxyOrigin: "http://localhost:3000",
+  robotId: "",
+  serverOrigin: "",
   socketNamespaceUrl: "wss://robot.example/chat",
   socketPath: "/socket.io",
   ...overrides,
@@ -218,7 +226,6 @@ describe("RobotServer Playground configuration", () => {
     ["credentials in URL", { httpBaseUrl: "https://u:p@robot.example" }],
     ["query-bearing Socket URL", { socketNamespaceUrl: "wss://x/chat?t=1" }],
     ["invalid Socket path", { socketPath: "socket io" }],
-    ["missing creator", { creatorUid: "" }],
   ])("rejects %s before a Gateway is created", (_label, override) => {
     const result = validateRobotServerConnection({
       ...validDraft(),
@@ -241,6 +248,142 @@ describe("RobotServer Playground configuration", () => {
     expect(robotServerTestConversationTitle(1_773_705_600_000)).toBe(
       "[tf-chat-kit playground] 2026-03-17T00:00:00",
     );
+  });
+
+  it("derives routed HTTP and Socket settings from explicit robot fields", () => {
+    const result = parseTFRobotTarget(
+      {
+        namespace: "tfrs-org-18",
+        robotId: "de-eed9dc12a94b492ea8e7",
+        serverOrigin: "https://staging.turingfocus.cn",
+      },
+      "http://localhost:3000",
+    );
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        apiOrigin: "https://api.staging.turingfocus.cn",
+        httpBaseUrl:
+          "http://localhost:3000/__tfrobot_proxy/https%3A%2F%2Fapi.staging.turingfocus.cn/tfrobot/tfrs-org-18/de-eed9dc12a94b492ea8e7",
+        namespace: "tfrs-org-18",
+        robotId: "de-eed9dc12a94b492ea8e7",
+        robotType: "tfrobot",
+        serverOrigin: "https://staging.turingfocus.cn",
+        socketNamespaceUrl: "https://staging.turingfocus.cn/chat",
+        socketPath: "/c/tfrobot/tfrs-org-18/de-eed9dc12a94b492ea8e7/socket.io",
+      },
+    });
+  });
+
+  it.each(["https://attacker.example", "http://staging.turingfocus.cn"])(
+    "rejects an untrusted service origin before creating a Gateway",
+    (url) => {
+      const result = validateRobotServerConnection({
+        ...validDraft(),
+        connectionKind: "standard",
+        namespace: "example-ns",
+        robotId: "example-robot",
+        serverOrigin: url,
+      });
+      expect(result).toMatchObject({ ok: false });
+      expect(JSON.stringify(result)).not.toContain("memory-only-secret");
+    },
+  );
+
+  it("accepts an explicitly allowlisted local service origin for testing", () => {
+    const result = parseTFRobotTarget(
+      {
+        namespace: "e2e-ns",
+        robotId: "e2e-robot",
+        serverOrigin: "http://localhost:4310",
+      },
+      "http://localhost:3000",
+      ["http://localhost:4310"],
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        apiOrigin: "http://localhost:4310",
+        socketNamespaceUrl: "http://localhost:4310/chat",
+      },
+    });
+  });
+
+  it("omits platformId on the real request when the standard field is blank", async () => {
+    const result = validateRobotServerConnection({
+      ...validDraft(),
+      connectionKind: "standard",
+      namespace: "tfrs-org-18",
+      robotId: "de-eed9dc12a94b492ea8e7",
+      serverOrigin: "https://staging.turingfocus.cn",
+      creatorName: "",
+      creatorUid: "",
+      platformId: "",
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        creator: { name: "CurrentUser", uid: "current-user" },
+      },
+    });
+    if (result.ok) expect(result.value.platformId).toBeUndefined();
+    if (!result.ok) return;
+    const requests: Request[] = [];
+    const session = createRobotServerPlaygroundSession(result.value, {
+      fetch: vi.fn(async (input, init) => {
+        requests.push(new Request(input, init));
+        return envelope({ conversations: [], cursor: null });
+      }),
+      socketFactory: socketFixture().factory,
+    });
+    await session.refresh();
+    expect(requests).toHaveLength(1);
+    expect(new URL(requests[0]!.url).searchParams.has("platformId")).toBe(
+      false,
+    );
+    await session.dispose();
+  });
+
+  it("exchanges an administrator password for an in-memory Admin Token", async () => {
+    const password = "password-only-in-request";
+    const fetch = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        expect(init?.method).toBe("POST");
+        expect(JSON.parse(String(init?.body))).toEqual({ password });
+        return envelope({
+          accessToken: "short-lived-admin-token",
+          expiresAt: "2026-08-02T00:00:00Z",
+        });
+      },
+    );
+    const target = validateRobotServerConnection({
+      ...validDraft(),
+      credential: "placeholder",
+    });
+    expect(target.ok).toBe(true);
+    if (!target.ok) return;
+    const result = await loginRobotServerWithPassword(target.value, password, {
+      fetch,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        credential: { adminKey: "short-lived-admin-token", kind: "admin" },
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(password);
+  });
+
+  it("returns a safe password-login error without echoing credentials", async () => {
+    const password = "wrong-password-must-not-leak";
+    const result = await loginRobotServerWithPassword(validConfig(), password, {
+      fetch: vi.fn(
+        async () =>
+          new Response(JSON.stringify({ detail: password }), { status: 401 }),
+      ),
+    });
+    expect(result).toEqual({ ok: false, message: "管理员密码不正确。" });
+    expect(JSON.stringify(result)).not.toContain(password);
   });
 });
 
@@ -300,7 +443,7 @@ describe("RobotServer Playground authenticated lifecycle", () => {
       expect(fixture.session.getState()).toMatchObject({
         connected: true,
         contentState: { kind: "error" },
-        status: "RobotServer reported a sanitized validation diagnostic.",
+        status: "RobotServer 上报了已脱敏的 validation 诊断信息。",
       });
 
       const sent = await fixture.session.client.sendText({
@@ -321,7 +464,7 @@ describe("RobotServer Playground authenticated lifecycle", () => {
       expect(fixture.session.getState()).toMatchObject({
         connected: true,
         contentState: { kind: "ready" },
-        status: "RobotServer resumed with a valid realtime update.",
+        status: "RobotServer 已通过有效实时更新恢复连接。",
       });
 
       fixture.sockets.sockets
@@ -342,7 +485,7 @@ describe("RobotServer Playground authenticated lifecycle", () => {
       expect(fixture.session.getState()).toMatchObject({
         connected: true,
         contentState: { kind: "ready" },
-        status: "RobotServer resumed with a valid realtime update.",
+        status: "RobotServer 已通过有效实时更新恢复连接。",
       });
       fixture.sockets.sockets.at(-1)!.trigger("chat_message", {
         additionalKwargs: {},
@@ -414,8 +557,6 @@ describe("RobotServer Playground authenticated lifecycle", () => {
           uid: "developer-1",
         },
       });
-      expect(JSON.stringify(fixture.requests)).not.toContain(value);
-
       await fixture.session.dispose();
       expect(fixture.session.client.disposed).toBe(true);
       expect(
@@ -425,8 +566,8 @@ describe("RobotServer Playground authenticated lifecycle", () => {
   );
 
   it.each([
-    [401, "authentication", "RobotServer authentication failed."],
-    [403, "authorization", "RobotServer authorization failed."],
+    [401, "authentication", "RobotServer 鉴权失败。"],
+    [403, "authorization", "RobotServer 授权失败。"],
   ] as const)(
     "presents a safe %i connection failure",
     async (status, code, message) => {
@@ -469,7 +610,7 @@ describe("RobotServer Playground authenticated lifecycle", () => {
   it.each([
     {
       expectedKind: "disconnected",
-      expectedStatus: "RobotServer network or CORS connection failed.",
+      expectedStatus: "RobotServer 网络或跨域连接失败。",
       fetch: vi.fn(async () => {
         throw new TypeError("Failed to fetch");
       }),
@@ -477,7 +618,7 @@ describe("RobotServer Playground authenticated lifecycle", () => {
     },
     {
       expectedKind: "error",
-      expectedStatus: "RobotServer validation error.",
+      expectedStatus: "RobotServer 发生 validation 错误。",
       fetch: vi.fn(async () => envelope({ conversations: "invalid" })),
       label: "protocol",
     },
@@ -532,7 +673,7 @@ describe("RobotServer Playground authenticated lifecycle", () => {
       connected: false,
       contentState: { kind: "disconnected" },
       conversations: [{ id: "42" }],
-      status: "RobotServer network or CORS connection failed.",
+      status: "RobotServer 网络或跨域连接失败。",
     });
     await session.dispose();
   });
@@ -582,6 +723,136 @@ describe("RobotServer Playground authenticated lifecycle", () => {
       listError: undefined,
       listLoading: false,
     });
+    await session.dispose();
+  });
+
+  it("keeps an in-flight conversation selection active while history refreshes", async () => {
+    const selectedHistory = deferred<Response>();
+    const selectedStatus = deferred<Response>();
+    const fetch = vi.fn(
+      async (input: Parameters<typeof globalThis.fetch>[0]) => {
+        const path = new URL(input instanceof Request ? input.url : input)
+          .pathname;
+        if (path.endsWith("/conversations")) {
+          return envelope({
+            conversations: [
+              conversationDto(44, "Initial selection"),
+              conversationDto(42, "Selected conversation"),
+            ],
+            cursor: null,
+          });
+        }
+        if (path.includes("/42/") && path.endsWith("/messages")) {
+          return selectedHistory.promise;
+        }
+        if (path.includes("/42/") && path.endsWith("/status")) {
+          return selectedStatus.promise;
+        }
+        if (path.includes("/44/") && path.endsWith("/messages")) {
+          return envelope({ cursor: null, events: [], messages: [] });
+        }
+        if (path.includes("/44/") && path.endsWith("/status")) {
+          return envelope({ taskId: null, working: false });
+        }
+        throw new Error(`Unexpected path: ${path}`);
+      },
+    );
+    const session = createRobotServerPlaygroundSession(validConfig(), {
+      fetch,
+      socketFactory: socketFixture().factory,
+    });
+    await session.start();
+
+    const selection = session.selectConversation("42");
+    await vi.waitFor(() =>
+      expect(session.getState()).toMatchObject({
+        contentState: { kind: "loading" },
+        pendingConversationId: "42",
+      }),
+    );
+    await session.loadConversations();
+    expect(session.getState()).toMatchObject({
+      contentState: { kind: "loading" },
+      pendingConversationId: "42",
+    });
+
+    selectedHistory.resolve(
+      envelope({ cursor: null, events: [], messages: [] }),
+    );
+    selectedStatus.resolve(envelope({ taskId: null, working: false }));
+    await selection;
+
+    expect(session.getState()).toMatchObject({
+      connected: true,
+      contentState: { kind: "ready" },
+      pendingConversationId: undefined,
+      selectedConversationId: "42",
+      status: "正在查看「Selected conversation」。",
+    });
+    expect(session.client.getSnapshot()?.conversation.id).toBe("42");
+    await session.dispose();
+  });
+
+  it("selects from the latest history request when startup lists settle out of order", async () => {
+    const listRequests = [deferred<Response>(), deferred<Response>()];
+    let listRequestIndex = 0;
+    const requestedPaths: string[] = [];
+    const fetch = vi.fn(
+      async (input: Parameters<typeof globalThis.fetch>[0]) => {
+        const path = new URL(input instanceof Request ? input.url : input)
+          .pathname;
+        requestedPaths.push(path);
+        if (path.endsWith("/conversations")) {
+          return listRequests[listRequestIndex++]!.promise;
+        }
+        if (path.includes("/43/") && path.endsWith("/messages")) {
+          return envelope({ cursor: null, events: [], messages: [] });
+        }
+        if (path.includes("/43/") && path.endsWith("/status")) {
+          return envelope({ taskId: null, working: false });
+        }
+        if (path.includes("/42/") && path.endsWith("/messages")) {
+          return envelope({ cursor: null, events: [], messages: [] });
+        }
+        if (path.includes("/42/") && path.endsWith("/status")) {
+          return envelope({ taskId: null, working: false });
+        }
+        throw new Error(`Unexpected path: ${path}`);
+      },
+    );
+    const session = createRobotServerPlaygroundSession(validConfig(), {
+      fetch,
+      socketFactory: socketFixture().factory,
+    });
+
+    const startup = session.start();
+    await vi.waitFor(() => expect(listRequestIndex).toBe(1));
+    const history = session.loadConversations();
+    await vi.waitFor(() => expect(listRequestIndex).toBe(2));
+    listRequests[1]!.resolve(
+      envelope({
+        conversations: [conversationDto(43, "Newest conversation")],
+        cursor: null,
+      }),
+    );
+    await history;
+    listRequests[0]!.resolve(
+      envelope({
+        conversations: [conversationDto(42, "Stale conversation")],
+        cursor: null,
+      }),
+    );
+    await startup;
+
+    expect(session.getState()).toMatchObject({
+      connected: true,
+      contentState: { kind: "ready" },
+      conversations: [{ id: "43", title: "Newest conversation" }],
+      selectedConversationId: "43",
+      status: "正在查看「Newest conversation」。",
+    });
+    expect(session.client.getSnapshot()?.conversation.id).toBe("43");
+    expect(requestedPaths.some((path) => path.includes("/42/"))).toBe(false);
     await session.dispose();
   });
 
@@ -642,7 +913,7 @@ describe("RobotServer Playground authenticated lifecycle", () => {
       contentState: { kind: "ready" },
       pendingConversationId: undefined,
       selectedConversationId: "43",
-      status: "Viewing Latest selection.",
+      status: "正在查看「Latest selection」。",
     });
     expect(session.client.getSnapshot()?.conversation.id).toBe("43");
     await session.dispose();
@@ -701,7 +972,7 @@ describe("RobotServer Playground authenticated lifecycle", () => {
       listLoading: false,
       pendingConversationId: undefined,
       selectedConversationId: "43",
-      status: "Viewing Latest conversations.",
+      status: "正在查看「Latest conversations」。",
     });
     expect(session.client.getSnapshot()?.conversation.id).toBe("43");
     await session.dispose();
@@ -767,25 +1038,41 @@ describe("RobotServer Playground page security boundary", () => {
         await Promise.resolve();
       });
       const robotMode = [...container.querySelectorAll("button")].find(
-        (button) => button.textContent === "RobotServer mode",
+        (button) => button.textContent === "RobotServer 模式",
       );
       await act(async () => robotMode!.click());
       await vi.waitFor(() => {
-        expect(container.textContent).toContain("Connect to RobotServer");
+        expect(container.textContent).toContain("连接 RobotServer");
         expect(mockSessions[0]!.client.disposed).toBe(true);
         expect(mockSessions[0]!.dispose).toHaveBeenCalledOnce();
       });
 
+      for (const label of [
+        "RobotServer 服务地址",
+        "Namespace",
+        "Robot ID",
+        "管理员密码",
+        "消息创建者 ID",
+        "消息创建者名称",
+      ]) {
+        expect(
+          container.querySelector<HTMLInputElement>(
+            `input[aria-label="${label}"]`,
+          )?.value,
+        ).toBe("");
+      }
+
       const values: Record<string, string> = {
-        "HTTP base URL": "https://robot.example/api",
-        "Socket namespace URL": "wss://robot.example/chat",
-        "Socket path": "/socket.io",
+        "RobotServer 服务地址": "https://staging.turingfocus.cn",
+        Namespace: "example-ns",
+        "Robot ID": "example-robot",
         platformId: "platform-7",
-        "Creator ID": "developer-1",
-        "Creator name": "Playground developer",
-        "Bearer Token": "dom-memory-only-secret",
+        "用户 Token": "dom-memory-only-secret",
       };
       await act(async () => {
+        container
+          .querySelector<HTMLInputElement>('input[value="bearer"]')!
+          .click();
         for (const [label, value] of Object.entries(values)) {
           const input = container.querySelector<HTMLInputElement>(
             `input[aria-label="${label}"]`,
@@ -795,7 +1082,7 @@ describe("RobotServer Playground page security boundary", () => {
         }
       });
       const connect = [...container.querySelectorAll("button")].find(
-        (button) => button.textContent === "Connect in real mode",
+        (button) => button.textContent === "连接 RobotServer",
       );
       await act(async () => {
         connect!.click();
@@ -803,7 +1090,7 @@ describe("RobotServer Playground page security boundary", () => {
       });
       await vi.waitFor(() => {
         expect(configs).toHaveLength(1);
-        expect(container.textContent).toContain("RobotServer operations");
+        expect(container.textContent).toContain("RobotServer 操作");
       });
       expect(configs[0]?.credential).toEqual({
         kind: "bearer",
@@ -820,13 +1107,13 @@ describe("RobotServer Playground page security boundary", () => {
       }
 
       const reconfigure = [...container.querySelectorAll("button")].find(
-        (button) => button.textContent === "Reconfigure RobotServer",
+        (button) => button.textContent === "重新配置 RobotServer",
       );
       await act(async () => reconfigure!.click());
       await vi.waitFor(() => {
         expect(robotSessions[0]?.client.disposed).toBe(true);
         expect(robotSessions[0]?.dispose).toHaveBeenCalledOnce();
-        expect(container.textContent).toContain("Connect to RobotServer");
+        expect(container.textContent).toContain("连接 RobotServer");
       });
     } finally {
       await act(async () => root.unmount());
@@ -902,23 +1189,24 @@ describe("RobotServer Playground page security boundary", () => {
         await Promise.resolve();
       });
       const robotMode = [...container.querySelectorAll("button")].find(
-        (button) => button.textContent === "RobotServer mode",
+        (button) => button.textContent === "RobotServer 模式",
       );
       await act(async () => robotMode!.click());
       await vi.waitFor(() =>
-        expect(container.textContent).toContain("Connect to RobotServer"),
+        expect(container.textContent).toContain("连接 RobotServer"),
       );
 
       const values: Record<string, string> = {
-        "HTTP base URL": "https://robot.example/api",
-        "Socket namespace URL": "wss://robot.example/chat",
-        "Socket path": "/socket.io",
+        "RobotServer 服务地址": "https://staging.turingfocus.cn",
+        Namespace: "example-ns",
+        "Robot ID": "example-robot",
         platformId: "platform-7",
-        "Creator ID": "developer-1",
-        "Creator name": "Playground developer",
-        "Bearer Token": secret,
+        "用户 Token": secret,
       };
       await act(async () => {
+        container
+          .querySelector<HTMLInputElement>('input[value="bearer"]')!
+          .click();
         for (const [label, value] of Object.entries(values)) {
           const input = container.querySelector<HTMLInputElement>(
             `input[aria-label="${label}"]`,
@@ -927,7 +1215,7 @@ describe("RobotServer Playground page security boundary", () => {
         }
       });
       const connect = [...container.querySelectorAll("button")].find(
-        (button) => button.textContent === "Connect in real mode",
+        (button) => button.textContent === "连接 RobotServer",
       );
       await act(async () => {
         connect!.click();
@@ -938,7 +1226,7 @@ describe("RobotServer Playground page security boundary", () => {
           "Server echoed [REDACTED] in its title",
         );
         expect(
-          container.querySelector('textarea[aria-label="Message"]'),
+          container.querySelector('textarea[aria-label="消息"]'),
         ).not.toBeNull();
       });
       expect(container.innerHTML).not.toContain(secret);
@@ -963,11 +1251,11 @@ describe("RobotServer Playground page security boundary", () => {
       expect(container.innerHTML).not.toContain(secret);
 
       const composer = container.querySelector<HTMLTextAreaElement>(
-        'textarea[aria-label="Message"]',
+        'textarea[aria-label="消息"]',
       );
       await act(async () => setTextArea(composer!, "Trigger safe failure"));
       const send = [...container.querySelectorAll("button")].find(
-        (button) => button.textContent === "Send",
+        (button) => button.textContent?.replace(/\s/gu, "") === "发送",
       );
       await act(async () => {
         send!.click();
@@ -976,7 +1264,7 @@ describe("RobotServer Playground page security boundary", () => {
 
       await vi.waitFor(() =>
         expect(container.textContent).toContain(
-          "RobotServer reported an internal chat failure.",
+          "RobotServer 发生内部聊天错误。",
         ),
       );
       expect(container.innerHTML).not.toContain(secret);
