@@ -1,18 +1,26 @@
 import {
   answerInteractionInputSchema,
+  createConversationInputSchema,
+  createGatewayDeadlineExceededError,
   getAskUserInteractionAnswerValidationError,
+  isGatewayDeadlineExceeded,
   isGatewayOperationSupported,
+  listConversationsInputSchema,
   type AnswerInteractionInput,
   type AnswerInteractionSuccess,
   type ChatError,
   type ChatGateway,
   type ChatSnapshot,
   type ChatUpdate,
+  type Conversation,
+  type ConversationPage,
+  type CreateConversationInput,
   type GatewayRequestOptions,
   type GatewayResult,
   type GatewaySubscription,
   type InterruptRunInput,
   type InterruptRunSuccess,
+  type ListConversationsInput,
   type LoadConversationInput,
   type SendTextInput,
   type SendTextSuccess,
@@ -170,6 +178,55 @@ export class ChatClient {
 
   subscribe(listener: ChatSnapshotListener): ChatClientSubscription {
     return this.#snapshotStore.subscribe(listener);
+  }
+
+  async listConversations(
+    input: ListConversationsInput,
+  ): Promise<GatewayResult<ConversationPage>> {
+    const parsed = listConversationsInputSchema.safeParse(input);
+    if (!parsed.success) {
+      return runtimeFailure("validation", "Conversation list input is invalid");
+    }
+    if (this.#disposed) {
+      return runtimeFailure("conflict", "ChatClient has already been disposed");
+    }
+    if (isGatewayDeadlineExceeded(parsed.data)) {
+      return { ok: false, error: createGatewayDeadlineExceededError() };
+    }
+
+    const result = await this.#gateway.listConversations(parsed.data);
+    return this.#disposed
+      ? runtimeFailure("conflict", "Conversation listing was superseded")
+      : result;
+  }
+
+  async createConversation(
+    input: CreateConversationInput,
+  ): Promise<GatewayResult<Conversation>> {
+    const parsed = createConversationInputSchema.safeParse(input);
+    if (!parsed.success) {
+      return runtimeFailure(
+        "validation",
+        "Conversation creation input is invalid",
+      );
+    }
+    if (this.#disposed) {
+      return runtimeFailure("conflict", "ChatClient has already been disposed");
+    }
+    if (isGatewayDeadlineExceeded(parsed.data)) {
+      return { ok: false, error: createGatewayDeadlineExceededError() };
+    }
+    if (this.#gateway.createConversation === undefined) {
+      return runtimeFailure(
+        "unsupported",
+        "Conversation creation is unavailable",
+      );
+    }
+
+    const result = await this.#gateway.createConversation(parsed.data);
+    return this.#disposed
+      ? runtimeFailure("conflict", "Conversation creation was superseded")
+      : result;
   }
 
   async loadConversation(

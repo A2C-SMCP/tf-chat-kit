@@ -5,6 +5,7 @@ import type {
   ChatGateway,
   ChatSnapshot,
   ChatUpdate,
+  CreateConversationInput,
   GatewayResult,
   InterruptRunInput,
   ListConversationsInput,
@@ -28,6 +29,7 @@ import {
 
 export type GatewayContractOperation =
   | "answerInteraction"
+  | "createConversation"
   | "interrupt"
   | "listConversations"
   | "loadConversation"
@@ -41,6 +43,10 @@ export type GatewayContractCall =
   | {
       readonly operation: "answerInteraction";
       readonly input: AnswerInteractionInput;
+    }
+  | {
+      readonly operation: "createConversation";
+      readonly input: CreateConversationInput;
     }
   | { readonly operation: "interrupt"; readonly input: InterruptRunInput }
   | {

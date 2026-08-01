@@ -162,24 +162,28 @@ const CHANGESET_CONFIG_POLICY = Object.freeze({
 
 const ROOT_SCRIPT_POLICY = Object.freeze({
   build: "tsc -b --pretty false",
+  "build:playground": "vite build --config playground/vite.config.ts",
   check:
-    "pnpm run check:workspace && pnpm run check:changesets && pnpm run check:boundaries && pnpm run lint && pnpm run format:check && pnpm run typecheck && pnpm run test && pnpm run pack:check",
+    "pnpm run check:workspace && pnpm run check:changesets && pnpm run check:boundaries && pnpm run lint && pnpm run format:check && pnpm run typecheck && pnpm run test && pnpm run build:playground && pnpm run pack:check",
   "check:boundaries":
     "depcruise packages --config dependency-cruiser.config.mjs",
   "check:changesets": "node scripts/check-changesets.mjs",
   "check:workspace": "node scripts/check-workspace.mjs",
   clean: "node scripts/clean-workspace.mjs",
   format:
-    'prettier --write "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.ts" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/{README,007-versioning-and-release,008-github-and-public-npm-release,009-independent-compatibility-testing}.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
+    'prettier --write "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "playwright.config.ts" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "playground/**/*.{css,html,json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.{md,ts}" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/{README,007-versioning-and-release,008-github-and-public-npm-release,009-independent-compatibility-testing}.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
   "format:check":
-    'prettier --check "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.ts" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/{README,007-versioning-and-release,008-github-and-public-npm-release,009-independent-compatibility-testing}.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
+    'prettier --check "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "playwright.config.ts" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "playground/**/*.{css,html,json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.{md,ts}" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/{README,007-versioning-and-release,008-github-and-public-npm-release,009-independent-compatibility-testing}.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
   lint: "eslint . --max-warnings=0",
   "pack:check": "node scripts/verify-packed-artifacts.mjs",
   "pack:workspace": "node scripts/pack-workspace.mjs",
   preinstall: "node scripts/check-node-version.mjs",
   test: "vitest run",
+  "test:e2e": "playwright test",
   typecheck:
-    "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false",
+    "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false && tsc -p playground/tsconfig.json --pretty false",
+  "dev:playground":
+    "vite --config playground/vite.config.ts --port 3000 --strictPort",
   changeset: "changeset",
   "changeset:status": "changeset status",
   "version-packages": "changeset version",

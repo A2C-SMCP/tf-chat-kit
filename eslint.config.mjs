@@ -12,6 +12,7 @@ export default tseslint.config(
       "experiments/**",
       "node_modules/**",
       "packages/*/dist/**",
+      "playground/dist/**",
     ],
   },
   eslint.configs.recommended,
@@ -33,6 +34,15 @@ export default tseslint.config(
           ],
         },
       ],
+    },
+  },
+  {
+    files: ["playground/**/*.{ts,tsx}"],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        ...globals.node,
+      },
     },
   },
   {

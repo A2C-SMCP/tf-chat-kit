@@ -14,6 +14,8 @@ import {
   compareAgentEventTransitions,
   compareTimelineItems,
   conversationSchema,
+  createConversationInputSchema,
+  createConversationResultSchema,
   createGatewayDeadlineExceededError,
   getTimelineItemKey,
   gatewayRequestOptionsSchema,
@@ -1221,9 +1223,35 @@ describe("Gateway and SessionProvider public contract", () => {
     ).toBe(false);
   });
 
+  it("normalizes conversation creation titles and returns standard conversations", () => {
+    expect(
+      createConversationInputSchema.parse({
+        title: "  Playground conversation  ",
+        deadlineAt: requestDeadlineAt,
+        platformId: "gateway-owned-platform",
+      }),
+    ).toEqual({
+      title: "Playground conversation",
+      deadlineAt: requestDeadlineAt,
+    });
+    expect(
+      createConversationInputSchema.safeParse({
+        title: "   ",
+        deadlineAt: requestDeadlineAt,
+      }).success,
+    ).toBe(false);
+    expect(
+      createConversationResultSchema.parse({
+        ok: true,
+        value: conversation,
+      }),
+    ).toEqual({ ok: true, value: conversation });
+  });
+
   it("requires deadlines for every asynchronous Gateway input", () => {
     const cases = [
       [listConversationsInputSchema, {}],
+      [createConversationInputSchema, { title: "New conversation" }],
       [gatewayRequestOptionsSchema, {}],
       [loadConversationInputSchema, { conversationId: conversation.id }],
       [subscribeConversationInputSchema, { conversationId: conversation.id }],

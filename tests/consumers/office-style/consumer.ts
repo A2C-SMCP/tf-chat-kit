@@ -214,6 +214,35 @@ export const runOfficeConsumerVerification = async (): Promise<void> => {
 
   const firstInstance = first.factory.instances[0]!;
   const secondInstance = second.factory.instances[0]!;
+  const createdByMemory =
+    await firstInstance.gateway.gateway.createConversation({
+      title: "Office-created conversation",
+      deadlineAt: deadlineAt(),
+    });
+  check(
+    createdByMemory.ok,
+    "the packed Memory Gateway must create conversations",
+  );
+  if (!createdByMemory.ok) throw new Error(createdByMemory.error.message);
+  const listedByMemory = await firstInstance.gateway.gateway.listConversations({
+    deadlineAt: deadlineAt(),
+  });
+  check(
+    listedByMemory.ok &&
+      listedByMemory.value.conversations.some(
+        ({ id }) => id === createdByMemory.value.id,
+      ),
+    "the packed Memory Gateway must list newly created conversations",
+  );
+  const loadedByMemory = await firstInstance.gateway.gateway.loadConversation({
+    conversationId: createdByMemory.value.id,
+    deadlineAt: deadlineAt(),
+  });
+  check(
+    loadedByMemory.ok &&
+      loadedByMemory.value.conversation.id === createdByMemory.value.id,
+    "the packed Memory Gateway must load newly created conversations",
+  );
   let firstNotifications = 0;
   let secondNotifications = 0;
   const firstSubscription = firstInstance.client.subscribe(() => {

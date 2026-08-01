@@ -58,9 +58,17 @@ nvm use
 corepack enable
 corepack prepare pnpm@10.34.5 --activate
 pnpm install --frozen-lockfile
+pnpm dev:playground
 pnpm check
 pnpm pack:workspace
 ```
+
+`pnpm dev:playground` 会在 `http://localhost:3000` 启动仓库私有演示应用。Mock 模式直接组合
+正式 Runtime、React、Ant Design UI 与 Memory Gateway，提供会话创建/切换、历史、流式回复、
+中断、错误、断线和重连场景；RobotServer 模式可配置 HTTP/Socket 地址、`platformId`、创建者
+以及 Bearer Token 或 Admin Key，并通过正式 TFRobot Gateway 验证完整读写链路。凭据只保留在
+当前 React 页面实例的内存中，不会写入浏览器存储、Cookie、URL、环境文件或诊断日志。该应用
+不会增加第七个公开 npm 包。
 
 仓库根目录的 `.nvmrc` 与 GitHub Actions 共用 Node.js 24.x。执行任何安装或门禁前先通过
 `nvm install && nvm use` 激活该主版本；错误版本会在依赖安装的 `preinstall` 或 workspace

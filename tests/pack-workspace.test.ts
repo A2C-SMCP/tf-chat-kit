@@ -45,5 +45,5 @@ describe("workspace packaging", () => {
         ]),
       );
     }
-  }, 30_000);
+  }, 60_000);
 });

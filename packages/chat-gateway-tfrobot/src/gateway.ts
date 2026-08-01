@@ -6,6 +6,7 @@ import {
   type ChatGateway,
   type Conversation,
   type ConversationPage,
+  type CreateConversationInput,
   type GatewayObserver,
   type GatewayRequestOptions,
   type GatewayResult,
@@ -21,6 +22,7 @@ import {
 
 import { awaitBounded } from "./bounded.js";
 import {
+  conversationDtoSchema,
   conversationPageDtoSchema,
   historyDtoSchema,
   interruptDtoSchema,
@@ -128,12 +130,45 @@ export class TFRobotChatGateway implements ChatGateway {
     };
   }
 
+  async createConversation(
+    input: CreateConversationInput,
+  ): Promise<GatewayResult<Conversation>> {
+    const disposed = this.#disposedResult<Conversation>();
+    if (disposed !== undefined) return disposed;
+    const result = await this.#http.request({
+      method: "POST",
+      path: "v1/chat/conversations",
+      operation: "send",
+      options: input,
+      query: {
+        title: input.title,
+        platformId: this.#options.platformId,
+      },
+      schema: conversationDtoSchema,
+    });
+    const requestDisposed = this.#disposedResult<Conversation>();
+    if (requestDisposed !== undefined) return requestDisposed;
+    const requestDeadline = this.#deadlineResult<Conversation>(input);
+    if (requestDeadline !== undefined) return requestDeadline;
+    if (!result.ok) return result;
+    let conversation: Conversation;
+    try {
+      conversation = mapConversation(result.value);
+    } catch {
+      return this.#mappingError(
+        "TFRobot created conversation could not be normalized",
+      );
+    }
+    const mappingDeadline = this.#deadlineResult<Conversation>(input);
+    if (mappingDeadline !== undefined) return mappingDeadline;
+    this.#conversations.set(conversation.id, conversation);
+    return { ok: true, value: conversation };
+  }
+
   async loadConversation(
     input: LoadConversationInput,
   ): Promise<GatewayResult<ReturnType<typeof mapSnapshot>>> {
-    const disposed = this.#disposedResult<ReturnType<typeof mapSnapshot>>(
-      input.conversationId,
-    );
+    const disposed = this.#disposedResult<ReturnType<typeof mapSnapshot>>();
     if (disposed !== undefined) return disposed;
     if (!this.#conversations.has(input.conversationId)) {
       await this.listConversations({
@@ -163,9 +198,10 @@ export class TFRobotChatGateway implements ChatGateway {
         schema: statusDtoSchema,
       }),
     ]);
-    const requestDeadline = this.#deadlineResult<
-      ReturnType<typeof mapSnapshot>
-    >(input, input.conversationId);
+    if (!history.ok && history.error.code === "timeout") return history;
+    if (!status.ok && status.error.code === "timeout") return status;
+    const requestDeadline =
+      this.#deadlineResult<ReturnType<typeof mapSnapshot>>(input);
     if (requestDeadline !== undefined) return requestDeadline;
     if (!history.ok) return history;
     if (!status.ok) return status;
@@ -182,12 +218,10 @@ export class TFRobotChatGateway implements ChatGateway {
     } catch {
       return this.#mappingError(
         "TFRobot conversation snapshot could not be normalized",
-        input.conversationId,
       );
     }
-    const mappingDeadline = this.#deadlineResult<
-      ReturnType<typeof mapSnapshot>
-    >(input, input.conversationId);
+    const mappingDeadline =
+      this.#deadlineResult<ReturnType<typeof mapSnapshot>>(input);
     if (mappingDeadline !== undefined) return mappingDeadline;
     return {
       ok: true,
@@ -205,9 +239,7 @@ export class TFRobotChatGateway implements ChatGateway {
     input: SubscribeConversationInput,
     observer: GatewayObserver,
   ): Promise<GatewayResult<GatewaySubscription>> {
-    const disposed = this.#disposedResult<GatewaySubscription>(
-      input.conversationId,
-    );
+    const disposed = this.#disposedResult<GatewaySubscription>();
     return disposed === undefined
       ? this.#socket.subscribe(input.conversationId, input, observer)
       : Promise.resolve(disposed);
@@ -216,15 +248,10 @@ export class TFRobotChatGateway implements ChatGateway {
   async sendText(
     input: SendTextInput,
   ): Promise<GatewayResult<SendTextSuccess>> {
-    const disposed = this.#disposedResult<SendTextSuccess>(
-      input.conversationId,
-    );
+    const disposed = this.#disposedResult<SendTextSuccess>();
     if (disposed !== undefined) return disposed;
     const creator = await this.#resolveMessageCreator(input);
-    const creatorDeadline = this.#deadlineResult<SendTextSuccess>(
-      input,
-      input.conversationId,
-    );
+    const creatorDeadline = this.#deadlineResult<SendTextSuccess>(input);
     if (creatorDeadline !== undefined) return creatorDeadline;
     if (!creator.ok) return creator;
     const result = await this.#http.request({
@@ -246,10 +273,7 @@ export class TFRobotChatGateway implements ChatGateway {
       },
       schema: sendTextDtoSchema,
     });
-    const requestDeadline = this.#deadlineResult<SendTextSuccess>(
-      input,
-      input.conversationId,
-    );
+    const requestDeadline = this.#deadlineResult<SendTextSuccess>(input);
     if (requestDeadline !== undefined) return requestDeadline;
     return result.ok
       ? { ok: true, value: { runId: String(result.value.taskId) } }
@@ -259,9 +283,7 @@ export class TFRobotChatGateway implements ChatGateway {
   async interrupt(
     input: InterruptRunInput,
   ): Promise<GatewayResult<InterruptRunSuccess>> {
-    const disposed = this.#disposedResult<InterruptRunSuccess>(
-      input.conversationId,
-    );
+    const disposed = this.#disposedResult<InterruptRunSuccess>();
     if (disposed !== undefined) return disposed;
     if (
       input.runId === undefined ||
@@ -273,7 +295,6 @@ export class TFRobotChatGateway implements ChatGateway {
           code: "conflict",
           message: "Interrupt requires a real active TFRobot taskId",
           retryable: false,
-          conversationId: input.conversationId,
         }),
       };
     }
@@ -286,10 +307,7 @@ export class TFRobotChatGateway implements ChatGateway {
       body: { taskId: input.runId },
       schema: interruptDtoSchema,
     });
-    const requestDeadline = this.#deadlineResult<InterruptRunSuccess>(
-      input,
-      input.conversationId,
-    );
+    const requestDeadline = this.#deadlineResult<InterruptRunSuccess>(input);
     if (requestDeadline !== undefined) return requestDeadline;
     return result.ok
       ? {
@@ -314,17 +332,16 @@ export class TFRobotChatGateway implements ChatGateway {
 
   #deadlineResult<T>(
     options: GatewayRequestOptions,
-    conversationId?: string,
   ): GatewayResult<T> | undefined {
     return isGatewayDeadlineExceeded(options, this.#now())
       ? {
           ok: false,
-          error: createGatewayDeadlineExceededError(conversationId),
+          error: createGatewayDeadlineExceededError(),
         }
       : undefined;
   }
 
-  #disposedResult<T>(conversationId?: string): GatewayResult<T> | undefined {
+  #disposedResult<T>(): GatewayResult<T> | undefined {
     if (!this.#disposed) return undefined;
     return {
       ok: false,
@@ -332,19 +349,17 @@ export class TFRobotChatGateway implements ChatGateway {
         code: "conflict",
         message: "TFRobot Gateway is disposed",
         retryable: false,
-        ...(conversationId === undefined ? {} : { conversationId }),
       }),
     };
   }
 
-  #mappingError<T>(message: string, conversationId?: string): GatewayResult<T> {
+  #mappingError<T>(message: string): GatewayResult<T> {
     return {
       ok: false,
       error: chatErrorSchema.parse({
         code: "validation",
         message,
         retryable: false,
-        ...(conversationId === undefined ? {} : { conversationId }),
       }),
     };
   }
@@ -355,7 +370,7 @@ export class TFRobotChatGateway implements ChatGateway {
     if (isGatewayDeadlineExceeded(input, this.#now())) {
       return {
         ok: false,
-        error: createGatewayDeadlineExceededError(input.conversationId),
+        error: createGatewayDeadlineExceededError(),
       };
     }
     const outcome = await awaitBounded(
@@ -372,16 +387,16 @@ export class TFRobotChatGateway implements ChatGateway {
     switch (outcome.kind) {
       case "aborted": {
         return (
-          this.#disposedResult<TFRobotMessageCreator>(input.conversationId) ?? {
+          this.#disposedResult<TFRobotMessageCreator>() ?? {
             ok: false,
-            error: createGatewayDeadlineExceededError(input.conversationId),
+            error: createGatewayDeadlineExceededError(),
           }
         );
       }
       case "deadline": {
         return {
           ok: false,
-          error: createGatewayDeadlineExceededError(input.conversationId),
+          error: createGatewayDeadlineExceededError(),
         };
       }
       case "error": {
@@ -391,7 +406,6 @@ export class TFRobotChatGateway implements ChatGateway {
             code: "validation",
             message: "Unable to obtain the current TFRobot message creator",
             retryable: false,
-            conversationId: input.conversationId,
           }),
         };
       }
@@ -404,19 +418,16 @@ export class TFRobotChatGateway implements ChatGateway {
               code: "validation",
               message: "messageCreatorProvider returned an invalid creator",
               retryable: false,
-              conversationId: input.conversationId,
             }),
           };
         }
-        const disposed = this.#disposedResult<TFRobotMessageCreator>(
-          input.conversationId,
-        );
+        const disposed = this.#disposedResult<TFRobotMessageCreator>();
         return (
           disposed ??
-          this.#deadlineResult<TFRobotMessageCreator>(
-            input,
-            input.conversationId,
-          ) ?? { ok: true, value: parsed.data }
+          this.#deadlineResult<TFRobotMessageCreator>(input) ?? {
+            ok: true,
+            value: parsed.data,
+          }
         );
       }
     }

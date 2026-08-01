@@ -1,7 +1,10 @@
 /experiments/
+/playground/dist/
 node_modules/
 dist/
 .artifacts/
 coverage/
+playwright-report/
+test-results/
 *.tsbuildinfo
 .pnpm-store/

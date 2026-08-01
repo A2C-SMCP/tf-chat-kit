@@ -525,6 +525,456 @@ describe("chat-testing fixtures", () => {
 });
 
 describe("Memory ChatGateway", () => {
+  it("creates, paginates, and loads isolated conversation snapshots", async () => {
+    const memory = createMemoryChatGateway({ now: () => 1_000 });
+    const create = async (title: string) => {
+      const result = await memory.gateway.createConversation({
+        title,
+        deadlineAt: memory.controller.now() + 1_000,
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error(result.error.message);
+      return result.value;
+    };
+
+    const first = await create("First created conversation");
+    memory.controller.advanceTimeTo(1_001);
+    const second = await create("Second created conversation");
+    expect(first.id).not.toBe(second.id);
+    expect(first.updatedAt).toBe(1_000);
+    expect(second.updatedAt).toBe(1_001);
+
+    const firstPage = await memory.gateway.listConversations({
+      limit: 2,
+      deadlineAt: memory.controller.now() + 1_000,
+    });
+    expect(firstPage).toMatchObject({
+      ok: true,
+      value: {
+        conversations: [{ id: second.id }, { id: first.id }],
+        nextCursor: expect.any(String),
+      },
+    });
+    if (!firstPage.ok) return;
+    memory.controller.advanceTimeTo(1_002);
+    const inserted = await create("Inserted before the next page");
+    const secondPage = await memory.gateway.listConversations({
+      cursor: firstPage.value.nextCursor,
+      limit: 2,
+      deadlineAt: memory.controller.now() + 1_000,
+    });
+    expect(secondPage).toMatchObject({
+      ok: true,
+      value: { conversations: [memory.fixtures.conversation] },
+    });
+    expect(
+      secondPage.ok &&
+        secondPage.value.conversations.some(
+          (conversation) => conversation.id === inserted.id,
+        ),
+    ).toBe(false);
+
+    const loadedFirst = await memory.gateway.loadConversation({
+      conversationId: first.id,
+      deadlineAt: memory.controller.now() + 1_000,
+    });
+    const loadedSecond = await memory.gateway.loadConversation({
+      conversationId: second.id,
+      deadlineAt: memory.controller.now() + 1_000,
+    });
+    expect(loadedFirst).toMatchObject({
+      ok: true,
+      value: { conversation: first, timeline: [] },
+    });
+    expect(loadedSecond).toMatchObject({
+      ok: true,
+      value: { conversation: second, timeline: [] },
+    });
+
+    memory.controller.setSnapshot({
+      ...(loadedFirst.ok ? loadedFirst.value : memory.fixtures.initialSnapshot),
+      conversation: first,
+      timeline: [
+        {
+          ...memory.fixtures.initialSnapshot.timeline[0]!,
+          conversationId: first.id,
+          id: "first-conversation-message",
+        },
+      ],
+    });
+    await expect(
+      memory.gateway.loadConversation({
+        conversationId: first.id,
+        deadlineAt: memory.controller.now() + 1_000,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { timeline: [{ id: "first-conversation-message" }] },
+    });
+    await expect(
+      memory.gateway.loadConversation({
+        conversationId: second.id,
+        deadlineAt: memory.controller.now() + 1_000,
+      }),
+    ).resolves.toMatchObject({ ok: true, value: { timeline: [] } });
+  });
+
+  it("preserves exact scripted pages and reserves their conversation ids", async () => {
+    const memory = createMemoryChatGateway();
+    const scriptedPage = {
+      conversations: [
+        {
+          id: "memory-conversation-1",
+          title: "Scripted conversation",
+          updatedAt: 123,
+        },
+      ],
+      nextCursor: "memory:1",
+    };
+    memory.controller.setConversationPage(scriptedPage);
+
+    await expect(
+      memory.gateway.listConversations({
+        limit: 1,
+        deadlineAt: requestDeadlineAt(),
+      }),
+    ).resolves.toEqual({ ok: true, value: scriptedPage });
+    await expect(
+      memory.gateway.listConversations({
+        cursor: "caller-controlled-cursor",
+        limit: 100,
+        deadlineAt: requestDeadlineAt(),
+      }),
+    ).resolves.toEqual({ ok: true, value: scriptedPage });
+
+    await expect(
+      memory.gateway.createConversation({
+        title: "Must not collide",
+        deadlineAt: requestDeadlineAt(),
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { id: "memory-conversation-2" },
+    });
+  });
+
+  it("updates listing and creation defaults when setSnapshot changes capabilities", async () => {
+    const memory = createMemoryChatGateway();
+    memory.controller.setSnapshot({
+      ...memory.fixtures.initialSnapshot,
+      capabilities: {
+        ...memory.fixtures.initialSnapshot.capabilities,
+        listConversations: false,
+        sendText: false,
+      },
+    });
+    await expect(
+      memory.gateway.listConversations({ deadlineAt: requestDeadlineAt() }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "unsupported" },
+    });
+
+    const created = await memory.gateway.createConversation({
+      title: "Inherited capabilities",
+      deadlineAt: requestDeadlineAt(),
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    await expect(
+      memory.gateway.sendText({
+        conversationId: created.value.id,
+        text: "Unsupported in the created conversation",
+        deadlineAt: requestDeadlineAt(),
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "unsupported" },
+    });
+
+    memory.controller.setSnapshot(memory.fixtures.initialSnapshot);
+    await expect(
+      memory.gateway.listConversations({ deadlineAt: requestDeadlineAt() }),
+    ).resolves.toMatchObject({ ok: true });
+  });
+
+  it("isolates subscriptions between conversations in one Gateway", async () => {
+    const memory = createMemoryChatGateway();
+    const created = await memory.gateway.createConversation({
+      title: "Isolated conversation",
+      deadlineAt: requestDeadlineAt(),
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const initialNext = vi.fn();
+    const createdNext = vi.fn();
+    const initialSubscription = await memory.gateway.subscribe(
+      {
+        conversationId: memory.fixtures.conversation.id,
+        deadlineAt: requestDeadlineAt(),
+      },
+      { next: initialNext },
+    );
+    const createdSubscription = await memory.gateway.subscribe(
+      {
+        conversationId: created.value.id,
+        deadlineAt: requestDeadlineAt(),
+      },
+      { next: createdNext },
+    );
+    expect(initialSubscription.ok && createdSubscription.ok).toBe(true);
+    if (!initialSubscription.ok || !createdSubscription.ok) return;
+
+    memory.controller.emitUpdate({
+      kind: "conversation.upsert",
+      conversation: { ...created.value, title: "Created update" },
+    });
+    expect(createdNext).toHaveBeenCalledOnce();
+    expect(initialNext).not.toHaveBeenCalled();
+    memory.controller.emitUpdate({
+      kind: "conversation.upsert",
+      conversation: {
+        ...memory.fixtures.conversation,
+        title: "Initial update",
+      },
+    });
+    expect(initialNext).toHaveBeenCalledOnce();
+    expect(createdNext).toHaveBeenCalledOnce();
+
+    await initialSubscription.value.dispose({
+      deadlineAt: requestDeadlineAt(),
+    });
+    await createdSubscription.value.dispose({
+      deadlineAt: requestDeadlineAt(),
+    });
+  });
+
+  it("scripts creation failures, holds, deadlines, disconnects, and disposal", async () => {
+    const memory = createMemoryChatGateway({ now: () => 5_000 });
+    memory.controller.failNext("createConversation", {
+      code: "server",
+      message: "Scripted create failure",
+      retryable: true,
+    });
+    await expect(
+      memory.gateway.createConversation({
+        title: "Failed",
+        deadlineAt: 6_000,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "server" },
+    });
+
+    const successfulHold = memory.controller.holdNext("createConversation");
+    const heldCreation = memory.gateway.createConversation({
+      title: "  Held creation  ",
+      deadlineAt: 6_000,
+    });
+    await successfulHold.started;
+    successfulHold.release();
+    await expect(heldCreation).resolves.toMatchObject({
+      ok: true,
+      value: { title: "Held creation", updatedAt: 5_000 },
+    });
+
+    const deadlineHold = memory.controller.holdNext("createConversation");
+    const timedOut = memory.gateway.createConversation({
+      title: "Timed out",
+      deadlineAt: 5_100,
+    });
+    await deadlineHold.started;
+    memory.controller.advanceTimeTo(5_100);
+    await expect(timedOut).resolves.toMatchObject({
+      ok: false,
+      error: { code: "timeout" },
+    });
+    deadlineHold.release();
+
+    memory.controller.disconnect();
+    await expect(
+      memory.gateway.createConversation({
+        title: "Disconnected",
+        deadlineAt: 6_000,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "network" },
+    });
+    memory.controller.reconnect();
+    await memory.gateway.dispose({ deadlineAt: 6_000 });
+    await expect(
+      memory.gateway.createConversation({
+        title: "Disposed",
+        deadlineAt: 6_000,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(
+      memory.controller.calls.flatMap((call) =>
+        call.operation === "createConversation" ? [call.input.title] : [],
+      ),
+    ).toEqual([
+      "Failed",
+      "Held creation",
+      "Timed out",
+      "Disconnected",
+      "Disposed",
+    ]);
+  });
+
+  it("rechecks lifecycle state after immediate and held creation waits", async () => {
+    const disconnected = createMemoryChatGateway();
+    const disconnectedCreation = disconnected.gateway.createConversation({
+      title: "Invalidated by disconnect",
+      deadlineAt: requestDeadlineAt(),
+    });
+    disconnected.controller.disconnect();
+    await expect(disconnectedCreation).resolves.toMatchObject({
+      ok: false,
+      error: { code: "network" },
+    });
+    disconnected.controller.reconnect();
+    const listedAfterReconnect = await disconnected.gateway.listConversations({
+      deadlineAt: requestDeadlineAt(),
+    });
+    expect(listedAfterReconnect.ok).toBe(true);
+    expect(
+      listedAfterReconnect.ok &&
+        listedAfterReconnect.value.conversations.some(
+          (conversation) => conversation.title === "Invalidated by disconnect",
+        ),
+    ).toBe(false);
+
+    const immediate = createMemoryChatGateway();
+    const immediateCreation = immediate.gateway.createConversation({
+      title: "Invalidated by immediate disposal",
+      deadlineAt: requestDeadlineAt(),
+    });
+    const immediateDisposal = immediate.gateway.dispose({
+      deadlineAt: requestDeadlineAt(),
+    });
+    await expect(immediateCreation).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    await immediateDisposal;
+
+    const held = createMemoryChatGateway();
+    const hold = held.controller.holdNext("createConversation");
+    const heldCreation = held.gateway.createConversation({
+      title: "Invalidated while held",
+      deadlineAt: requestDeadlineAt(),
+    });
+    await hold.started;
+    const heldDisposal = held.gateway.dispose({
+      deadlineAt: requestDeadlineAt(),
+    });
+    hold.release();
+    await expect(heldCreation).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    await heldDisposal;
+  });
+
+  it("isolates command capabilities between conversation snapshots", async () => {
+    const fixtures = createChatContractFixtures({ answerInteraction: true });
+    const memory = createMemoryChatGateway({ fixtures });
+    const created = await memory.gateway.createConversation({
+      title: "Restricted conversation",
+      deadlineAt: requestDeadlineAt(),
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const restrictedId = created.value.id;
+    memory.controller.setSnapshot({
+      ...fixtures.initialSnapshot,
+      conversation: created.value,
+      timeline: [],
+      run:
+        fixtures.initialSnapshot.run === null
+          ? null
+          : { ...fixtures.initialSnapshot.run, conversationId: restrictedId },
+      capabilities: {
+        ...fixtures.initialSnapshot.capabilities,
+        answerInteraction: false,
+        interrupt: false,
+        sendText: false,
+      },
+      pendingInteraction: {
+        ...fixtures.askUserRequest,
+        conversationId: restrictedId,
+      },
+    });
+
+    const initialId = fixtures.conversation.id;
+    await expect(
+      memory.gateway.sendText({
+        conversationId: initialId,
+        text: "Allowed",
+        deadlineAt: requestDeadlineAt(),
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
+      memory.gateway.interrupt({
+        conversationId: initialId,
+        runId: fixtures.initialSnapshot.run?.id,
+        deadlineAt: requestDeadlineAt(),
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
+      memory.gateway.answerInteraction!({
+        conversationId: initialId,
+        answer: {
+          requestId: fixtures.askUserRequest.requestId,
+          revision: fixtures.askUserRequest.revision,
+          action: "cancel",
+          answers: {},
+        },
+        deadlineAt: requestDeadlineAt(),
+      }),
+    ).resolves.toMatchObject({ ok: true });
+
+    await expect(
+      memory.gateway.sendText({
+        conversationId: restrictedId,
+        text: "Rejected",
+        deadlineAt: requestDeadlineAt(),
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "unsupported" },
+    });
+    await expect(
+      memory.gateway.interrupt({
+        conversationId: restrictedId,
+        runId: fixtures.initialSnapshot.run?.id,
+        deadlineAt: requestDeadlineAt(),
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "unsupported" },
+    });
+    await expect(
+      memory.gateway.answerInteraction!({
+        conversationId: restrictedId,
+        answer: {
+          requestId: fixtures.askUserRequest.requestId,
+          revision: fixtures.askUserRequest.revision,
+          action: "cancel",
+          answers: {},
+        },
+        deadlineAt: requestDeadlineAt(),
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "unsupported" },
+    });
+  });
+
   it("records calls and consumes scripted failures once", async () => {
     const memory = createMemoryChatGateway();
     memory.controller.failNext(

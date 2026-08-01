@@ -5,8 +5,6 @@ import {
   chatUpdateSchema,
   createGatewayDeadlineExceededError,
   isGatewayDeadlineExceeded,
-  sanitizeDiagnosticText,
-  sanitizeRaw,
   type ChatError,
   type GatewayObserver,
   type GatewayRequestOptions,
@@ -23,6 +21,7 @@ import {
   messageDtoSchema,
   socketProtocolErrorDtoSchema,
   stateChangedDtoSchema,
+  statusDtoSchema,
 } from "./dto.js";
 import {
   mapEventUpdate,
@@ -30,6 +29,11 @@ import {
   mapRun,
   mapUnknownSocketEvent,
 } from "./mapper.js";
+import {
+  sanitizeCredentialError,
+  sanitizeCredentialRaw,
+  sanitizeCredentialText,
+} from "./redaction.js";
 import { isValidTFRobotSession } from "./types.js";
 import type { StatusDto } from "./dto.js";
 import type {
@@ -208,14 +212,14 @@ export class TFRobotSocketClient {
           "conflict",
           "TFRobot Gateway is disposed",
           false,
-          conversationId,
+          undefined,
         ),
       };
     }
     if (isGatewayDeadlineExceeded(options, this.#now())) {
       return {
         ok: false,
-        error: createGatewayDeadlineExceededError(conversationId),
+        error: createGatewayDeadlineExceededError(),
       };
     }
     this.#deactivateCurrent();
@@ -242,14 +246,14 @@ export class TFRobotSocketClient {
               ? "TFRobot Gateway was disposed during subscription"
               : "TFRobot subscription was replaced during authentication",
             false,
-            conversationId,
+            undefined,
           ),
         };
       }
       case "deadline": {
         return {
           ok: false,
-          error: createGatewayDeadlineExceededError(conversationId),
+          error: createGatewayDeadlineExceededError(),
         };
       }
       case "error": {
@@ -257,11 +261,9 @@ export class TFRobotSocketClient {
           ok: false,
           error: this.#error(
             "authentication",
-            authOutcome.reason instanceof Error
-              ? authOutcome.reason.message
-              : "Unable to obtain a TFRobot Socket session",
+            "Unable to obtain a TFRobot Socket session",
             true,
-            conversationId,
+            undefined,
           ),
         };
       }
@@ -276,11 +278,14 @@ export class TFRobotSocketClient {
           "conflict",
           "TFRobot Gateway was disposed during subscription",
           false,
-          conversationId,
+          undefined,
         ),
       };
     }
 
+    const credentialValues = new Set(Object.values(authOutcome.value));
+    const errorConversationId = (): string =>
+      sanitizeCredentialText(conversationId, credentialValues);
     let firstAuth: TFRobotSocketAuth | undefined = authOutcome.value;
     let authenticationFailure: unknown;
     const connectionAbort = new AbortController();
@@ -306,7 +311,12 @@ export class TFRobotSocketClient {
               signal: connectionAbort.signal,
             },
           );
-          if (reconnectAuth.kind === "value") return reconnectAuth.value;
+          if (reconnectAuth.kind === "value") {
+            for (const value of Object.values(reconnectAuth.value)) {
+              credentialValues.add(value);
+            }
+            return reconnectAuth.value;
+          }
           const reason =
             reconnectAuth.kind === "error"
               ? reconnectAuth.reason
@@ -327,6 +337,7 @@ export class TFRobotSocketClient {
           reason,
           "Unable to create the TFRobot Socket transport",
           conversationId,
+          credentialValues,
         ),
       };
     }
@@ -359,6 +370,13 @@ export class TFRobotSocketClient {
       }
       diagnose(error);
     };
+    const sanitizePayload = (payload: unknown): unknown => {
+      try {
+        return sanitizeCredentialRaw(payload, credentialValues);
+      } catch {
+        return undefined;
+      }
+    };
     const next = (update: Parameters<GatewayObserver["next"]>[0]): void => {
       if (!active.active) return;
       const updateConversationId =
@@ -369,7 +387,8 @@ export class TFRobotSocketClient {
             : update.conversationId;
       if (
         updateConversationId !== undefined &&
-        updateConversationId !== conversationId
+        updateConversationId !== conversationId &&
+        updateConversationId !== errorConversationId()
       ) {
         return;
       }
@@ -381,7 +400,7 @@ export class TFRobotSocketClient {
             "unknown",
             "TFRobot Gateway observer rejected an update",
             false,
-            conversationId,
+            errorConversationId(),
           ),
         );
       }
@@ -395,7 +414,12 @@ export class TFRobotSocketClient {
         update = map();
       } catch {
         report(
-          this.#error("validation", invalidMessage, false, conversationId),
+          this.#error(
+            "validation",
+            invalidMessage,
+            false,
+            errorConversationId(),
+          ),
         );
         return;
       }
@@ -412,7 +436,7 @@ export class TFRobotSocketClient {
       ) {
         settleEstablishment({
           ok: false,
-          error: createGatewayDeadlineExceededError(conversationId),
+          error: createGatewayDeadlineExceededError(errorConversationId()),
         });
         return;
       }
@@ -428,6 +452,7 @@ export class TFRobotSocketClient {
           reason,
           "Unable to join the TFRobot conversation",
           conversationId,
+          credentialValues,
         );
         if (settleEstablishment !== undefined) {
           settleEstablishment({ ok: false, error });
@@ -445,7 +470,7 @@ export class TFRobotSocketClient {
       ) {
         settleEstablishment({
           ok: false,
-          error: createGatewayDeadlineExceededError(conversationId),
+          error: createGatewayDeadlineExceededError(errorConversationId()),
         });
         return;
       }
@@ -464,6 +489,7 @@ export class TFRobotSocketClient {
         void this.#reconcileRunAfterReconnect(
           active,
           conversationId,
+          credentialValues,
           recoveryRevision,
           next,
           report,
@@ -473,7 +499,7 @@ export class TFRobotSocketClient {
               "unknown",
               "TFRobot reconnect reconciliation failed",
               true,
-              conversationId,
+              errorConversationId(),
             ),
           );
         });
@@ -481,14 +507,14 @@ export class TFRobotSocketClient {
     });
     add("chat_message", (payload) => {
       if (belongsToForeignConversation(payload, conversationId)) return;
-      const parsed = messageDtoSchema.safeParse(payload);
+      const parsed = messageDtoSchema.safeParse(sanitizePayload(payload));
       if (!parsed.success) {
         report(
           this.#error(
             "validation",
             "Invalid TFRobot chat_message payload",
             false,
-            conversationId,
+            errorConversationId(),
           ),
         );
         return;
@@ -499,14 +525,14 @@ export class TFRobotSocketClient {
     });
     add("chat_event", (payload) => {
       if (belongsToForeignConversation(payload, conversationId)) return;
-      const parsed = eventDtoSchema.safeParse(payload);
+      const parsed = eventDtoSchema.safeParse(sanitizePayload(payload));
       if (!parsed.success) {
         report(
           this.#error(
             "validation",
             "Invalid TFRobot chat_event payload",
             false,
-            conversationId,
+            errorConversationId(),
           ),
         );
         return;
@@ -517,20 +543,25 @@ export class TFRobotSocketClient {
     });
     add("conversation_state_changed", (payload) => {
       if (belongsToForeignConversation(payload, conversationId)) return;
-      const parsed = stateChangedDtoSchema.safeParse(payload);
+      const parsed = stateChangedDtoSchema.safeParse(sanitizePayload(payload));
       if (!parsed.success) {
         report(
           this.#error(
             "validation",
             "Invalid TFRobot conversation_state_changed payload",
             false,
-            conversationId,
+            errorConversationId(),
           ),
         );
         return;
       }
       const targetConversationId = String(parsed.data.conversationId);
-      if (targetConversationId !== conversationId) return;
+      if (
+        targetConversationId !== conversationId &&
+        targetConversationId !== errorConversationId()
+      ) {
+        return;
+      }
       active.recoveryRevision += 1;
       mapAndNext("TFRobot run state could not be normalized", () => {
         const run = mapRun(targetConversationId, {
@@ -547,20 +578,27 @@ export class TFRobotSocketClient {
     });
     add("chat_error", (payload) => {
       if (belongsToForeignConversation(payload, conversationId)) return;
-      const parsed = chatErrorEventDtoSchema.safeParse(payload);
+      const parsed = chatErrorEventDtoSchema.safeParse(
+        sanitizePayload(payload),
+      );
       if (!parsed.success) {
         report(
           this.#error(
             "validation",
             "Invalid TFRobot chat_error payload",
             false,
-            conversationId,
+            errorConversationId(),
           ),
         );
         return;
       }
       const targetConversationId = String(parsed.data.conversationId);
-      if (targetConversationId !== conversationId) return;
+      if (
+        targetConversationId !== conversationId &&
+        targetConversationId !== errorConversationId()
+      ) {
+        return;
+      }
       report(
         this.#error(
           "server",
@@ -570,11 +608,14 @@ export class TFRobotSocketClient {
           false,
           targetConversationId,
           parsed.data,
+          credentialValues,
         ),
       );
     });
     add("error", (payload) => {
-      const parsed = socketProtocolErrorDtoSchema.safeParse(payload);
+      const parsed = socketProtocolErrorDtoSchema.safeParse(
+        sanitizePayload(payload),
+      );
       report(
         this.#error(
           "validation",
@@ -583,6 +624,8 @@ export class TFRobotSocketClient {
             : "TFRobot Socket protocol error",
           false,
           conversationId,
+          undefined,
+          credentialValues,
         ),
       );
     });
@@ -593,14 +636,14 @@ export class TFRobotSocketClient {
         authenticationFailure !== undefined
           ? this.#error(
               "authentication",
-              authenticationFailure instanceof Error
-                ? authenticationFailure.message
-                : "Unable to refresh the TFRobot Socket session",
+              "Unable to refresh the TFRobot Socket session",
               true,
               conversationId,
+              undefined,
+              credentialValues,
             )
           : injectedError.success
-            ? injectedError.data
+            ? sanitizeCredentialError(injectedError.data, credentialValues)
             : rejectionCode !== undefined
               ? this.#error(
                   rejectionCode,
@@ -609,6 +652,8 @@ export class TFRobotSocketClient {
                     : "TFRobot Socket rejected the session",
                   false,
                   conversationId,
+                  undefined,
+                  credentialValues,
                 )
               : this.#error(
                   "network",
@@ -617,6 +662,8 @@ export class TFRobotSocketClient {
                     : "TFRobot Socket connection failed",
                   true,
                   conversationId,
+                  undefined,
+                  credentialValues,
                 );
       authenticationFailure = undefined;
       if (error.code === "authentication" || error.code === "authorization") {
@@ -637,12 +684,14 @@ export class TFRobotSocketClient {
       const injectedError = chatErrorSchema.safeParse(reason);
       report(
         injectedError.success
-          ? injectedError.data
+          ? sanitizeCredentialError(injectedError.data, credentialValues)
           : this.#error(
               "network",
               `TFRobot Socket disconnected: ${String(reason)}`,
               true,
               conversationId,
+              undefined,
+              credentialValues,
             ),
       );
     });
@@ -653,7 +702,12 @@ export class TFRobotSocketClient {
       if (KNOWN_EVENTS.has(eventName)) return;
       if (belongsToForeignConversation(payload, conversationId)) return;
       mapAndNext("Unknown TFRobot Socket event could not be normalized", () =>
-        mapUnknownSocketEvent(eventName, payload, conversationId, this.#now()),
+        mapUnknownSocketEvent(
+          sanitizeCredentialText(eventName, credentialValues),
+          sanitizePayload(payload),
+          errorConversationId(),
+          this.#now(),
+        ),
       );
     };
     if (setupFailure === undefined) {
@@ -682,16 +736,20 @@ export class TFRobotSocketClient {
       } catch {
         // Adapter ownership is cleared even if an injected transport misbehaves.
       }
+      firstAuth = undefined;
+      credentialValues.clear();
     };
     if (setupFailure !== undefined) {
+      const error = this.#transportError(
+        setupFailure.reason,
+        "Unable to configure the TFRobot Socket transport",
+        conversationId,
+        credentialValues,
+      );
       cleanup();
       return {
         ok: false,
-        error: this.#transportError(
-          setupFailure.reason,
-          "Unable to configure the TFRobot Socket transport",
-          conversationId,
-        ),
+        error,
       };
     }
     const active: ActiveSubscription = {
@@ -703,7 +761,7 @@ export class TFRobotSocketClient {
             "conflict",
             "TFRobot Gateway was disposed during subscription",
             false,
-            conversationId,
+            errorConversationId(),
           ),
         });
       },
@@ -733,7 +791,7 @@ export class TFRobotSocketClient {
         () => {
           settle({
             ok: false,
-            error: createGatewayDeadlineExceededError(conversationId),
+            error: createGatewayDeadlineExceededError(errorConversationId()),
           });
         },
         Math.min(
@@ -744,7 +802,7 @@ export class TFRobotSocketClient {
       if (isGatewayDeadlineExceeded(options, this.#now())) {
         settle({
           ok: false,
-          error: createGatewayDeadlineExceededError(conversationId),
+          error: createGatewayDeadlineExceededError(errorConversationId()),
         });
         return;
       }
@@ -757,6 +815,7 @@ export class TFRobotSocketClient {
             reason,
             "Unable to connect the TFRobot Socket transport",
             conversationId,
+            credentialValues,
           ),
         });
         return;
@@ -764,7 +823,7 @@ export class TFRobotSocketClient {
       if (isGatewayDeadlineExceeded(options, this.#now())) {
         settle({
           ok: false,
-          error: createGatewayDeadlineExceededError(conversationId),
+          error: createGatewayDeadlineExceededError(errorConversationId()),
         });
       }
     });
@@ -821,6 +880,7 @@ export class TFRobotSocketClient {
   async #reconcileRunAfterReconnect(
     active: ActiveSubscription,
     conversationId: string,
+    credentialValues: Iterable<string>,
     recoveryRevision: number,
     next: GatewayObserver["next"],
     report: (error: ChatError) => void,
@@ -835,18 +895,25 @@ export class TFRobotSocketClient {
       return;
     }
     if (!result.ok) {
-      report(result.error);
+      report(sanitizeCredentialError(result.error, credentialValues));
       return;
     }
     try {
-      const run = mapRun(conversationId, result.value);
+      const updateConversationId = sanitizeCredentialText(
+        conversationId,
+        credentialValues,
+      );
+      const safeStatus = statusDtoSchema.parse(
+        sanitizeCredentialRaw(result.value, credentialValues),
+      );
+      const run = mapRun(updateConversationId, safeStatus);
       const previous = this.#runs.get(conversationId);
       this.#runs.set(conversationId, run);
       if (sameRun(previous, run)) return;
       next(
         chatUpdateSchema.parse({
           kind: "run.replace",
-          conversationId,
+          conversationId: updateConversationId,
           run,
         }),
       );
@@ -857,6 +924,8 @@ export class TFRobotSocketClient {
           "Reconnected TFRobot run status could not be normalized",
           false,
           conversationId,
+          undefined,
+          credentialValues,
         ),
       );
     }
@@ -881,12 +950,15 @@ export class TFRobotSocketClient {
     reason: unknown,
     fallback: string,
     conversationId: string,
+    credentialValues: Iterable<string> = [],
   ): ChatError {
     return this.#error(
       "network",
       reason instanceof Error ? reason.message : fallback,
       true,
       conversationId,
+      undefined,
+      credentialValues,
     );
   }
 
@@ -894,20 +966,31 @@ export class TFRobotSocketClient {
     code: ChatError["code"],
     message: string,
     retryable: boolean,
-    conversationId: string,
+    conversationId?: string,
     details?: unknown,
+    credentialValues: Iterable<string> = [],
   ): ChatError {
-    let safeDetails: ReturnType<typeof sanitizeRaw> | undefined;
+    let safeDetails: ReturnType<typeof sanitizeCredentialRaw> | undefined;
     try {
-      safeDetails = details === undefined ? undefined : sanitizeRaw(details);
+      safeDetails =
+        details === undefined
+          ? undefined
+          : sanitizeCredentialRaw(details, credentialValues);
     } catch {
       safeDetails = undefined;
     }
     return chatErrorSchema.parse({
       code,
-      message: sanitizeDiagnosticText(message),
+      message: sanitizeCredentialText(message, credentialValues),
       retryable,
-      conversationId,
+      ...(conversationId === undefined
+        ? {}
+        : {
+            conversationId: sanitizeCredentialText(
+              conversationId,
+              credentialValues,
+            ),
+          }),
       ...(safeDetails === undefined ? {} : { details: safeDetails }),
     });
   }
