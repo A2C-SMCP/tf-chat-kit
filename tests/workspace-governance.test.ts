@@ -42,7 +42,9 @@ describe("workspace governance", () => {
 
   it("rejects unified version drift", async () => {
     const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
-    snapshot.packages[0]!.manifest.version = "0.2.0";
+    const currentVersion = snapshot.packages[0]!.manifest.version;
+    snapshot.packages[0]!.manifest.version =
+      currentVersion === "0.0.0" ? "0.0.1" : "0.0.0";
 
     expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
       expect.stringContaining("workspace package versions must match"),
