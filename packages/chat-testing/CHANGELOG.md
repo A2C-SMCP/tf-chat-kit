@@ -1,5 +1,21 @@
 # @turingfocus/chat-testing
 
+## 0.2.0
+
+### Minor Changes
+
+- ce9d465: Expand the Memory Gateway with deterministic multi-conversation creation,
+  pagination, per-conversation snapshots and subscriptions, and scriptable
+  creation failures, holds, deadlines, disconnects, and disposal.
+- ce9d465: Add host-agnostic conversation listing and creation commands with normalized
+  input validation, backward-compatible Gateway support, and stable Runtime
+  errors for unsupported, expired, invalid, and disposed operations.
+
+### Patch Changes
+
+- Updated dependencies [ce9d465]
+  - @turingfocus/chat-protocol@0.2.0
+
 ## 0.1.0
 
 ### Minor Changes

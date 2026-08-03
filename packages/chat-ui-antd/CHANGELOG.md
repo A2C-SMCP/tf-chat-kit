@@ -1,5 +1,21 @@
 # @turingfocus/chat-ui-antd
 
+## 0.2.0
+
+### Minor Changes
+
+- 8cd29c9: Add compact event rows, safe shared event details, and responsive split or modal detail modes with controlled and uncontrolled selection APIs.
+- 8bc0f44: Add an accessible, pointer- and keyboard-resizable event-detail split with
+  controlled and uncontrolled ratio APIs, while keeping persistence owned by the
+  host application.
+- 8bc0f44: Place the active-run interrupt action beside the composer send button and hide it when no run is in progress. Add optional composer interrupt configuration and allow standalone run-status views to suppress their interrupt button.
+
+### Patch Changes
+
+- Updated dependencies [ce9d465]
+  - @turingfocus/chat-protocol@0.2.0
+  - @turingfocus/chat-react@0.2.0
+
 ## 0.1.0
 
 ### Minor Changes

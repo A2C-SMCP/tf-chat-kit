@@ -1,5 +1,22 @@
 # @turingfocus/chat-gateway-tfrobot
 
+## 0.2.0
+
+### Minor Changes
+
+- ce9d465: Add authenticated RobotServer conversation creation with validated DTO mapping
+  and immediate Gateway cache integration.
+
+### Patch Changes
+
+- 8bc0f44: Preserve RobotServer conversation identifier types when sending messages after normalizing public Chat Kit IDs.
+- ce9d465: Preserve the required browser receiver when the Gateway uses the global Fetch API,
+  and redact the exact active Bearer or Admin credential from HTTP and Socket
+  responses, realtime payloads, and diagnostics even when a server echoes an opaque
+  value without a credential label.
+- Updated dependencies [ce9d465]
+  - @turingfocus/chat-protocol@0.2.0
+
 ## 0.1.0
 
 ### Minor Changes
