@@ -1,5 +1,13 @@
 # @turingfocus/chat-protocol
 
+## 0.2.0
+
+### Minor Changes
+
+- ce9d465: Add host-agnostic conversation listing and creation commands with normalized
+  input validation, backward-compatible Gateway support, and stable Runtime
+  errors for unsupported, expired, invalid, and disposed operations.
+
 ## 0.1.0
 
 ### Minor Changes
