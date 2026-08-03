@@ -742,6 +742,11 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
 
       await setComposerText(rendered.container, "Hello from UI");
       await clickButton(rendered.container, "Send");
+      const stopButtons = [
+        ...rendered.container.querySelectorAll("button"),
+      ].filter((button) => button.textContent === "Stop");
+      expect(stopButtons).toHaveLength(1);
+      expect(stopButtons[0]?.closest('[data-chat-composer=""]')).not.toBeNull();
       await clickButton(rendered.container, "Stop");
 
       expect(
@@ -1270,6 +1275,13 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
         "Text sending is unavailable.",
       );
       expect(rendered.container.textContent).toContain("Stop unavailable");
+      const unavailableButtons = [
+        ...rendered.container.querySelectorAll("button"),
+      ].filter((button) => button.textContent === "Stop unavailable");
+      expect(unavailableButtons).toHaveLength(1);
+      expect(
+        unavailableButtons[0]?.closest('[data-chat-composer=""]'),
+      ).not.toBeNull();
     } finally {
       await rendered.unmount();
       await client.dispose({ deadlineAt: deadlineAt() });

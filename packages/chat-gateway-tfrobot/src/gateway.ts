@@ -58,6 +58,7 @@ export class TFRobotChatGateway implements ChatGateway {
   readonly #now: () => number;
   readonly #options: TFRobotGatewayOptions;
   readonly #socket: TFRobotSocketClient;
+  readonly #transportConversationIds = new Map<string, number | string>();
 
   constructor(options: TFRobotGatewayOptions) {
     for (const endpoint of [options.baseUrl, options.socketNamespaceUrl]) {
@@ -107,8 +108,9 @@ export class TFRobotChatGateway implements ChatGateway {
     if (requestDeadline !== undefined) return requestDeadline;
     if (!result.ok) return result;
     let conversations: Conversation[];
+    const transportConversations = result.value.conversations ?? [];
     try {
-      conversations = (result.value.conversations ?? []).map(mapConversation);
+      conversations = transportConversations.map(mapConversation);
     } catch {
       return this.#mappingError(
         "TFRobot conversation data could not be normalized",
@@ -116,8 +118,12 @@ export class TFRobotChatGateway implements ChatGateway {
     }
     const mappingDeadline = this.#deadlineResult<ConversationPage>(input);
     if (mappingDeadline !== undefined) return mappingDeadline;
-    for (const conversation of conversations) {
+    for (const [index, conversation] of conversations.entries()) {
       this.#conversations.set(conversation.id, conversation);
+      this.#transportConversationIds.set(
+        conversation.id,
+        transportConversations[index]!.conversationId,
+      );
     }
     return {
       ok: true,
@@ -162,6 +168,10 @@ export class TFRobotChatGateway implements ChatGateway {
     const mappingDeadline = this.#deadlineResult<Conversation>(input);
     if (mappingDeadline !== undefined) return mappingDeadline;
     this.#conversations.set(conversation.id, conversation);
+    this.#transportConversationIds.set(
+      conversation.id,
+      result.value.conversationId,
+    );
     return { ok: true, value: conversation };
   }
 
@@ -267,7 +277,9 @@ export class TFRobotChatGateway implements ChatGateway {
         attachments: null,
         createTimestamp: 0,
         creator: creator.value,
-        conversationId: input.conversationId,
+        conversationId:
+          this.#transportConversationIds.get(input.conversationId) ??
+          input.conversationId,
         role: "user",
         msgType: "text",
       },
@@ -327,6 +339,7 @@ export class TFRobotChatGateway implements ChatGateway {
     this.#socket.dispose();
     this.#http.dispose();
     this.#conversations.clear();
+    this.#transportConversationIds.clear();
     if (isGatewayDeadlineExceeded(options, this.#now())) return;
   }
 

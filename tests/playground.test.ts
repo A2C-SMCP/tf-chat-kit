@@ -6,6 +6,13 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { PlaygroundApp } from "../playground/src/app.js";
 import {
+  DEFAULT_PLAYGROUND_EVENT_DETAIL_SPLIT_RATIO,
+  PLAYGROUND_EVENT_DETAIL_SPLIT_RATIO_STORAGE_KEY,
+  readPlaygroundEventDetailSplitRatio,
+  writePlaygroundEventDetailSplitRatio,
+  type PlaygroundLayoutPreferenceStorage,
+} from "../playground/src/playground-layout-preferences.js";
+import {
   createMockPlaygroundSession,
   orderConversationsByUpdatedAt,
   type MockPlaygroundSession,
@@ -37,6 +44,50 @@ const deferred = <T>() => {
 };
 
 describe("private Chat Kit playground", () => {
+  it("reads and writes a bounded host-wide split ratio without trusting damaged storage", () => {
+    const values = new Map<string, string>();
+    const storage: PlaygroundLayoutPreferenceStorage = {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => {
+        values.set(key, value);
+      },
+    };
+
+    expect(readPlaygroundEventDetailSplitRatio(storage)).toBe(
+      DEFAULT_PLAYGROUND_EVENT_DETAIL_SPLIT_RATIO,
+    );
+    expect(writePlaygroundEventDetailSplitRatio(0.68, storage)).toBe(true);
+    expect(values.get(PLAYGROUND_EVENT_DETAIL_SPLIT_RATIO_STORAGE_KEY)).toBe(
+      "0.68",
+    );
+    expect(readPlaygroundEventDetailSplitRatio(storage)).toBe(0.68);
+
+    for (const invalid of ["", "not-a-number", "0.19", "0.81"]) {
+      values.set(PLAYGROUND_EVENT_DETAIL_SPLIT_RATIO_STORAGE_KEY, invalid);
+      expect(readPlaygroundEventDetailSplitRatio(storage)).toBe(
+        DEFAULT_PLAYGROUND_EVENT_DETAIL_SPLIT_RATIO,
+      );
+    }
+    expect(writePlaygroundEventDetailSplitRatio(Number.NaN, storage)).toBe(
+      false,
+    );
+
+    const unavailableStorage: PlaygroundLayoutPreferenceStorage = {
+      getItem: () => {
+        throw new DOMException("Storage is unavailable", "SecurityError");
+      },
+      setItem: () => {
+        throw new DOMException("Storage is unavailable", "SecurityError");
+      },
+    };
+    expect(readPlaygroundEventDetailSplitRatio(unavailableStorage)).toBe(
+      DEFAULT_PLAYGROUND_EVENT_DETAIL_SPLIT_RATIO,
+    );
+    expect(writePlaygroundEventDetailSplitRatio(0.68, unavailableStorage)).toBe(
+      false,
+    );
+  });
+
   it("orders conversation history newest first without mutating gateway data", () => {
     const conversations = [
       { id: "undated", title: "Undated" },

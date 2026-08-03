@@ -6,6 +6,8 @@ import {
 } from "@playwright/test";
 import { io as connectSocket } from "socket.io-client";
 
+import { PLAYGROUND_EVENT_DETAIL_SPLIT_RATIO_STORAGE_KEY } from "../../playground/src/playground-layout-preferences.js";
+
 const ROBOTSERVER = "http://localhost:4310";
 const PLAYGROUND_ORIGIN = `http://localhost:${
   process.env["TF_CHAT_PLAYGROUND_PORT"] ?? "3000"
@@ -126,10 +128,38 @@ test("Mock mode renders and exercises the formal Runtime scenarios", async ({
   const conversationList = page.locator('aside[aria-label="会话列表"]');
   await expect(conversationList).toBeHidden();
   const eventLayout = page.locator("[data-chat-event-layout]");
+  const splitHandle = page.getByRole("separator", {
+    name: "调整事件详情双栏宽度",
+  });
   const mockEvent = page.locator(
     '[data-chat-event-trigger="playground-agent-event"]',
   );
   await expect(eventLayout).toHaveAttribute("data-chat-event-layout", "split");
+  await expect(splitHandle).toHaveAttribute("aria-valuenow", "56");
+  const layoutBox = await eventLayout.boundingBox();
+  const handleBox = await splitHandle.boundingBox();
+  if (layoutBox === null || handleBox === null) {
+    throw new Error("Event detail split layout is not measurable");
+  }
+  await page.mouse.move(
+    handleBox.x + handleBox.width / 2,
+    handleBox.y + handleBox.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    layoutBox.x + layoutBox.width * 0.7,
+    handleBox.y + handleBox.height / 2,
+  );
+  await page.mouse.up();
+  await expect(splitHandle).toHaveAttribute("aria-valuenow", "70");
+  expect(
+    await page.evaluate(
+      (storageKey) => globalThis.localStorage.getItem(storageKey),
+      PLAYGROUND_EVENT_DETAIL_SPLIT_RATIO_STORAGE_KEY,
+    ),
+  ).toBe("0.7");
+  await page.reload();
+  await expect(splitHandle).toHaveAttribute("aria-valuenow", "70");
   await mockEvent.click();
   await expect(page.locator('aside[aria-label="事件详情"]')).toContainText(
     "执行计划已生成。",
@@ -173,10 +203,21 @@ test("Mock mode renders and exercises the formal Runtime scenarios", async ({
     page.getByText("流式输出完成，正式 Runtime 已应用每次更新。"),
   ).toBeVisible();
 
+  await expect(page.getByRole("button", { name: "中断当前任务" })).toBeHidden();
   await page.getByRole("button", { name: "流式回复" }).click();
   await expect(page.getByText("正在思考…")).toBeVisible();
-  await page.getByRole("button", { name: "中断任务" }).click();
+  const interruptButton = page.getByRole("button", {
+    name: "中断当前任务",
+  });
+  await expect(interruptButton).toBeVisible();
+  await expect(
+    page.locator('[data-chat-composer=""]').getByRole("button", {
+      name: "中断当前任务",
+    }),
+  ).toBeVisible();
+  await interruptButton.click();
   await expect(page.getByText("当前任务已中断。")).toBeVisible();
+  await expect(interruptButton).toBeHidden();
   await page.getByRole("button", { name: "服务端错误" }).click();
   await expect(
     page.getByText("Mock RobotServer 拒绝了当前场景。"),
@@ -278,8 +319,19 @@ test("Bearer mode covers create, send, stream, interrupt, reconnect, CORS and di
   await expect(sendButton).toBeEnabled();
   await sendButton.click();
   await expect(page.getByText("运行中", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "中断当前任务" }).click();
-  await expect(page.getByText("RobotServer 已接受中断请求。")).toBeVisible();
+  const interruptButton = page.getByRole("button", {
+    name: "中断当前任务",
+  });
+  await expect(
+    page.locator('[data-chat-composer=""]').getByRole("button", {
+      name: "中断当前任务",
+    }),
+  ).toBeVisible();
+  await interruptButton.click();
+  await expect(interruptButton).toBeHidden();
+  await expect
+    .poll(async () => (await stateOf(request)).observations.interrupts)
+    .toBe(1);
   await page.getByRole("button", { name: "重连 REST 与 Socket" }).click();
   await expect(page.locator(".playground-hero .ant-tag")).toHaveText("已连接");
 

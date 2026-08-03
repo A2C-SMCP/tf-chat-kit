@@ -36,6 +36,10 @@ class TestResizeObserver implements ResizeObserver {
     TestResizeObserver.instances.push(this);
   }
 
+  get target(): Element | null {
+    return this.#target;
+  }
+
   disconnect(): void {
     this.#target = null;
   }
@@ -165,6 +169,23 @@ const findTrigger = (container: HTMLElement, id: string): HTMLElement => {
   return trigger;
 };
 
+const pointerEvent = (
+  type: "pointercancel" | "pointerdown" | "pointermove" | "pointerup",
+  clientX: number,
+  pointerId = 1,
+  pointerType: "mouse" | "touch" = "mouse",
+): MouseEvent => {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    button: 0,
+    cancelable: true,
+    clientX,
+  });
+  Object.defineProperty(event, "pointerId", { value: pointerId });
+  Object.defineProperty(event, "pointerType", { value: pointerType });
+  return event;
+};
+
 beforeEach(() => {
   TestResizeObserver.instances.length = 0;
   Reflect.set(globalThis, "ResizeObserver", TestResizeObserver);
@@ -190,6 +211,270 @@ afterEach(() => {
 });
 
 describe("@turingfocus/chat-ui-antd event details", () => {
+  it("resizes split details with pointer and keyboard input while retaining the ratio across modes", async () => {
+    const { memory } = createEventSnapshot();
+    const { client } = await createLoadedClient(memory);
+    const onEventDetailSplitRatioChange = vi.fn();
+    const rendered = await renderInDom(
+      createElement(
+        ChatProvider,
+        { client },
+        createElement(ChatConversationView, {
+          defaultEventDetailMode: "split",
+          getDeadlineAt: deadlineAt,
+          onEventDetailSplitRatioChange,
+        }),
+      ),
+    );
+
+    try {
+      const splitLayout = rendered.container.querySelector<HTMLElement>(
+        "[data-chat-event-split-ratio]",
+      );
+      const handle =
+        rendered.container.querySelector<HTMLElement>('[role="separator"]');
+      if (splitLayout === null || handle === null) {
+        throw new Error("Event detail split layout not found");
+      }
+      vi.spyOn(splitLayout, "getBoundingClientRect").mockReturnValue(
+        new DOMRect(0, 0, 1_000, 640),
+      );
+
+      expect(splitLayout.dataset["chatEventSplitRatio"]).toBe("0.56");
+      expect(handle.getAttribute("aria-orientation")).toBe("vertical");
+      expect(handle.getAttribute("aria-valuemin")).toBe("20");
+      expect(handle.getAttribute("aria-valuemax")).toBe("80");
+      expect(handle.getAttribute("aria-valuenow")).toBe("56");
+      expect(handle.tabIndex).toBe(0);
+
+      await act(async () => {
+        handle.dispatchEvent(pointerEvent("pointerdown", 560));
+        handle.dispatchEvent(pointerEvent("pointermove", 750));
+        await flushMicrotasks();
+      });
+      expect(splitLayout.dataset["chatEventSplitRatio"]).toBe("0.75");
+      expect(onEventDetailSplitRatioChange).not.toHaveBeenCalled();
+
+      await act(async () => {
+        handle.dispatchEvent(pointerEvent("pointerup", 750));
+        await flushMicrotasks();
+      });
+      expect(onEventDetailSplitRatioChange).toHaveBeenLastCalledWith(0.75);
+      expect(splitLayout.dataset["chatEventSplitRatio"]).toBe("0.75");
+
+      const arrowLeft = new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "ArrowLeft",
+      });
+      await act(async () => {
+        handle.dispatchEvent(arrowLeft);
+        await flushMicrotasks();
+      });
+      expect(arrowLeft.defaultPrevented).toBe(true);
+      expect(onEventDetailSplitRatioChange).toHaveBeenLastCalledWith(0.73);
+      expect(handle.getAttribute("aria-valuenow")).toBe("73");
+
+      await act(async () => {
+        handle.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            bubbles: true,
+            cancelable: true,
+            key: "End",
+          }),
+        );
+        await flushMicrotasks();
+      });
+      expect(onEventDetailSplitRatioChange).toHaveBeenLastCalledWith(0.8);
+      expect(
+        rendered.container
+          .querySelector('[role="separator"]')
+          ?.getAttribute("aria-valuenow"),
+      ).toBe("80");
+
+      await act(async () => {
+        findSegment("Modal").click();
+        await flushMicrotasks();
+      });
+      expect(rendered.container.querySelector('[role="separator"]')).toBeNull();
+
+      await act(async () => {
+        findSegment("Split").click();
+        await flushMicrotasks();
+      });
+      expect(
+        rendered.container
+          .querySelector('[role="separator"]')
+          ?.getAttribute("aria-valuenow"),
+      ).toBe("80");
+    } finally {
+      await rendered.unmount();
+      await client.dispose({ deadlineAt: deadlineAt() });
+    }
+  });
+
+  it("supports RTL touch resizing and restores the committed ratio when pointer input is cancelled", async () => {
+    const { memory } = createEventSnapshot();
+    const { client } = await createLoadedClient(memory);
+    const onEventDetailSplitRatioChange = vi.fn();
+    const rendered = await renderInDom(
+      createElement(
+        "div",
+        { dir: "rtl", style: { height: "100%" } },
+        createElement(
+          ChatProvider,
+          { client },
+          createElement(ChatConversationView, {
+            defaultEventDetailMode: "split",
+            getDeadlineAt: deadlineAt,
+            onEventDetailSplitRatioChange,
+          }),
+        ),
+      ),
+    );
+
+    try {
+      const splitLayout = rendered.container.querySelector<HTMLElement>(
+        "[data-chat-event-split-ratio]",
+      );
+      const handle =
+        rendered.container.querySelector<HTMLElement>('[role="separator"]');
+      if (splitLayout === null || handle === null) {
+        throw new Error("RTL event detail split layout not found");
+      }
+      vi.spyOn(splitLayout, "getBoundingClientRect").mockReturnValue(
+        new DOMRect(100, 0, 1_000, 640),
+      );
+      expect(globalThis.getComputedStyle(splitLayout).direction).toBe("rtl");
+
+      await act(async () => {
+        handle.dispatchEvent(pointerEvent("pointerdown", 540, 7, "touch"));
+        handle.dispatchEvent(pointerEvent("pointerup", 400, 7, "touch"));
+        await flushMicrotasks();
+      });
+      expect(splitLayout.dataset["chatEventSplitRatio"]).toBe("0.7");
+      expect(onEventDetailSplitRatioChange).toHaveBeenCalledTimes(1);
+      expect(onEventDetailSplitRatioChange).toHaveBeenLastCalledWith(0.7);
+
+      await act(async () => {
+        handle.dispatchEvent(pointerEvent("pointerdown", 400, 8, "touch"));
+        handle.dispatchEvent(pointerEvent("pointermove", 450, 8, "touch"));
+        await flushMicrotasks();
+      });
+      expect(splitLayout.dataset["chatEventSplitRatio"]).toBe("0.65");
+      await act(async () => {
+        handle.dispatchEvent(pointerEvent("pointercancel", 450, 8, "touch"));
+        await flushMicrotasks();
+      });
+      expect(splitLayout.dataset["chatEventSplitRatio"]).toBe("0.7");
+      expect(onEventDetailSplitRatioChange).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        handle.dispatchEvent(pointerEvent("pointerdown", 400, 9, "touch"));
+        handle.dispatchEvent(pointerEvent("pointermove", 500, 9, "touch"));
+        await flushMicrotasks();
+      });
+      expect(splitLayout.dataset["chatEventSplitRatio"]).toBe("0.6");
+      await act(async () => {
+        handle.dispatchEvent(
+          new Event("lostpointercapture", { bubbles: true, cancelable: false }),
+        );
+        await flushMicrotasks();
+      });
+      expect(splitLayout.dataset["chatEventSplitRatio"]).toBe("0.7");
+      expect(onEventDetailSplitRatioChange).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        handle.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            bubbles: true,
+            cancelable: true,
+            key: "ArrowLeft",
+          }),
+        );
+        await flushMicrotasks();
+      });
+      expect(onEventDetailSplitRatioChange).toHaveBeenCalledTimes(2);
+      expect(onEventDetailSplitRatioChange).toHaveBeenLastCalledWith(0.72);
+
+      await act(async () => {
+        handle.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            bubbles: true,
+            cancelable: true,
+            key: "ArrowRight",
+          }),
+        );
+        await flushMicrotasks();
+      });
+      expect(onEventDetailSplitRatioChange).toHaveBeenCalledTimes(3);
+      expect(onEventDetailSplitRatioChange).toHaveBeenLastCalledWith(0.7);
+    } finally {
+      await rendered.unmount();
+      await client.dispose({ deadlineAt: deadlineAt() });
+    }
+  });
+
+  it("clamps controlled split ratios and keeps read-only controlled layouts disabled", async () => {
+    const { memory } = createEventSnapshot();
+    const { client } = await createLoadedClient(memory);
+    const onEventDetailSplitRatioChange = vi.fn();
+    const view = (ratio: number, editable: boolean) =>
+      createElement(
+        ChatProvider,
+        { client },
+        createElement(ChatConversationView, {
+          defaultEventDetailMode: "split",
+          eventDetailSplitRatio: ratio,
+          getDeadlineAt: deadlineAt,
+          ...(editable ? { onEventDetailSplitRatioChange } : {}),
+        }),
+      );
+    const rendered = await renderInDom(view(0.65, true));
+
+    try {
+      const handle =
+        rendered.container.querySelector<HTMLElement>('[role="separator"]');
+      if (handle === null) throw new Error("Split handle not found");
+      expect(handle.getAttribute("aria-valuenow")).toBe("65");
+
+      await act(async () => {
+        handle.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            bubbles: true,
+            cancelable: true,
+            key: "ArrowRight",
+          }),
+        );
+        await flushMicrotasks();
+      });
+      expect(onEventDetailSplitRatioChange).toHaveBeenLastCalledWith(0.67);
+      expect(handle.getAttribute("aria-valuenow")).toBe("65");
+
+      await act(async () => {
+        rendered.root.render(view(2, true));
+        await flushMicrotasks();
+      });
+      expect(
+        rendered.container
+          .querySelector('[role="separator"]')
+          ?.getAttribute("aria-valuenow"),
+      ).toBe("80");
+
+      await act(async () => {
+        rendered.root.render(view(0.6, false));
+        await flushMicrotasks();
+      });
+      const disabledHandle =
+        rendered.container.querySelector<HTMLElement>('[role="separator"]');
+      expect(disabledHandle?.getAttribute("aria-disabled")).toBe("true");
+      expect(disabledHandle?.tabIndex).toBe(-1);
+    } finally {
+      await rendered.unmount();
+      await client.dispose({ deadlineAt: deadlineAt() });
+    }
+  });
+
   it("keeps click selection stable across updates and switches responsive containers", async () => {
     const { event, memory, snapshot } = createEventSnapshot();
     const { client } = await createLoadedClient(memory);
@@ -202,7 +487,9 @@ describe("@turingfocus/chat-ui-antd event details", () => {
     );
 
     try {
-      const observer = TestResizeObserver.instances.at(-1);
+      const observer = TestResizeObserver.instances.find((instance) =>
+        instance.target?.hasAttribute("data-chat-event-layout"),
+      );
       if (observer === undefined) throw new Error("ResizeObserver not created");
       await act(async () => {
         observer.emit(1_000);

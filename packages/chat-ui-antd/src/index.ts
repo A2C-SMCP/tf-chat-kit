@@ -1,4 +1,8 @@
-export { ChatComposer, type ChatComposerProps } from "./chat-composer.js";
+export {
+  ChatComposer,
+  type ChatComposerInterruptAction,
+  type ChatComposerProps,
+} from "./chat-composer.js";
 export {
   ChatEventDetail,
   ChatEventDetailEmpty,

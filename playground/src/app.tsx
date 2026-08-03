@@ -11,7 +11,13 @@ import {
   Typography,
   type MenuProps,
 } from "antd";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import type { ChatSnapshot } from "@turingfocus/chat-protocol";
 import { ChatProvider, useChatSelector } from "@turingfocus/chat-react";
@@ -27,6 +33,10 @@ import {
   PlaygroundRunStatus,
   playgroundRenderers,
 } from "./playground-localization.js";
+import {
+  readPlaygroundEventDetailSplitRatio,
+  writePlaygroundEventDetailSplitRatio,
+} from "./playground-layout-preferences.js";
 import { RobotServerConnectionPanel } from "./robotserver-panel.js";
 import {
   createRobotServerPlaygroundSession,
@@ -72,17 +82,16 @@ const ConversationHistoryIcon = () => (
 );
 
 const PlaygroundConversation = ({
-  session,
+  eventDetailSplitRatio,
+  onEventDetailSplitRatioChange,
 }: {
-  readonly session: PlaygroundSession;
+  readonly eventDetailSplitRatio: number;
+  readonly onEventDetailSplitRatioChange: (ratio: number) => void;
 }) => {
   const activeRun = useChatSelector(selectActiveRun);
   return (
     <div className="playground-conversation-frame">
-      <PlaygroundRunStatus
-        onInterrupt={() => void session.interrupt()}
-        run={activeRun}
-      />
+      <PlaygroundRunStatus run={activeRun} />
       <ChatConversationView
         className={
           activeRun === null
@@ -90,9 +99,11 @@ const PlaygroundConversation = ({
             : "playground-conversation playground-conversation-has-run"
         }
         defaultEventDetailMode="auto"
+        eventDetailSplitRatio={eventDetailSplitRatio}
         formatTimestamp={formatPlaygroundTimestamp}
         getDeadlineAt={deadlineAt}
         labels={playgroundChatLabels}
+        onEventDetailSplitRatioChange={onEventDetailSplitRatioChange}
         renderers={playgroundRenderers}
         style={{ flex: 1, height: "auto" }}
       />
@@ -120,8 +131,16 @@ const PlaygroundWorkspace = ({
   const [createConversationOpen, setCreateConversationOpen] = useState(false);
   const [creatingConversation, setCreatingConversation] = useState(false);
   const [title, setTitle] = useState("新建本地会话");
+  const [eventDetailSplitRatio, setEventDetailSplitRatio] = useState(
+    readPlaygroundEventDetailSplitRatio,
+  );
   const createInFlight = useRef(false);
   const sessionGeneration = useRef(0);
+
+  const changeEventDetailSplitRatio = useCallback((ratio: number) => {
+    setEventDetailSplitRatio(ratio);
+    writePlaygroundEventDetailSplitRatio(ratio);
+  }, []);
 
   useEffect(() => {
     sessionGeneration.current += 1;
@@ -263,9 +282,6 @@ const PlaygroundWorkspace = ({
                   <Button onClick={() => session.startStreaming()}>
                     流式回复
                   </Button>
-                  <Button danger onClick={() => void session.interrupt()}>
-                    中断任务
-                  </Button>
                   <Button onClick={() => session.emitServerError()}>
                     服务端错误
                   </Button>
@@ -289,9 +305,6 @@ const PlaygroundWorkspace = ({
                   </Button>
                   <Button onClick={() => void session.reconnect()}>
                     重连 REST 与 Socket
-                  </Button>
-                  <Button danger onClick={() => void session.interrupt()}>
-                    中断当前任务
                   </Button>
                 </>
               )}
@@ -364,7 +377,10 @@ const PlaygroundWorkspace = ({
                 },
               }}
             >
-              <PlaygroundConversation session={session} />
+              <PlaygroundConversation
+                eventDetailSplitRatio={eventDetailSplitRatio}
+                onEventDetailSplitRatioChange={changeEventDetailSplitRatio}
+              />
             </ChatUiShell>
           </section>
           <Modal

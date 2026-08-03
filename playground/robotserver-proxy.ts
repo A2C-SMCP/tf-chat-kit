@@ -1,11 +1,17 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { readFile } from "node:fs/promises";
 
 import type { Plugin } from "vite";
 
 import { ROBOTSERVER_PROXY_PREFIX } from "./src/robotserver-target.js";
+import {
+  parseRobotServerDebugPrefill,
+  ROBOTSERVER_DEBUG_PREFILL_PATH,
+} from "./src/robotserver-debug-prefill.js";
 
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
 const MAX_LOGIN_REQUEST_BYTES = 8 * 1024;
+const MAX_DEBUG_PREFILL_BYTES = 32 * 1024;
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const UPSTREAM_TIMEOUT_MS = 15_000;
 const ROUTING_SEGMENT = /^[a-z0-9-]+$/u;
@@ -20,6 +26,10 @@ interface ProxyTarget {
   readonly upstreamUrl: URL;
 }
 
+export interface RobotServerProxyPluginOptions {
+  readonly debugPrefillFilePath?: string | undefined;
+}
+
 const sendJson = (
   response: ServerResponse,
   status: number,
@@ -29,6 +39,18 @@ const sendJson = (
   response.setHeader("Cache-Control", "no-store");
   response.setHeader("Content-Type", "application/json; charset=utf-8");
   response.end(JSON.stringify({ code: status, message }));
+};
+
+const sendJsonValue = (
+  response: ServerResponse,
+  status: number,
+  value: unknown,
+): void => {
+  response.statusCode = status;
+  response.setHeader("Cache-Control", "no-store");
+  response.setHeader("Content-Type", "application/json; charset=utf-8");
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  response.end(JSON.stringify(value));
 };
 
 const allowedOrigins = (): ReadonlySet<string> =>
@@ -133,6 +155,49 @@ const isSameOrigin = (request: IncomingMessage): boolean => {
   } catch {
     return false;
   }
+};
+
+const serveDebugPrefill = async (
+  response: ServerResponse,
+  filePath: string,
+): Promise<void> => {
+  let source: string;
+  try {
+    source = await readFile(filePath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      response.statusCode = 204;
+      response.setHeader("Cache-Control", "no-store");
+      response.end();
+      return;
+    }
+    sendJson(response, 500, "无法读取本地 .debug 预填配置。");
+    return;
+  }
+  if (Buffer.byteLength(source, "utf8") > MAX_DEBUG_PREFILL_BYTES) {
+    sendJson(response, 413, "本地 .debug 预填配置过大。");
+    return;
+  }
+  if (source.trim().length === 0) {
+    response.statusCode = 204;
+    response.setHeader("Cache-Control", "no-store");
+    response.end();
+    return;
+  }
+
+  let input: unknown;
+  try {
+    input = JSON.parse(source) as unknown;
+  } catch {
+    sendJson(response, 422, "本地 .debug 预填配置格式无效。");
+    return;
+  }
+  const parsed = parseRobotServerDebugPrefill(input);
+  if (!parsed.ok || parsed.value === null) {
+    sendJson(response, 422, "本地 .debug 预填配置格式无效。");
+    return;
+  }
+  sendJsonValue(response, 200, parsed.value);
 };
 
 const readBody = async (
@@ -317,10 +382,30 @@ const proxyRequest = async (
   }
 };
 
-export const createRobotServerProxyPlugin = (): Plugin => ({
+export const createRobotServerProxyPlugin = (
+  options: RobotServerProxyPluginOptions = {},
+): Plugin => ({
   apply: "serve",
   configureServer(server) {
     server.middlewares.use((request, response, next) => {
+      if (request.url === ROBOTSERVER_DEBUG_PREFILL_PATH) {
+        if (request.method !== "GET") {
+          sendJson(response, 405, "本地预填配置只支持读取。");
+          return;
+        }
+        if (!isSameOrigin(request)) {
+          sendJson(response, 403, "本地预填配置请求已被拒绝。");
+          return;
+        }
+        if (options.debugPrefillFilePath === undefined) {
+          response.statusCode = 204;
+          response.setHeader("Cache-Control", "no-store");
+          response.end();
+          return;
+        }
+        void serveDebugPrefill(response, options.debugPrefillFilePath);
+        return;
+      }
       if (!request.url?.startsWith(ROBOTSERVER_PROXY_PREFIX)) {
         next();
         return;

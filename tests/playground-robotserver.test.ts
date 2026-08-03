@@ -16,6 +16,11 @@ import {
   type PlaygroundSession,
 } from "../playground/src/playground-session.js";
 import {
+  parseRobotServerDebugPrefill,
+  type RobotServerDebugPrefillResult,
+} from "../playground/src/robotserver-debug-prefill.js";
+import { RobotServerConnectionPanel } from "../playground/src/robotserver-panel.js";
+import {
   createRobotServerPlaygroundSession,
   robotServerTestConversationTitle,
   validateRobotServerConnection,
@@ -996,6 +1001,175 @@ const setTextArea = (input: HTMLTextAreaElement, value: string): void => {
   setter?.call(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
 };
+
+describe("RobotServer Playground local debug prefill", () => {
+  it("validates the private file shape without accepting unknown or inconsistent fields", () => {
+    expect(
+      parseRobotServerDebugPrefill({
+        authKind: "password",
+        namespace: "example-ns",
+        robotId: "example-robot",
+        secret: "local-password",
+        serverOrigin: "https://staging.turingfocus.cn",
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        authKind: "password",
+        namespace: "example-ns",
+        robotId: "example-robot",
+        secret: "local-password",
+        serverOrigin: "https://staging.turingfocus.cn",
+      },
+    });
+    expect(
+      parseRobotServerDebugPrefill({
+        authKind: "password",
+        connectionKind: "direct",
+      }).ok,
+    ).toBe(false);
+    expect(parseRobotServerDebugPrefill({ persist: true }).ok).toBe(false);
+    expect(parseRobotServerDebugPrefill({ secret: "x".repeat(8_193) }).ok).toBe(
+      false,
+    );
+  });
+
+  it("prefills every supported form field in memory", async () => {
+    const actEnvironmentKey = "IS_REACT_ACT_ENVIRONMENT";
+    const previousActEnvironment = Reflect.get(globalThis, actEnvironmentKey);
+    Reflect.set(globalThis, actEnvironmentKey, true);
+    const storage = vi.spyOn(Storage.prototype, "setItem");
+    const loadDebugPrefill = vi.fn(
+      async (): Promise<RobotServerDebugPrefillResult> => ({
+        ok: true,
+        value: {
+          authKind: "bearer",
+          connectionKind: "direct",
+          creatorName: "Local Developer",
+          creatorUid: "developer-1",
+          httpBaseUrl: "https://robot.example/api",
+          namespace: "example-ns",
+          platformId: "platform-7",
+          robotId: "example-robot",
+          secret: "local-memory-only-token",
+          serverOrigin: "https://staging.turingfocus.cn",
+          socketNamespaceUrl: "wss://robot.example/chat",
+          socketPath: "/socket.io",
+        },
+      }),
+    );
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(
+          createElement(RobotServerConnectionPanel, {
+            loadDebugPrefill,
+            onCancel: vi.fn(),
+            onConnect: vi.fn(),
+          }),
+        );
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => {
+        expect(
+          container.querySelector<HTMLInputElement>(
+            'input[aria-label="RobotServer 服务地址"]',
+          )?.value,
+        ).toBe("https://staging.turingfocus.cn");
+      });
+
+      const expectedValues: Readonly<Record<string, string>> = {
+        "Admin Token": "",
+        "HTTP 基础地址": "https://robot.example/api",
+        Namespace: "example-ns",
+        "Robot ID": "example-robot",
+        "Socket Namespace 地址": "wss://robot.example/chat",
+        "Socket Path": "/socket.io",
+        platformId: "platform-7",
+        "消息创建者 ID": "developer-1",
+        消息创建者名称: "Local Developer",
+        "用户 Token": "local-memory-only-token",
+      };
+      for (const [label, value] of Object.entries(expectedValues)) {
+        const input = container.querySelector<HTMLInputElement>(
+          `input[aria-label="${label}"]`,
+        );
+        if (label === "Admin Token") {
+          expect(input).toBeNull();
+        } else {
+          expect(input?.value).toBe(value);
+        }
+      }
+      expect(storage).not.toHaveBeenCalled();
+      expect(loadDebugPrefill).toHaveBeenCalledOnce();
+    } finally {
+      await act(async () => root.unmount());
+      storage.mockRestore();
+      container.remove();
+      if (previousActEnvironment === undefined) {
+        Reflect.deleteProperty(globalThis, actEnvironmentKey);
+      } else {
+        Reflect.set(globalThis, actEnvironmentKey, previousActEnvironment);
+      }
+    }
+  });
+
+  it("does not let a late debug response overwrite manual input", async () => {
+    const actEnvironmentKey = "IS_REACT_ACT_ENVIRONMENT";
+    const previousActEnvironment = Reflect.get(globalThis, actEnvironmentKey);
+    Reflect.set(globalThis, actEnvironmentKey, true);
+    const pending = deferred<RobotServerDebugPrefillResult>();
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(
+          createElement(RobotServerConnectionPanel, {
+            loadDebugPrefill: () => pending.promise,
+            onCancel: vi.fn(),
+            onConnect: vi.fn(),
+          }),
+        );
+        await Promise.resolve();
+      });
+      const serverOrigin = container.querySelector<HTMLInputElement>(
+        'input[aria-label="RobotServer 服务地址"]',
+      );
+      await act(async () => {
+        setInput(serverOrigin!, "https://manual.example");
+      });
+      await act(async () => {
+        pending.resolve({
+          ok: true,
+          value: {
+            namespace: "must-not-overwrite",
+            serverOrigin: "https://debug.example",
+          },
+        });
+        await pending.promise;
+      });
+      expect(serverOrigin?.value).toBe("https://manual.example");
+      expect(
+        container.querySelector<HTMLInputElement>(
+          'input[aria-label="Namespace"]',
+        )?.value,
+      ).toBe("");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      if (previousActEnvironment === undefined) {
+        Reflect.deleteProperty(globalThis, actEnvironmentKey);
+      } else {
+        Reflect.set(globalThis, actEnvironmentKey, previousActEnvironment);
+      }
+    }
+  });
+});
 
 describe("RobotServer Playground page security boundary", () => {
   it("drops form credentials and disposes sessions across mode changes", async () => {

@@ -68,6 +68,8 @@ export interface ChatUiLabels {
   readonly eventDetailModeLabel: string;
   readonly eventDetailModeModal: ReactNode;
   readonly eventDetailModeSplit: ReactNode;
+  /** Optional for backward compatibility with complete host label objects. */
+  readonly eventDetailSplitHandleLabel?: string | undefined;
   readonly eventDetailTitle: string;
   readonly interrupt: ReactNode;
   readonly interruptUnavailable: ReactNode;

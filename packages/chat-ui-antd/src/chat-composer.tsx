@@ -14,16 +14,24 @@ export interface ChatComposerProps {
   readonly className?: string | undefined;
   readonly disabled?: boolean | undefined;
   readonly disabledReason?: string | undefined;
+  readonly interruptAction?: ChatComposerInterruptAction | undefined;
   readonly labels?: ChatUiLabelOverrides | undefined;
   readonly onSend: (text: string) => boolean | PromiseLike<boolean>;
   readonly resetKey?: string | undefined;
   readonly style?: CSSProperties | undefined;
 }
 
+export interface ChatComposerInterruptAction {
+  readonly disabled?: boolean | undefined;
+  readonly onInterrupt: () => boolean | PromiseLike<boolean>;
+  readonly resetKey?: string | undefined;
+}
+
 export const ChatComposer = ({
   className,
   disabled = false,
   disabledReason,
+  interruptAction,
   labels: labelOverrides,
   onSend,
   resetKey,
@@ -32,14 +40,22 @@ export const ChatComposer = ({
   const { token } = theme.useToken();
   const labels = resolveChatUiLabels(labelOverrides);
   const [draft, setDraft] = useState("");
+  const [interrupting, setInterrupting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const interruptRequestId = useRef(0);
   const submissionId = useRef(0);
+  const interruptResetKey = interruptAction?.resetKey ?? null;
 
   useEffect(() => {
     submissionId.current += 1;
     setDraft("");
     setSubmitting(false);
   }, [resetKey]);
+
+  useEffect(() => {
+    interruptRequestId.current += 1;
+    setInterrupting(false);
+  }, [interruptResetKey]);
 
   const submit = async (): Promise<void> => {
     const text = draft.trim();
@@ -70,6 +86,28 @@ export const ChatComposer = ({
     void submit();
   };
 
+  const interrupt = async (): Promise<void> => {
+    if (
+      interruptAction === undefined ||
+      interruptAction.disabled === true ||
+      interrupting
+    ) {
+      return;
+    }
+    const action = interruptAction;
+    const requestId = interruptRequestId.current + 1;
+    interruptRequestId.current = requestId;
+    setInterrupting(true);
+    try {
+      await action.onInterrupt();
+    } catch {
+      // The owner of the command callback owns error presentation. The
+      // composer only owns the pending state for this action.
+    } finally {
+      if (interruptRequestId.current === requestId) setInterrupting(false);
+    }
+  };
+
   return (
     <div
       className={className}
@@ -80,6 +118,7 @@ export const ChatComposer = ({
       }}
     >
       <div
+        data-chat-composer=""
         style={{ alignItems: "flex-end", display: "flex", gap: token.marginXS }}
       >
         <Input.TextArea
@@ -97,6 +136,22 @@ export const ChatComposer = ({
           }
           value={draft}
         />
+        {interruptAction === undefined ? null : (
+          <Button
+            danger
+            disabled={interruptAction.disabled === true}
+            loading={interrupting}
+            onClick={() => {
+              void interrupt();
+            }}
+          >
+            {interrupting
+              ? labels.interrupting
+              : interruptAction.disabled === true
+                ? labels.interruptUnavailable
+                : labels.interrupt}
+          </Button>
+        )}
         <Button
           disabled={disabled || draft.trim().length === 0}
           loading={submitting}

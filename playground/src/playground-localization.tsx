@@ -1,4 +1,4 @@
-import { Button, Tag, Typography, theme } from "antd";
+import { Tag, Typography, theme } from "antd";
 
 import type { MessageRole, Run, RunStatus } from "@turingfocus/chat-protocol";
 import {
@@ -86,31 +86,14 @@ export const playgroundRenderers: ChatRendererRegistry = Object.freeze({
   message: PlaygroundMessageRenderer,
 });
 
-export const PlaygroundRunStatus = ({
-  onInterrupt,
-  run,
-}: {
-  readonly onInterrupt: () => void;
-  readonly run: Run | null;
-}) => {
+export const PlaygroundRunStatus = ({ run }: { readonly run: Run | null }) => {
   if (run === null) return null;
-  const interruptAvailable = run.status === "running" && run.canInterrupt;
   return (
     <div className="playground-run-status">
       <Typography.Text>
         运行状态：
         <Tag color={statusColor(run.status)}>{runStatusLabels[run.status]}</Tag>
       </Typography.Text>
-      {run.status === "running" ? (
-        <Button
-          danger
-          disabled={!interruptAvailable}
-          onClick={onInterrupt}
-          size="small"
-        >
-          {interruptAvailable ? "停止" : "当前无法停止"}
-        </Button>
-      ) : null}
     </div>
   );
 };

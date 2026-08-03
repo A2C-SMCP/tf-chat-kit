@@ -6,6 +6,10 @@
   `af3b4e2fa8d7a94c458d7c0812435ad17df0eb2e`
 - Real host status: not changed or validated by this implementation
 
+GitHub #23 later extends the accepted split layout with an accessible resize
+handle and host-controlled ratio persistence. The 56/44 split below remains the
+default, and persistence remains a host responsibility.
+
 ## Responsibility boundary
 
 Chat Kit owns normalized event presentation, safe fallback rendering,

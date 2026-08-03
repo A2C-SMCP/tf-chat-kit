@@ -202,6 +202,7 @@ const TauriRuntimeView = ({
         null,
         createElement(ChatConversationView, {
           defaultEventDetailMode: eventDetailMode,
+          defaultEventDetailSplitRatio: 0.6,
           getDeadlineAt: deadlineAt,
         }),
         createElement(ChatRunStatus, {
@@ -430,6 +431,12 @@ export const runTauriConsumerVerification = async (): Promise<void> => {
         ) === true &&
         dom.container.textContent?.includes("1 timeline items") === true,
       "the mounted Ant Design shell must render the loaded Runtime snapshot inside the Tauri topology",
+    );
+    check(
+      dom.container
+        .querySelector('[role="separator"]')
+        ?.getAttribute("aria-valuenow") === "60",
+      "the packed Tauri consumer must apply the public uncontrolled split-ratio API",
     );
 
     await act(async () => {

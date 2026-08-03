@@ -1,13 +1,17 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import {
   createServer as createHttpServer,
   request as createHttpRequest,
   type Server,
 } from "node:http";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
 
 import { createRobotServerProxyPlugin } from "../playground/robotserver-proxy.js";
+import { ROBOTSERVER_DEBUG_PREFILL_PATH } from "../playground/src/robotserver-debug-prefill.js";
 
 const listen = async (server: Server): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -56,6 +60,7 @@ describe("Playground RobotServer proxy", () => {
   let vite: ViteDevServer | undefined;
   let playgroundServer: Server | undefined;
   let upstreamServer: Server | undefined;
+  let debugDirectory: string | undefined;
   const previousAllowedOrigins =
     process.env["TF_CHAT_PLAYGROUND_ALLOWED_API_ORIGINS"];
 
@@ -63,6 +68,10 @@ describe("Playground RobotServer proxy", () => {
     if (playgroundServer !== undefined) await close(playgroundServer);
     if (vite !== undefined) await vite.close();
     if (upstreamServer !== undefined) await close(upstreamServer);
+    if (debugDirectory !== undefined) {
+      await rm(debugDirectory, { force: true, recursive: true });
+    }
+    debugDirectory = undefined;
     playgroundServer = undefined;
     upstreamServer = undefined;
     vite = undefined;
@@ -73,6 +82,66 @@ describe("Playground RobotServer proxy", () => {
         previousAllowedOrigins;
     }
     vi.restoreAllMocks();
+  });
+
+  it("serves a validated local debug prefill only to same-origin development requests", async () => {
+    debugDirectory = await mkdtemp(path.join(tmpdir(), "tf-chat-debug-"));
+    const debugFilePath = path.join(debugDirectory, ".debug");
+    const prefill = {
+      authKind: "bearer",
+      namespace: "example-ns",
+      robotId: "example-robot",
+      secret: "debug-memory-only-secret",
+      serverOrigin: "https://staging.turingfocus.cn",
+    } as const;
+    await writeFile(debugFilePath, JSON.stringify(prefill), "utf8");
+    vite = await createViteServer({
+      appType: "custom",
+      plugins: [
+        createRobotServerProxyPlugin({
+          debugPrefillFilePath: debugFilePath,
+        }),
+      ],
+      server: { middlewareMode: true },
+    });
+    playgroundServer = createHttpServer(vite.middlewares);
+    const playgroundOrigin = await listen(playgroundServer);
+
+    const accepted = await fetch(
+      `${playgroundOrigin}${ROBOTSERVER_DEBUG_PREFILL_PATH}`,
+      { headers: { Origin: playgroundOrigin } },
+    );
+    expect(accepted.status).toBe(200);
+    expect(accepted.headers.get("cache-control")).toBe("no-store");
+    expect(await accepted.json()).toEqual(prefill);
+
+    const crossOrigin = await fetch(
+      `${playgroundOrigin}${ROBOTSERVER_DEBUG_PREFILL_PATH}`,
+      { headers: { Origin: "https://attacker.example" } },
+    );
+    expect(crossOrigin.status).toBe(403);
+    expect(await crossOrigin.text()).not.toContain(prefill.secret);
+
+    await writeFile(
+      debugFilePath,
+      '{"secret":"must-not-leak-from-malformed-json"',
+      "utf8",
+    );
+    const malformed = await fetch(
+      `${playgroundOrigin}${ROBOTSERVER_DEBUG_PREFILL_PATH}`,
+      { headers: { Origin: playgroundOrigin } },
+    );
+    expect(malformed.status).toBe(422);
+    expect(await malformed.text()).not.toContain(
+      "must-not-leak-from-malformed-json",
+    );
+
+    await writeFile(debugFilePath, "", "utf8");
+    const empty = await fetch(
+      `${playgroundOrigin}${ROBOTSERVER_DEBUG_PREFILL_PATH}`,
+      { headers: { Origin: playgroundOrigin } },
+    );
+    expect(empty.status).toBe(204);
   });
 
   it("injects routing headers and rejects cross-origin or ambiguous credentials", async () => {

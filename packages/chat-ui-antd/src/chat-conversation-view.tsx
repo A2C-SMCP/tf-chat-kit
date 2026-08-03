@@ -28,6 +28,10 @@ import { ChatRunStatus } from "./chat-run-status.js";
 import { ChatStateView } from "./chat-state-view.js";
 import { ChatTimeline } from "./chat-timeline.js";
 import { resolveChatUiLabels } from "./labels.js";
+import {
+  EventDetailSplitLayout,
+  normalizeEventDetailSplitRatio,
+} from "./event-detail-split-layout.js";
 import type {
   ChatRendererFailure,
   ChatRendererRegistry,
@@ -47,6 +51,8 @@ export interface ChatConversationViewProps {
   readonly defaultSelectedEventId?: string | null | undefined;
   readonly eventDetailMode?: ChatEventDetailMode | undefined;
   readonly eventDetailSplitBreakpoint?: number | undefined;
+  /** Initial timeline share for uncontrolled split layout; clamped to 0.2–0.8. */
+  readonly defaultEventDetailSplitRatio?: number | undefined;
   readonly formatTimestamp?: ((timestamp: number) => string) | undefined;
   readonly getDeadlineAt: () => number;
   readonly labels?: ChatUiLabelOverrides | undefined;
@@ -54,6 +60,12 @@ export interface ChatConversationViewProps {
     ((failure: ChatUiCommandFailure) => void) | undefined;
   readonly onEventDetailModeChange?:
     ((mode: ChatEventDetailMode) => void) | undefined;
+  /**
+   * Called once when a pointer resize finishes and after each keyboard resize.
+   * Hosts can persist the normalized timeline share supplied here.
+   */
+  readonly onEventDetailSplitRatioChange?:
+    ((ratio: number) => void) | undefined;
   readonly onChatAboutThis?:
     ((request: AskUserChatAboutThisRequest) => void) | undefined;
   readonly onRendererError?:
@@ -61,6 +73,8 @@ export interface ChatConversationViewProps {
   readonly onSelectedEventChange?:
     ((eventId: string | null, item: ChatEventItem | null) => void) | undefined;
   readonly renderers?: ChatRendererRegistry | undefined;
+  /** Controlled timeline share for split layout; clamped to 0.2–0.8. */
+  readonly eventDetailSplitRatio?: number | undefined;
   readonly selectedEventId?: string | null | undefined;
   readonly style?: CSSProperties | undefined;
 }
@@ -105,15 +119,18 @@ const equalChatConversationViewSnapshot = (
 export const ChatConversationView = ({
   className,
   defaultEventDetailMode = "auto",
+  defaultEventDetailSplitRatio,
   defaultSelectedEventId = null,
   eventDetailMode: controlledEventDetailMode,
   eventDetailSplitBreakpoint = 800,
+  eventDetailSplitRatio,
   formatTimestamp,
   getDeadlineAt,
   labels: labelOverrides,
   onChatAboutThis,
   onCommandError,
   onEventDetailModeChange,
+  onEventDetailSplitRatioChange,
   onRendererError,
   onSelectedEventChange,
   renderers,
@@ -154,6 +171,12 @@ export const ChatConversationView = ({
   });
   const [uncontrolledEventDetailMode, setUncontrolledEventDetailMode] =
     useState<ChatEventDetailMode>(defaultEventDetailMode);
+  const [
+    uncontrolledEventDetailSplitRatio,
+    setUncontrolledEventDetailSplitRatio,
+  ] = useState(() =>
+    normalizeEventDetailSplitRatio(defaultEventDetailSplitRatio),
+  );
   const [uncontrolledSelectedEventId, setUncontrolledSelectedEventId] =
     useState<string | null>(defaultSelectedEventId);
   const [containerWidth, setContainerWidth] = useState<number | null>(null);
@@ -168,6 +191,12 @@ export const ChatConversationView = ({
     controlledSelectedEventId === undefined
       ? uncontrolledSelectedEventId
       : controlledSelectedEventId;
+  const controlledEventDetailSplitRatio =
+    eventDetailSplitRatio === undefined
+      ? undefined
+      : normalizeEventDetailSplitRatio(eventDetailSplitRatio);
+  const resolvedEventDetailSplitRatio =
+    controlledEventDetailSplitRatio ?? uncontrolledEventDetailSplitRatio;
   const splitBreakpoint =
     Number.isFinite(eventDetailSplitBreakpoint) &&
     eventDetailSplitBreakpoint > 0
@@ -302,6 +331,16 @@ export const ChatConversationView = ({
     [controlledEventDetailMode, onEventDetailModeChange],
   );
 
+  const changeEventDetailSplitRatio = useCallback(
+    (ratio: number) => {
+      if (controlledEventDetailSplitRatio === undefined) {
+        setUncontrolledEventDetailSplitRatio(ratio);
+      }
+      onEventDetailSplitRatioChange?.(ratio);
+    },
+    [controlledEventDetailSplitRatio, onEventDetailSplitRatioChange],
+  );
+
   const eventDetailModeOptions = useMemo(
     () => [
       { label: labels.eventDetailModeAuto, value: "auto" },
@@ -320,6 +359,41 @@ export const ChatConversationView = ({
   }
 
   const conversationId = snapshot.conversationId;
+  const timeline = (
+    <ChatTimeline
+      key={viewResetKey}
+      conversationId={conversationId}
+      formatTimestamp={formatTimestamp}
+      items={snapshot.timeline}
+      labels={labels}
+      onEventSelect={selectEvent}
+      onRendererError={onRendererError}
+      renderers={renderers}
+      selectedEventId={selectedEventId}
+    />
+  );
+  const eventDetail = (
+    <aside
+      aria-label={String(labels.eventDetailTitle)}
+      style={{
+        boxSizing: "border-box",
+        minHeight: 0,
+        overflow: "auto",
+        padding: token.paddingSM,
+      }}
+    >
+      {selectedEvent === undefined ? (
+        <ChatEventDetailEmpty labels={labels} />
+      ) : (
+        <ChatEventDetail
+          formatTimestamp={formatTimestamp}
+          item={selectedEvent}
+          onRendererError={onRendererError}
+          renderers={renderers}
+        />
+      )}
+    </aside>
+  );
 
   return (
     <section
@@ -338,6 +412,7 @@ export const ChatConversationView = ({
         labels={labels}
         onInterrupt={interrupt}
         run={snapshot.run}
+        showInterruptButton={false}
       />
       {visibleSnapshotError === undefined ? null : (
         <Alert
@@ -385,50 +460,20 @@ export const ChatConversationView = ({
         ref={layoutRef}
         style={{ display: "flex", flex: 1, minHeight: 0, minWidth: 0 }}
       >
-        <div
-          style={{
-            boxSizing: "border-box",
-            minHeight: 0,
-            minWidth: 0,
-            width: resolvedEventDetailMode === "split" ? "56%" : "100%",
-          }}
-        >
-          <ChatTimeline
-            key={viewResetKey}
-            conversationId={conversationId}
-            formatTimestamp={formatTimestamp}
-            items={snapshot.timeline}
-            labels={labels}
-            onEventSelect={selectEvent}
-            onRendererError={onRendererError}
-            renderers={renderers}
-            selectedEventId={selectedEventId}
-          />
-        </div>
-        {resolvedEventDetailMode === "modal" ? null : (
-          <aside
-            aria-label={String(labels.eventDetailTitle)}
-            style={{
-              borderLeft: `1px solid ${token.colorBorderSecondary}`,
-              boxSizing: "border-box",
-              minHeight: 0,
-              overflow: "auto",
-              padding: token.paddingSM,
-              width: "44%",
-            }}
-          >
-            {selectedEvent === undefined ? (
-              <ChatEventDetailEmpty labels={labels} />
-            ) : (
-              <ChatEventDetail
-                formatTimestamp={formatTimestamp}
-                item={selectedEvent}
-                onRendererError={onRendererError}
-                renderers={renderers}
-              />
-            )}
-          </aside>
-        )}
+        <EventDetailSplitLayout
+          ariaLabel={
+            labels.eventDetailSplitHandleLabel ?? "Resize event detail panes"
+          }
+          detail={eventDetail}
+          onRatioChange={changeEventDetailSplitRatio}
+          ratio={resolvedEventDetailSplitRatio}
+          resizable={
+            controlledEventDetailSplitRatio === undefined ||
+            onEventDetailSplitRatioChange !== undefined
+          }
+          split={resolvedEventDetailMode === "split"}
+          timeline={timeline}
+        />
       </div>
       {snapshot.pendingInteraction === undefined ? null : (
         <div style={{ padding: token.paddingXS }}>
@@ -453,6 +498,17 @@ export const ChatConversationView = ({
           snapshot.capabilities.sendText
             ? undefined
             : labels.textSendingUnavailable
+        }
+        interruptAction={
+          snapshot.run?.status === "running"
+            ? {
+                disabled:
+                  !snapshot.capabilities.interrupt ||
+                  !snapshot.run.canInterrupt,
+                onInterrupt: interrupt,
+                resetKey: snapshot.run.id,
+              }
+            : undefined
         }
         labels={labels}
         onSend={sendText}

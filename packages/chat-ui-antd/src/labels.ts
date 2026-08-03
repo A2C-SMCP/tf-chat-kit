@@ -29,6 +29,7 @@ export const defaultChatUiLabels: ChatUiLabels = Object.freeze({
   eventDetailModeLabel: "Event detail mode",
   eventDetailModeModal: "Modal",
   eventDetailModeSplit: "Split",
+  eventDetailSplitHandleLabel: "Resize event detail panes",
   eventDetailTitle: "Event details",
   interrupt: "Stop",
   interruptUnavailable: "Stop unavailable",

@@ -352,6 +352,7 @@ describe("TFRobotChatGateway REST boundary", () => {
 
   it("caches a created conversation for immediate loading", async () => {
     const requests: Request[] = [];
+    let sentBody: unknown;
     const fetch = vi.fn(
       async (
         input: Parameters<typeof globalThis.fetch>[0],
@@ -362,6 +363,10 @@ describe("TFRobotChatGateway REST boundary", () => {
         const path = new URL(request.url).pathname;
         if (request.method === "POST" && path.endsWith("/conversations")) {
           return envelope(conversationDto);
+        }
+        if (request.method === "POST" && path.endsWith("/messages")) {
+          sentBody = (await request.json()) as unknown;
+          return envelope({ taskId: "run-created" });
         }
         if (path.endsWith("/messages")) {
           return envelope({ messages: [], events: [], cursor: null });
@@ -395,6 +400,17 @@ describe("TFRobotChatGateway REST boundary", () => {
       ok: true,
       value: { conversation: { id: "42" } },
     });
+    await expect(
+      gateway.sendText({
+        conversationId: "42",
+        text: "Hello",
+        deadlineAt: deadline(),
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { runId: "run-created" },
+    });
+    expect(sentBody).toMatchObject({ conversationId: 42 });
     expect(
       requests.filter(
         (request) =>
@@ -1276,6 +1292,57 @@ describe("TFRobotChatGateway REST boundary", () => {
       { taskId: "run-accepted" },
     ]);
     expect(JSON.stringify(bodies)).not.toContain("admin-secret");
+  });
+
+  it("preserves a numeric TFRobot conversation id when sending a normalized conversation", async () => {
+    let sentBody: unknown;
+    const fetch = vi.fn(
+      async (
+        input: Parameters<typeof globalThis.fetch>[0],
+        init?: Parameters<typeof globalThis.fetch>[1],
+      ) => {
+        const url = new URL(input instanceof Request ? input.url : input);
+        if (url.pathname.endsWith("/conversations") && init?.method === "GET") {
+          return envelope({ conversations: [conversationDto], cursor: null });
+        }
+        if (
+          url.pathname.endsWith("/conversations/42/messages") &&
+          init?.method === "POST"
+        ) {
+          sentBody = JSON.parse(init.body as string) as unknown;
+          return envelope({ taskId: "run-accepted" });
+        }
+        throw new Error(`Unexpected request: ${url.pathname}`);
+      },
+    );
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch,
+      socketFactory: createSocketFixture().factory,
+    });
+
+    const listed = await gateway.listConversations({
+      deadlineAt: deadline(),
+    });
+    expect(listed).toMatchObject({
+      ok: true,
+      value: { conversations: [{ id: "42" }] },
+    });
+    if (!listed.ok) return;
+
+    await expect(
+      gateway.sendText({
+        conversationId: listed.value.conversations[0]!.id,
+        text: "Hello",
+        deadlineAt: deadline(),
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { runId: "run-accepted" },
+    });
+    expect(sentBody).toMatchObject({ conversationId: 42 });
   });
 
   it("rejects an invalid current-user creator before sending", async () => {

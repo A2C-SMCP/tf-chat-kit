@@ -9,13 +9,20 @@ const workspaceRoot = fileURLToPath(new URL("..", import.meta.url));
 const packageSource = (directory: string): string =>
   path.join(workspaceRoot, "packages", directory, "src", "index.ts");
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   define: {
     __TF_CHAT_PLAYGROUND_ALLOWED_SERVER_ORIGINS__: JSON.stringify(
       process.env["TF_CHAT_PLAYGROUND_ALLOWED_SERVER_ORIGINS"] ?? "",
     ),
+    __TF_CHAT_PLAYGROUND_DEBUG_PREFILL_ENABLED__: JSON.stringify(
+      command === "serve",
+    ),
   },
-  plugins: [createRobotServerProxyPlugin()],
+  plugins: [
+    createRobotServerProxyPlugin({
+      debugPrefillFilePath: path.join(workspaceRoot, ".debug"),
+    }),
+  ],
   root: fileURLToPath(new URL(".", import.meta.url)),
   resolve: {
     alias: {
@@ -33,4 +40,4 @@ export default defineConfig({
     port: 3000,
     strictPort: true,
   },
-});
+}));

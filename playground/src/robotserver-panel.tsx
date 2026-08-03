@@ -13,8 +13,10 @@ import {
   loginRobotServerWithPassword,
   type RobotServerPasswordLoginDependencies,
 } from "./robotserver-login.js";
+import type { RobotServerDebugPrefillLoader } from "./robotserver-debug-prefill.js";
 
 declare const __TF_CHAT_PLAYGROUND_ALLOWED_SERVER_ORIGINS__: string;
+declare const __TF_CHAT_PLAYGROUND_DEBUG_PREFILL_ENABLED__: boolean;
 
 type AuthenticationKind = RobotServerAuthKind | "password";
 type PasswordLogin = (
@@ -23,7 +25,21 @@ type PasswordLogin = (
   dependencies?: RobotServerPasswordLoginDependencies,
 ) => ReturnType<typeof loginRobotServerWithPassword>;
 
+const debugPrefillEnabled =
+  typeof __TF_CHAT_PLAYGROUND_DEBUG_PREFILL_ENABLED__ !== "undefined" &&
+  __TF_CHAT_PLAYGROUND_DEBUG_PREFILL_ENABLED__ === true;
+
+const loadDefaultDebugPrefill: RobotServerDebugPrefillLoader = async (
+  signal,
+) => {
+  if (!debugPrefillEnabled) return { ok: true, value: null };
+  const { loadRobotServerDebugPrefill } =
+    await import("./robotserver-debug-prefill.js");
+  return loadRobotServerDebugPrefill(signal);
+};
+
 export interface RobotServerConnectionPanelProps {
+  readonly loadDebugPrefill?: RobotServerDebugPrefillLoader | undefined;
   readonly loginWithPassword?: PasswordLogin | undefined;
   readonly onCancel: () => void;
   readonly onConnect: (config: RobotServerConnectionConfig) => void;
@@ -39,6 +55,7 @@ const allowedServerOrigins = (): readonly string[] =>
     .filter(Boolean);
 
 export const RobotServerConnectionPanel = ({
+  loadDebugPrefill = loadDefaultDebugPrefill,
   loginWithPassword = loginRobotServerWithPassword,
   onCancel,
   onConnect,
@@ -53,19 +70,72 @@ export const RobotServerConnectionPanel = ({
   const [loading, setLoading] = useState(false);
   const [namespace, setNamespace] = useState("");
   const [platformId, setPlatformId] = useState("");
+  const [prefillError, setPrefillError] = useState<string>();
   const [robotId, setRobotId] = useState("");
   const [secret, setSecret] = useState("");
   const [serverOrigin, setServerOrigin] = useState("");
   const [socketNamespaceUrl, setSocketNamespaceUrl] = useState("");
   const [socketPath, setSocketPath] = useState("");
+  const debugPrefillController = useRef<AbortController>();
   const loginController = useRef<AbortController>();
+  const userEdited = useRef(false);
 
   useEffect(
     () => () => {
+      debugPrefillController.current?.abort();
       loginController.current?.abort();
     },
     [],
   );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    debugPrefillController.current?.abort();
+    debugPrefillController.current = controller;
+    void loadDebugPrefill(controller.signal)
+      .then((result) => {
+        if (controller.signal.aborted || userEdited.current) return;
+        if (!result.ok) {
+          setPrefillError(result.message);
+          return;
+        }
+        const prefill = result.value;
+        if (prefill === null) return;
+        if (prefill.authKind !== undefined) setAuthKind(prefill.authKind);
+        if (prefill.connectionKind !== undefined) {
+          setConnectionKind(prefill.connectionKind);
+        }
+        if (prefill.creatorName !== undefined) {
+          setCreatorName(prefill.creatorName);
+        }
+        if (prefill.creatorUid !== undefined) setCreatorUid(prefill.creatorUid);
+        if (prefill.httpBaseUrl !== undefined) {
+          setHttpBaseUrl(prefill.httpBaseUrl);
+        }
+        if (prefill.namespace !== undefined) setNamespace(prefill.namespace);
+        if (prefill.platformId !== undefined) setPlatformId(prefill.platformId);
+        if (prefill.robotId !== undefined) setRobotId(prefill.robotId);
+        if (prefill.secret !== undefined) setSecret(prefill.secret);
+        if (prefill.serverOrigin !== undefined) {
+          setServerOrigin(prefill.serverOrigin);
+        }
+        if (prefill.socketNamespaceUrl !== undefined) {
+          setSocketNamespaceUrl(prefill.socketNamespaceUrl);
+        }
+        if (prefill.socketPath !== undefined) setSocketPath(prefill.socketPath);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted && !userEdited.current) {
+          setPrefillError("无法加载本地 .debug 预填配置。");
+        }
+      });
+    return () => controller.abort();
+  }, [loadDebugPrefill]);
+
+  const markEdited = (): void => {
+    userEdited.current = true;
+    setPrefillError(undefined);
+  };
 
   const targetDraft = (): RobotServerConnectionTargetDraft => ({
     allowedServerOrigins: allowedServerOrigins(),
@@ -158,13 +228,17 @@ export const RobotServerConnectionPanel = ({
             连接 RobotServer
           </Typography.Title>
           <Typography.Paragraph>
-            填写机器人路由信息并选择鉴权方式。密码或 Token
-            只在当前页面内存中使用，刷新即清除。
+            {debugPrefillEnabled
+              ? "填写机器人路由信息并选择鉴权方式。密码或 Token 只在当前页面内存中使用；本地开发若配置了 .debug，刷新时会重新读取。"
+              : "填写机器人路由信息并选择鉴权方式。密码或 Token 只在当前页面内存中使用，刷新即清除。"}
           </Typography.Paragraph>
         </div>
 
         {error === undefined ? null : (
           <Alert message={error} showIcon type="error" />
+        )}
+        {prefillError === undefined ? null : (
+          <Alert message={prefillError} showIcon type="warning" />
         )}
 
         <form autoComplete="off" className="connection-form" onSubmit={submit}>
@@ -175,7 +249,10 @@ export const RobotServerConnectionPanel = ({
               <Input
                 aria-label="RobotServer 服务地址"
                 disabled={loading}
-                onChange={(event) => setServerOrigin(event.target.value)}
+                onChange={(event) => {
+                  markEdited();
+                  setServerOrigin(event.target.value);
+                }}
                 placeholder="例如：https://staging.turingfocus.cn"
                 value={serverOrigin}
               />
@@ -185,7 +262,10 @@ export const RobotServerConnectionPanel = ({
               <Input
                 aria-label="Namespace"
                 disabled={loading}
-                onChange={(event) => setNamespace(event.target.value)}
+                onChange={(event) => {
+                  markEdited();
+                  setNamespace(event.target.value);
+                }}
                 placeholder="例如：tfrs-org-18"
                 value={namespace}
               />
@@ -195,7 +275,10 @@ export const RobotServerConnectionPanel = ({
               <Input
                 aria-label="Robot ID"
                 disabled={loading}
-                onChange={(event) => setRobotId(event.target.value)}
+                onChange={(event) => {
+                  markEdited();
+                  setRobotId(event.target.value);
+                }}
                 placeholder="例如：de-eed9dc12a94b492ea8e7"
                 value={robotId}
               />
@@ -209,6 +292,7 @@ export const RobotServerConnectionPanel = ({
               className="connection-choice"
               disabled={loading}
               onChange={(event) => {
+                markEdited();
                 setAuthKind(event.target.value as AuthenticationKind);
                 setSecret("");
                 setError(undefined);
@@ -229,7 +313,10 @@ export const RobotServerConnectionPanel = ({
                 aria-label={secretLabel}
                 autoComplete="new-password"
                 disabled={loading}
-                onChange={(event) => setSecret(event.target.value)}
+                onChange={(event) => {
+                  markEdited();
+                  setSecret(event.target.value);
+                }}
                 placeholder={`请输入${secretLabel}`}
                 value={secret}
               />
@@ -249,11 +336,12 @@ export const RobotServerConnectionPanel = ({
                 <Radio.Group
                   buttonStyle="solid"
                   disabled={loading}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    markEdited();
                     selectConnectionKind(
                       event.target.value as RobotServerConnectionKind,
-                    )
-                  }
+                    );
+                  }}
                   optionType="button"
                   options={[
                     { label: "标准连接", value: "standard" },
@@ -269,7 +357,10 @@ export const RobotServerConnectionPanel = ({
                     <Input
                       aria-label="HTTP 基础地址"
                       disabled={loading}
-                      onChange={(event) => setHttpBaseUrl(event.target.value)}
+                      onChange={(event) => {
+                        markEdited();
+                        setHttpBaseUrl(event.target.value);
+                      }}
                       placeholder="例如：http://localhost:5000"
                       value={httpBaseUrl}
                     />
@@ -279,9 +370,10 @@ export const RobotServerConnectionPanel = ({
                     <Input
                       aria-label="Socket Namespace 地址"
                       disabled={loading}
-                      onChange={(event) =>
-                        setSocketNamespaceUrl(event.target.value)
-                      }
+                      onChange={(event) => {
+                        markEdited();
+                        setSocketNamespaceUrl(event.target.value);
+                      }}
                       placeholder="例如：http://localhost:5000/chat"
                       value={socketNamespaceUrl}
                     />
@@ -291,7 +383,10 @@ export const RobotServerConnectionPanel = ({
                     <Input
                       aria-label="Socket Path"
                       disabled={loading}
-                      onChange={(event) => setSocketPath(event.target.value)}
+                      onChange={(event) => {
+                        markEdited();
+                        setSocketPath(event.target.value);
+                      }}
                       placeholder="例如：/socket.io"
                       value={socketPath}
                     />
@@ -303,7 +398,10 @@ export const RobotServerConnectionPanel = ({
                 <Input
                   aria-label="platformId"
                   disabled={loading}
-                  onChange={(event) => setPlatformId(event.target.value)}
+                  onChange={(event) => {
+                    markEdited();
+                    setPlatformId(event.target.value);
+                  }}
                   value={platformId}
                 />
               </label>
@@ -313,7 +411,10 @@ export const RobotServerConnectionPanel = ({
                   <Input
                     aria-label="消息创建者 ID"
                     disabled={loading}
-                    onChange={(event) => setCreatorUid(event.target.value)}
+                    onChange={(event) => {
+                      markEdited();
+                      setCreatorUid(event.target.value);
+                    }}
                     value={creatorUid}
                   />
                 </label>
@@ -322,7 +423,10 @@ export const RobotServerConnectionPanel = ({
                   <Input
                     aria-label="消息创建者名称"
                     disabled={loading}
-                    onChange={(event) => setCreatorName(event.target.value)}
+                    onChange={(event) => {
+                      markEdited();
+                      setCreatorName(event.target.value);
+                    }}
                     value={creatorName}
                   />
                 </label>
@@ -337,6 +441,7 @@ export const RobotServerConnectionPanel = ({
             <Button
               disabled={loading}
               onClick={() => {
+                debugPrefillController.current?.abort();
                 loginController.current?.abort();
                 onCancel();
               }}

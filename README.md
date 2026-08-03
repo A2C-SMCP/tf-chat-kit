@@ -44,6 +44,7 @@ chat-ui-antd -------------------------------> chat-protocol
 
 ## 文档
 
+- [宿主 App 接入指南](docs/host-app-integration.md)
 - [项目章程](docs/project-charter.md)
 - [架构决策记录](docs/adr/README.md)
 - [工程与发布基线](docs/engineering-baseline.md)
@@ -69,7 +70,15 @@ pnpm pack:workspace
 Namespace 与 Robot ID 后，Playground 会推导 API 域名和 Socket namespace/path，并由仅存在于本地
 Vite 开发服务中的同源代理为聊天请求注入 RobotServer 路由头。鉴权可使用管理员密码、Admin Token
 或用户 Token；管理员密码只用于调用 `/v1/auth/login` 换取短期 Admin Token，不会进入聊天会话。
-`platformId`、消息创建者与自定义直连端点位于高级设置中。所有字段默认留空。
+`platformId`、消息创建者与自定义直连端点位于高级设置中；未使用本地预填时所有字段默认留空。
+
+仅在 `pnpm dev:playground` 的本地 Vite 服务中，连接表单会尝试读取仓库根目录的 `.debug` JSON
+作为内存预填值；文件不存在或为空时仍保持全部字段为空。支持的可选字段为 `serverOrigin`、
+`namespace`、`robotId`、`authKind`（`password` / `admin` / `bearer`）、`secret`、
+`connectionKind`（`standard` / `direct`）、`httpBaseUrl`、`socketNamespaceUrl`、`socketPath`、
+`platformId`、`creatorUid` 和 `creatorName`。高级直连必须同时选择 `admin` 或 `bearer`。
+`.debug` 已被 Git 忽略；开发服务按页面加载读取并严格校验，不记录内容、不写入浏览器存储，
+生产构建与公开包不会读取该文件。
 
 代理只接受同源请求、受信任的 TuringFocus API 域名或显式测试白名单；聊天路由要求恰好一种
 Token 凭据，密码登录路由只接受一个受限长度的 password 字段。代理不转发 Cookie，也不记录
