@@ -1,11 +1,6 @@
-import { Alert, Button, Card, Space, Tag, Typography, theme } from "antd";
+import { Button, Tag, Typography, theme } from "antd";
 
-import type {
-  AgentEventStatus,
-  MessageRole,
-  Run,
-  RunStatus,
-} from "@turingfocus/chat-protocol";
+import type { MessageRole, Run, RunStatus } from "@turingfocus/chat-protocol";
 import {
   ChatMessageContent,
   type ChatRenderer,
@@ -20,15 +15,6 @@ const runStatusLabels: Readonly<Record<RunStatus, string>> = {
   unknown: "状态未知",
 };
 
-const eventStatusLabels: Readonly<Record<AgentEventStatus, string>> = {
-  aborted: "已中断",
-  failed: "失败",
-  running: "运行中",
-  success: "已完成",
-  timeout: "已超时",
-  unknown: "状态未知",
-};
-
 const roleLabels: Readonly<Record<MessageRole, string>> = {
   assistant: "助手",
   system: "系统",
@@ -38,11 +24,11 @@ const roleLabels: Readonly<Record<MessageRole, string>> = {
 };
 
 const statusColor = (
-  status: AgentEventStatus | RunStatus,
+  status: RunStatus,
 ): "default" | "error" | "processing" | "success" =>
-  status === "success" || status === "succeeded"
+  status === "succeeded"
     ? "success"
-    : status === "failed" || status === "timeout"
+    : status === "failed"
       ? "error"
       : status === "running"
         ? "processing"
@@ -96,73 +82,8 @@ const PlaygroundMessageRenderer: ChatRenderer = ({ formatTimestamp, item }) => {
   );
 };
 
-const PlaygroundAgentEventRenderer: ChatRenderer = ({
-  formatTimestamp,
-  item,
-}) => {
-  if (item.kind !== "agent-event") return null;
-  const failed = item.status === "failed" || item.status === "timeout";
-  const latest = item.transitions.at(-1);
-  const summary =
-    item.summary ?? latest?.summary ?? `${item.eventType} 事件暂无摘要`;
-  return (
-    <Card
-      extra={
-        <Tag color={statusColor(item.status)}>
-          {eventStatusLabels[item.status]}
-        </Tag>
-      }
-      size="small"
-      title={item.eventCategory === "tool" ? "工具事件" : "智能体事件"}
-    >
-      <Space direction="vertical" size="small">
-        {failed ? (
-          <Alert
-            message={latest?.error?.message ?? item.summary ?? "事件执行失败"}
-            showIcon
-            type="error"
-          />
-        ) : null}
-        <Typography.Paragraph style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-          {summary}
-        </Typography.Paragraph>
-        <Typography.Text type="secondary">
-          类型：{item.eventType} · {formatTimestamp(item.createdAt)}
-        </Typography.Text>
-      </Space>
-    </Card>
-  );
-};
-
-const PlaygroundUnknownEventRenderer: ChatRenderer = ({
-  formatTimestamp,
-  item,
-}) => {
-  if (item.kind !== "unknown-event") return null;
-  return (
-    <Alert
-      description={
-        <>
-          <Typography.Paragraph style={{ marginBottom: 4 }}>
-            {item.summary}
-          </Typography.Paragraph>
-          <Typography.Text type="secondary">
-            {formatTimestamp(item.createdAt)}
-          </Typography.Text>
-        </>
-      }
-      message={`未知事件：${item.originalType}`}
-      showIcon
-      type="warning"
-    />
-  );
-};
-
 export const playgroundRenderers: ChatRendererRegistry = Object.freeze({
-  "agent-event:tool": PlaygroundAgentEventRenderer,
-  "agent-event": PlaygroundAgentEventRenderer,
   message: PlaygroundMessageRenderer,
-  "unknown-event": PlaygroundUnknownEventRenderer,
 });
 
 export const PlaygroundRunStatus = ({

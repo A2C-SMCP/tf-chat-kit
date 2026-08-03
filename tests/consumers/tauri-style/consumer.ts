@@ -24,9 +24,11 @@ import {
   type MemoryGatewayHarness,
 } from "@turingfocus/chat-testing";
 import {
+  ChatConversationView,
   ChatRunStatus,
   ChatUiShell,
   type ChatContentState,
+  type ChatEventDetailMode,
 } from "@turingfocus/chat-ui-antd";
 
 const check = (condition: unknown, message: string): void => {
@@ -34,6 +36,7 @@ const check = (condition: unknown, message: string): void => {
 };
 
 const deadlineAt = (): number => Date.now() + 60_000;
+const eventDetailMode: ChatEventDetailMode = "split";
 
 const flushMicrotasks = async (): Promise<void> => {
   await Promise.resolve();
@@ -197,6 +200,10 @@ const TauriRuntimeView = ({
       createElement(
         "section",
         null,
+        createElement(ChatConversationView, {
+          defaultEventDetailMode: eventDetailMode,
+          getDeadlineAt: deadlineAt,
+        }),
         createElement(ChatRunStatus, {
           canInterrupt: snapshot?.capabilities.interrupt ?? false,
           labels: {
@@ -434,6 +441,30 @@ export const runTauriConsumerVerification = async (): Promise<void> => {
     check(
       dom.container.textContent?.includes("2 timeline items") === true,
       "the mounted Ant Design shell must observe subscribed Runtime updates",
+    );
+
+    await act(async () => {
+      for (const update of fixture.fixtures.outOfOrderEventUpdates) {
+        instance!.gateway.controller.emitUpdateToAll(update);
+      }
+      await flushMicrotasks();
+    });
+    const eventTrigger = dom.container.querySelector<HTMLElement>(
+      '[data-chat-event-trigger="event-out-of-order"]',
+    );
+    check(
+      eventTrigger !== undefined,
+      "the packed Tauri consumer must render a compact public event row",
+    );
+    await act(async () => {
+      eventTrigger!.click();
+      await flushMicrotasks();
+    });
+    check(
+      dom.container
+        .querySelector('[data-chat-event-detail=""]')
+        ?.textContent?.includes("contract-step") === true,
+      "the packed Tauri consumer must open the public split event detail",
     );
 
     await clickButton(dom.container, "Send from Tauri host");

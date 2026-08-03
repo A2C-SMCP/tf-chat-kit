@@ -125,6 +125,31 @@ test("Mock mode renders and exercises the formal Runtime scenarios", async ({
   await expect(page.getByText("欢迎使用本地 Chat Kit 调试台。")).toBeVisible();
   const conversationList = page.locator('aside[aria-label="会话列表"]');
   await expect(conversationList).toBeHidden();
+  const eventLayout = page.locator("[data-chat-event-layout]");
+  const mockEvent = page.locator(
+    '[data-chat-event-trigger="playground-agent-event"]',
+  );
+  await expect(eventLayout).toHaveAttribute("data-chat-event-layout", "split");
+  await mockEvent.click();
+  await expect(page.locator('aside[aria-label="事件详情"]')).toContainText(
+    "执行计划已生成。",
+  );
+  await page.locator(".ant-segmented-item", { hasText: "弹窗" }).click();
+  const eventDialog = page.getByRole("dialog", { name: "事件详情" });
+  await expect(eventDialog).toContainText("执行计划已生成。");
+  await page.keyboard.press("Escape");
+  await expect(eventDialog).toBeHidden();
+  await expect(mockEvent).toBeFocused();
+  await page.locator(".ant-segmented-item", { hasText: "自动" }).click();
+  await page.setViewportSize({ height: 900, width: 600 });
+  await expect(eventLayout).toHaveAttribute("data-chat-event-layout", "modal");
+  expect(
+    await page
+      .locator(".chat-stage")
+      .evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+  await page.setViewportSize({ height: 900, width: 1280 });
+  await expect(eventLayout).toHaveAttribute("data-chat-event-layout", "split");
 
   await page.getByRole("button", { name: "新建会话" }).click();
   const createConversationDialog = page.getByRole("dialog", {
@@ -211,6 +236,19 @@ test("Bearer mode covers create, send, stream, interrupt, reconnect, CORS and di
   await expect(
     page.getByText("RobotServer fixture conversation").first(),
   ).toBeVisible();
+  await page.locator(".ant-segmented-item", { hasText: "双栏" }).click();
+  const robotServerEvent = page.locator(
+    '[data-chat-event-trigger="playground-event-1"]',
+  );
+  await robotServerEvent.click();
+  await expect(page.locator('aside[aria-label="事件详情"]')).toContainText(
+    "RobotServer 正式事件详情",
+  );
+  await page.locator(".ant-segmented-item", { hasText: "弹窗" }).click();
+  await expect(page.getByRole("dialog", { name: "事件详情" })).toContainText(
+    "RobotServer 正式事件详情",
+  );
+  await page.keyboard.press("Escape");
 
   await page.getByRole("button", { name: "新建会话" }).click();
   await page

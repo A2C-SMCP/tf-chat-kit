@@ -227,7 +227,17 @@ const httpServer = createServer(async (request, response) => {
   if (request.method === "GET" && url.pathname.endsWith("/messages")) {
     envelope(response, {
       cursor: null,
-      events: [],
+      events: [
+        {
+          content: "RobotServer 正式事件详情",
+          conversationId: Number(conversationId),
+          createTimestamp: 1_773_705_600_000 + Number(conversationId),
+          eventId: `playground-event-${conversationId}`,
+          eventScene: "Chain",
+          exception: null,
+          status: "success",
+        },
+      ],
       messages: messages.get(conversationId),
     });
     return;

@@ -96,6 +96,7 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
 
   constructor() {
     const memory = createMemoryChatGateway();
+    const initialTimestamp = Date.now();
     this.#controller = memory.controller;
     this.#controller.setSnapshot({
       ...memory.fixtures.initialSnapshot,
@@ -114,8 +115,35 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
             kind: "text",
             text: "欢迎使用本地 Chat Kit 调试台。",
           },
-          createdAt: Date.now(),
+          createdAt: initialTimestamp,
           sequence: 0,
+        },
+        {
+          kind: "agent-event",
+          id: "playground-agent-event",
+          conversationId: memory.fixtures.conversation.id,
+          eventCategory: "generic",
+          eventType: "agent.plan",
+          status: "success",
+          summary: "已通过正式事件组件生成执行计划。",
+          createdAt: initialTimestamp + 1,
+          sequence: 1,
+          transitions: [
+            {
+              id: "playground-agent-event-running",
+              status: "running",
+              occurredAt: initialTimestamp + 1,
+              sequence: 0,
+              summary: "正在生成执行计划。",
+            },
+            {
+              id: "playground-agent-event-success",
+              status: "success",
+              occurredAt: initialTimestamp + 2,
+              sequence: 1,
+              summary: "执行计划已生成。",
+            },
+          ],
         },
       ],
     });

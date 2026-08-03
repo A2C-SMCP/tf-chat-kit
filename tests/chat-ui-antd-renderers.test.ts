@@ -409,6 +409,87 @@ describe("@turingfocus/chat-ui-antd renderer registry", () => {
     expect(markup).not.toContain("token");
   });
 
+  it("renders standard events as compact selectable timeline rows and keeps messages unchanged", () => {
+    const registry = createChatRendererRegistry();
+    const eventMarkup = renderToStaticMarkup(
+      createElement(ChatTimelineItem, {
+        displayMode: "timeline",
+        item: agentEvent,
+        registry,
+        selected: true,
+      }),
+    );
+    const unknownMarkup = renderToStaticMarkup(
+      createElement(ChatTimelineItem, {
+        displayMode: "timeline",
+        item: unknownEvent,
+        registry,
+      }),
+    );
+    const messageMarkup = renderToStaticMarkup(
+      createElement(ChatTimelineItem, {
+        displayMode: "timeline",
+        item: textMessage,
+        registry,
+      }),
+    );
+
+    expect(eventMarkup).toContain('data-chat-event-row=""');
+    expect(eventMarkup).toContain('data-selected="true"');
+    expect(eventMarkup).toContain("Thinking safely");
+    expect(eventMarkup).not.toContain('data-chat-event-detail=""');
+    expect(unknownMarkup).toContain('data-chat-event-row=""');
+    expect(unknownMarkup).toContain("Safe diagnostic summary");
+    expect(unknownMarkup).not.toContain("must-not-render");
+    expect(messageMarkup).toContain("Safe text");
+    expect(messageMarkup).not.toContain("data-chat-event-row");
+  });
+
+  it("shows every normalized transition in detail without rendering raw payloads", () => {
+    const transitionedEvent: AgentEvent = {
+      ...agentEvent,
+      status: "failed",
+      summary: "Safe overall summary",
+      raw: { credential: "EVENT_SECRET" },
+      transitions: [
+        {
+          id: "transition-running",
+          status: "running",
+          occurredAt: textMessage.createdAt,
+          summary: "Started safely",
+          raw: { token: "TRANSITION_SECRET" },
+        },
+        {
+          id: "transition-failed",
+          status: "failed",
+          occurredAt: textMessage.createdAt + 1,
+          summary: "Stopped safely",
+          error: {
+            code: "server",
+            message: "Visible failure",
+            retryable: false,
+          },
+        },
+      ],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(ChatTimelineItem, {
+        displayMode: "detail",
+        item: transitionedEvent,
+        registry: createChatRendererRegistry(),
+      }),
+    );
+
+    expect(markup).toContain('data-chat-event-detail=""');
+    expect(markup).toContain("running · 2026-07-28");
+    expect(markup).toContain("failed · 2026-07-28");
+    expect(markup).toContain("Stopped safely");
+    expect(markup).toContain("Visible failure");
+    expect(markup).not.toContain("EVENT_SECRET");
+    expect(markup).not.toContain("TRANSITION_SECRET");
+    expect(markup).not.toContain("credential");
+  });
+
   it("isolates one renderer exception and reports it without exposing the error", async () => {
     const onRendererError = vi.fn<(failure: ChatRendererFailure) => void>(
       () => {

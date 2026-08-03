@@ -89,6 +89,7 @@ const PlaygroundConversation = ({
             ? "playground-conversation"
             : "playground-conversation playground-conversation-has-run"
         }
+        defaultEventDetailMode="auto"
         formatTimestamp={formatPlaygroundTimestamp}
         getDeadlineAt={deadlineAt}
         labels={playgroundChatLabels}

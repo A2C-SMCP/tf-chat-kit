@@ -1,5 +1,14 @@
 export { ChatComposer, type ChatComposerProps } from "./chat-composer.js";
 export {
+  ChatEventDetail,
+  ChatEventDetailEmpty,
+  isChatEventItem,
+  type ChatEventDetailMode,
+  type ChatEventDetailProps,
+  type ChatEventItem,
+  type ResolvedChatEventDetailMode,
+} from "./chat-event-detail.js";
+export {
   AskUserInteractionCard,
   AskUserInteractionResultView,
   type AskUserChatAboutThisRequest,
@@ -30,6 +39,7 @@ export {
   formatChatTimestampUtc,
   resolveChatRenderer,
   type ChatRenderer,
+  type ChatRendererDisplayMode,
   type ChatRendererFailure,
   type ChatRendererKey,
   type ChatRendererProps,

@@ -80,6 +80,7 @@ describe("private Chat Kit playground", () => {
       "之前发生了什么变化？",
       "已在不轮询的情况下加载更早的一页记录。",
       "欢迎使用本地 Chat Kit 调试台。",
+      "playground-agent-event",
     ]);
     const canonicalTimelineIds = afterHistory.map(({ id }) => id);
 
@@ -190,6 +191,45 @@ describe("private Chat Kit playground", () => {
         expect(discarded.dispose).toHaveBeenCalledOnce();
         expect(discarded.client.disposed).toBe(true);
       }
+
+      expect(container.textContent).toContain("事件详情模式");
+      const splitMode = [
+        ...container.querySelectorAll<HTMLElement>(".ant-segmented-item"),
+      ].find((item) => item.textContent === "双栏");
+      expect(splitMode).toBeDefined();
+      await act(async () => {
+        splitMode!.click();
+        await Promise.resolve();
+      });
+      const eventTrigger = container.querySelector<HTMLElement>(
+        '[data-chat-event-trigger="playground-agent-event"]',
+      );
+      expect(eventTrigger).not.toBeNull();
+      await act(async () => {
+        eventTrigger!.click();
+        await Promise.resolve();
+      });
+      expect(
+        container.querySelector('aside[aria-label="事件详情"]')?.textContent,
+      ).toContain("执行计划已生成。");
+      const modalMode = [
+        ...container.querySelectorAll<HTMLElement>(".ant-segmented-item"),
+      ].find((item) => item.textContent === "弹窗");
+      await act(async () => {
+        modalMode!.click();
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => {
+        expect(
+          document.body.querySelector('[role="dialog"]')?.textContent,
+        ).toContain("执行计划已生成。");
+      });
+      const closeEventDetail =
+        document.body.querySelector<HTMLButtonElement>(".ant-modal-close");
+      await act(async () => {
+        closeEventDetail!.click();
+        await Promise.resolve();
+      });
 
       const conversationList = container.querySelector<HTMLElement>(
         'aside[aria-label="会话列表"]',

@@ -34,3 +34,15 @@ manual compatibility target and is never required by CI.
 | Credentials are not persisted or logged, and mode changes release connections | Bearer checks live, Mock-mode-switch and reload state, with zero active sockets after each disposal boundary.                                        |
 | Regular CI is external-service independent                                    | CI installs Chromium and runs `pnpm test:e2e` against the two local web servers from `playwright.config.ts`.                                         |
 | A real RobotServer is optional and manual                                     | Follow the real-mode instructions in the root README; feed any incompatibility back into the local mock or fixtures before changing production code. |
+
+## Issue #17 event detail invariants
+
+| Invariant                                                                                              | Evidence                                                                                                                            |
+| ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Messages remain in the left timeline while Agent, Tool and unknown events use compact selectable rows  | UI renderer tests and both Playground modes exercise the package-default compact event renderer.                                    |
+| Wide auto mode starts split with an empty detail pane and selection changes only after user activation | Unit tests cover empty state, click/keyboard selection, same-ID updates and new-event non-stealing; Mock browser flow covers split. |
+| Narrow auto mode opens a Modal, while a per-instance manual mode overrides responsive selection        | Unit tests cover controlled and uncontrolled modes; browser flow resizes, opens Modal, closes by Escape and restores trigger focus. |
+| Generic, Tool, transitions, Ask User, failure and unknown details fail safely without exposing raw     | Renderer and event-detail suites cover structured variants, bounded values, error isolation and raw redaction.                      |
+| Existing custom renderer, virtual timeline, tail follow, send and interrupt behavior remains intact    | Existing UI, virtualization and scroll suites remain gates; Mock and Bearer browser scenarios still send, stream and interrupt.     |
+| Mock and approximate RobotServer Playground modes use public package components                        | Mock and Bearer Playwright scenarios select package-default event rows and switch between split and Modal modes.                    |
+| Front-style and Tauri-style consumers can adopt the public API without host-owned internals            | Source-level Front-style suite mounts split mode; the packed Tauri consumer selects a row and opens event detail.                   |

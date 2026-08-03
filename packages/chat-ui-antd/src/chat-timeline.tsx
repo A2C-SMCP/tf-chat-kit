@@ -7,6 +7,8 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent,
+  type MouseEvent,
 } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 
@@ -15,6 +17,7 @@ import {
   type TimelineItem,
 } from "@turingfocus/chat-protocol";
 
+import { isChatEventItem, type ChatEventItem } from "./chat-event-detail.js";
 import { resolveChatUiLabels } from "./labels.js";
 import {
   ChatTimelineItem,
@@ -35,6 +38,45 @@ const MemoizedTimelineItem = memo(ChatTimelineItem);
 const followNewOutput = (atBottom: boolean): "auto" | false =>
   atBottom ? "auto" : false;
 
+const INTERACTIVE_EVENT_TARGET_SELECTOR = [
+  "a[href]",
+  "button",
+  "input",
+  "label",
+  "select",
+  "summary",
+  "textarea",
+  '[contenteditable]:not([contenteditable="false"])',
+  "[data-chat-event-interactive]",
+  '[role="button"]',
+  '[role="checkbox"]',
+  '[role="combobox"]',
+  '[role="gridcell"]',
+  '[role="link"]',
+  '[role="listbox"]',
+  '[role="menuitem"]',
+  '[role="menuitemcheckbox"]',
+  '[role="menuitemradio"]',
+  '[role="option"]',
+  '[role="radio"]',
+  '[role="searchbox"]',
+  '[role="slider"]',
+  '[role="spinbutton"]',
+  '[role="switch"]',
+  '[role="tab"]',
+  '[role="textbox"]',
+  '[role="treeitem"]',
+].join(", ");
+
+const isInteractiveEventTarget = (
+  target: EventTarget | null,
+  row: HTMLElement,
+): boolean => {
+  if (!(target instanceof Element) || target === row) return false;
+  const interactiveTarget = target.closest(INTERACTIVE_EVENT_TARGET_SELECTOR);
+  return interactiveTarget !== null && row.contains(interactiveTarget);
+};
+
 export interface ChatTimelineProps {
   readonly "aria-label"?: string | undefined;
   readonly className?: string | undefined;
@@ -42,9 +84,12 @@ export interface ChatTimelineProps {
   readonly formatTimestamp?: ((timestamp: number) => string) | undefined;
   readonly items: readonly TimelineItem[];
   readonly labels?: ChatUiLabelOverrides | undefined;
+  readonly onEventSelect?:
+    ((item: ChatEventItem, trigger: HTMLElement) => void) | undefined;
   readonly onRendererError?:
     ((failure: ChatRendererFailure) => void) | undefined;
   readonly renderers?: ChatRendererRegistry | undefined;
+  readonly selectedEventId?: string | null | undefined;
   readonly style?: CSSProperties | undefined;
 }
 
@@ -55,8 +100,10 @@ export const ChatTimeline = ({
   formatTimestamp = formatChatTimestampUtc,
   items,
   labels: labelOverrides,
+  onEventSelect,
   onRendererError,
   renderers,
+  selectedEventId,
   style,
 }: ChatTimelineProps) => {
   const { token } = theme.useToken();
@@ -105,23 +152,104 @@ export const ChatTimeline = ({
   }, [items.length]);
 
   const renderItem = useCallback(
-    (_index: number, item: TimelineItem) => (
-      <div
-        role="article"
-        style={{ padding: `${token.paddingXXS}px ${token.paddingSM}px` }}
-      >
-        <MemoizedTimelineItem
-          formatTimestamp={formatTimestamp}
-          item={item}
-          onRendererError={onRendererError}
-          registry={registry}
-        />
-      </div>
-    ),
+    (_index: number, item: TimelineItem | undefined) => {
+      if (item === undefined) return <div aria-hidden="true" />;
+      const selectable = isChatEventItem(item) && onEventSelect !== undefined;
+      const selected = isChatEventItem(item) && item.id === selectedEventId;
+      const select = (trigger: HTMLElement) => {
+        if (!isChatEventItem(item)) return;
+        onEventSelect?.(item, trigger);
+      };
+      const handleClick = (event: MouseEvent<HTMLDivElement>) => {
+        if (isInteractiveEventTarget(event.target, event.currentTarget)) return;
+        const trigger = event.currentTarget.querySelector<HTMLElement>(
+          "[data-chat-event-trigger]",
+        );
+        if (trigger !== null) select(trigger);
+      };
+      const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        select(event.currentTarget);
+      };
+      const selectionLabel = isChatEventItem(item)
+        ? `${labels.openEventDetail}: ${
+            item.kind === "unknown-event" ? item.originalType : item.eventType
+          }`
+        : labels.openEventDetail;
+      return (
+        <div
+          {...(selectable
+            ? {
+                "aria-label": selectionLabel,
+                onClick: handleClick,
+                role: "group",
+              }
+            : { role: "article" })}
+          style={{
+            alignItems: "stretch",
+            cursor: selectable ? "pointer" : undefined,
+            display: "flex",
+            gap: selectable ? token.marginXXS : undefined,
+            outlineOffset: 2,
+            padding: `${token.paddingXXS}px ${token.paddingSM}px`,
+          }}
+        >
+          {selectable ? (
+            <button
+              aria-label={selectionLabel}
+              aria-pressed={selected}
+              data-chat-event-trigger={item.id}
+              onClick={(event) => {
+                event.stopPropagation();
+                select(event.currentTarget);
+              }}
+              onKeyDown={handleKeyDown}
+              style={{
+                background: selected
+                  ? token.colorPrimaryBg
+                  : token.colorBgContainer,
+                border: `1px solid ${
+                  selected ? token.colorPrimary : token.colorBorderSecondary
+                }`,
+                borderRadius: token.borderRadius,
+                color: token.colorPrimary,
+                cursor: "pointer",
+                minWidth: 28,
+                padding: 0,
+              }}
+              title={selectionLabel}
+              type="button"
+            >
+              <span aria-hidden="true">›</span>
+            </button>
+          ) : null}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <MemoizedTimelineItem
+              displayMode="timeline"
+              formatTimestamp={formatTimestamp}
+              item={item}
+              onRendererError={onRendererError}
+              registry={registry}
+              selected={selected}
+            />
+          </div>
+        </div>
+      );
+    },
     [
       formatTimestamp,
+      labels.openEventDetail,
+      onEventSelect,
       onRendererError,
       registry,
+      selectedEventId,
+      token.borderRadius,
+      token.colorBgContainer,
+      token.colorBorderSecondary,
+      token.colorPrimary,
+      token.colorPrimaryBg,
+      token.marginXXS,
       token.paddingSM,
       token.paddingXXS,
     ],
@@ -164,7 +292,11 @@ export const ChatTimeline = ({
         aria-label={ariaLabel ?? labels.timelineLabel}
         atBottomStateChange={handleAtBottomChange}
         atBottomThreshold={150}
-        computeItemKey={(_index, item) => getTimelineItemKey(item)}
+        computeItemKey={(index, item: TimelineItem | undefined) =>
+          item === undefined
+            ? `timeline:${conversationId}:pending:${index}`
+            : getTimelineItemKey(item)
+        }
         data={items}
         followOutput={followNewOutput}
         increaseViewportBy={{ bottom: 400, top: 200 }}
