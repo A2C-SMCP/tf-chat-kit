@@ -44,6 +44,7 @@ chat-ui-antd -------------------------------> chat-protocol
 
 ## 文档
 
+- [宿主 App 接入指南](docs/host-app-integration.md)
 - [项目章程](docs/project-charter.md)
 - [架构决策记录](docs/adr/README.md)
 - [工程与发布基线](docs/engineering-baseline.md)
@@ -58,9 +59,31 @@ nvm use
 corepack enable
 corepack prepare pnpm@10.34.5 --activate
 pnpm install --frozen-lockfile
+pnpm dev:playground
 pnpm check
 pnpm pack:workspace
 ```
+
+`pnpm dev:playground` 会在 `http://localhost:3000` 启动仓库私有演示应用。Mock 模式直接组合
+正式 Runtime、React、Ant Design UI 与 Memory Gateway，提供会话创建/切换、历史、流式回复、
+中断、错误、断线和重连场景。RobotServer 模式使用全中文单列表单，填写 RobotServer 服务地址、
+Namespace 与 Robot ID 后，Playground 会推导 API 域名和 Socket namespace/path，并由仅存在于本地
+Vite 开发服务中的同源代理为聊天请求注入 RobotServer 路由头。鉴权可使用管理员密码、Admin Token
+或用户 Token；管理员密码只用于调用 `/v1/auth/login` 换取短期 Admin Token，不会进入聊天会话。
+`platformId`、消息创建者与自定义直连端点位于高级设置中；未使用本地预填时所有字段默认留空。
+
+仅在 `pnpm dev:playground` 的本地 Vite 服务中，连接表单会尝试读取仓库根目录的 `.debug` JSON
+作为内存预填值；文件不存在或为空时仍保持全部字段为空。支持的可选字段为 `serverOrigin`、
+`namespace`、`robotId`、`authKind`（`password` / `admin` / `bearer`）、`secret`、
+`connectionKind`（`standard` / `direct`）、`httpBaseUrl`、`socketNamespaceUrl`、`socketPath`、
+`platformId`、`creatorUid` 和 `creatorName`。高级直连必须同时选择 `admin` 或 `bearer`。
+`.debug` 已被 Git 忽略；开发服务按页面加载读取并严格校验，不记录内容、不写入浏览器存储，
+生产构建与公开包不会读取该文件。
+
+代理只接受同源请求、受信任的 TuringFocus API 域名或显式测试白名单；聊天路由要求恰好一种
+Token 凭据，密码登录路由只接受一个受限长度的 password 字段。代理不转发 Cookie，也不记录
+凭据。密码和 Token 只保留在当前 React 页面实例的内存中，不会写入浏览器存储、Cookie、URL、
+环境文件或诊断日志。生产构建不包含该开发代理，公共包 API 也未改变。
 
 仓库根目录的 `.nvmrc` 与 GitHub Actions 共用 Node.js 24.x。执行任何安装或门禁前先通过
 `nvm install && nvm use` 激活该主版本；错误版本会在依赖安装的 `preinstall` 或 workspace

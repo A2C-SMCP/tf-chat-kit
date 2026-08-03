@@ -6,7 +6,10 @@ import type {
   ChatGateway,
   ChatSnapshot,
   ChatUpdate,
+  Conversation,
+  ConversationPage,
   GatewayRequestOptions,
+  GatewayResult,
   GatewaySubscription,
   LoadConversationInput,
   Message,
@@ -27,10 +30,14 @@ const deadlineAt = (): number => Date.now() + 60_000;
 const wrapGateway = (
   gateway: ChatGateway,
   overrides: Partial<ChatGateway>,
+  includeCreateConversation = true,
 ): ChatGateway => ({
   ...(gateway.answerInteraction === undefined
     ? {}
     : { answerInteraction: (input) => gateway.answerInteraction!(input) }),
+  ...(!includeCreateConversation || gateway.createConversation === undefined
+    ? {}
+    : { createConversation: (input) => gateway.createConversation!(input) }),
   dispose: (input) => gateway.dispose(input),
   interrupt: (input) => gateway.interrupt(input),
   listConversations: (input) => gateway.listConversations(input),
@@ -38,6 +45,242 @@ const wrapGateway = (
   sendText: (input) => gateway.sendText(input),
   subscribe: (input, observer) => gateway.subscribe(input, observer),
   ...overrides,
+});
+
+describe("ChatClient conversation commands", () => {
+  it("lists conversations and forwards a normalized creation command", async () => {
+    const memory = createMemoryChatGateway();
+    const createConversation = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        ...memory.fixtures.conversation,
+        id: "conversation-created",
+        title: "Created conversation",
+      },
+    }));
+    const client = createChatClient({
+      gateway: wrapGateway(memory.gateway, { createConversation }),
+    });
+
+    await expect(
+      client.listConversations({ limit: 10, deadlineAt: deadlineAt() }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { conversations: [memory.fixtures.conversation] },
+    });
+    await expect(
+      client.createConversation({
+        title: "  Created conversation  ",
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        id: "conversation-created",
+        title: "Created conversation",
+      },
+    });
+    expect(createConversation).toHaveBeenCalledWith({
+      title: "Created conversation",
+      deadlineAt: expect.any(Number),
+    });
+
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("creates, lists, loads, and switches conversations through the real Memory Gateway", async () => {
+    const memory = createMemoryChatGateway();
+    const client = createChatClient({ gateway: memory.gateway });
+
+    const created = await client.createConversation({
+      title: "Runtime-created conversation",
+      deadlineAt: deadlineAt(),
+    });
+    expect(created).toMatchObject({
+      ok: true,
+      value: { title: "Runtime-created conversation" },
+    });
+    if (!created.ok) return;
+    const listed = await client.listConversations({ deadlineAt: deadlineAt() });
+    expect(listed.ok).toBe(true);
+    expect(
+      listed.ok &&
+        listed.value.conversations.some(
+          (conversation) => conversation.id === created.value.id,
+        ),
+    ).toBe(true);
+
+    await expect(
+      client.loadConversation({
+        conversationId: memory.fixtures.conversation.id,
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { conversation: memory.fixtures.conversation },
+    });
+    expect(client.getSnapshot()?.conversation.id).toBe(
+      memory.fixtures.conversation.id,
+    );
+
+    await expect(
+      client.loadConversation({
+        conversationId: created.value.id,
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { conversation: created.value, timeline: [] },
+    });
+    expect(client.getSnapshot()?.conversation.id).toBe(created.value.id);
+
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("rejects invalid, expired, and unsupported commands without dispatching", async () => {
+    const memory = createMemoryChatGateway();
+    const listConversations = vi.fn((input) =>
+      memory.gateway.listConversations(input),
+    );
+    const client = createChatClient({
+      gateway: wrapGateway(memory.gateway, { listConversations }, false),
+    });
+
+    await expect(
+      client.listConversations({ limit: 0, deadlineAt: deadlineAt() }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "validation" },
+    });
+    await expect(
+      client.listConversations({ deadlineAt: 0 }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "timeout", retryable: true },
+    });
+    expect(listConversations).not.toHaveBeenCalled();
+
+    await expect(
+      client.createConversation({ title: "   ", deadlineAt: deadlineAt() }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "validation" },
+    });
+    await expect(
+      client.createConversation({ title: "Too late", deadlineAt: 0 }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "timeout", retryable: true },
+    });
+    await expect(
+      client.createConversation({
+        title: "Unsupported",
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "unsupported" },
+    });
+
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("preserves structured Gateway failures", async () => {
+    const memory = createMemoryChatGateway();
+    const failure = {
+      ok: false,
+      error: {
+        code: "server",
+        message: "Creation failed",
+        retryable: true,
+      },
+    } as const;
+    const client = createChatClient({
+      gateway: wrapGateway(memory.gateway, {
+        createConversation: vi.fn(async () => failure),
+        listConversations: vi.fn(async () => failure),
+      }),
+    });
+
+    await expect(
+      client.listConversations({ deadlineAt: deadlineAt() }),
+    ).resolves.toBe(failure);
+    await expect(
+      client.createConversation({
+        title: "Failed conversation",
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toBe(failure);
+
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("rejects commands after disposal and discards late query results", async () => {
+    const memory = createMemoryChatGateway();
+    let resolveCreation:
+      ((result: GatewayResult<Conversation>) => void) | undefined;
+    let resolveListing:
+      ((result: GatewayResult<ConversationPage>) => void) | undefined;
+    const client = createChatClient({
+      gateway: wrapGateway(memory.gateway, {
+        createConversation: () =>
+          new Promise((resolve) => {
+            resolveCreation = resolve;
+          }),
+        listConversations: () =>
+          new Promise((resolve) => {
+            resolveListing = resolve;
+          }),
+      }),
+    });
+    const pendingCreation = client.createConversation({
+      title: "Pending conversation",
+      deadlineAt: deadlineAt(),
+    });
+    const pendingListing = client.listConversations({
+      deadlineAt: deadlineAt(),
+    });
+    await Promise.resolve();
+    await client.dispose({ deadlineAt: deadlineAt() });
+    expect(resolveCreation).toBeTypeOf("function");
+    expect(resolveListing).toBeTypeOf("function");
+    resolveCreation!({
+      ok: true,
+      value: {
+        ...memory.fixtures.conversation,
+        id: "conversation-late",
+        title: "Late conversation",
+      },
+    });
+    resolveListing!({
+      ok: true,
+      value: { conversations: [memory.fixtures.conversation] },
+    });
+
+    await expect(pendingCreation).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    await expect(pendingListing).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    await expect(
+      client.listConversations({ deadlineAt: deadlineAt() }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    await expect(
+      client.createConversation({
+        title: "After disposal",
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+  });
 });
 
 describe("ChatClient Ask User interactions", () => {

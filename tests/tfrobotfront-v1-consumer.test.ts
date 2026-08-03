@@ -219,6 +219,7 @@ const RuntimeView = ({ host }: { readonly host: FrontHostInputs }) => {
           },
         }),
     createElement(ChatConversationView, {
+      defaultEventDetailMode: "split",
       getDeadlineAt: deadlineAt,
       labels: host.labels,
       onCommandError: host.onCommandError,
@@ -479,7 +480,6 @@ describe("TFRobotFront-style V1 consumer", () => {
             '[data-testid="live-runtime-timeline"]',
           )?.textContent,
         ).toContain("Unknown event:");
-
         await setComposerText(rendered.container, "Hello from Front UI");
         await clickButton(rendered.container, "Send through Kit");
         await clickButton(rendered.container, "Stop");

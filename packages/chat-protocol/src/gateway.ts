@@ -58,6 +58,10 @@ export interface ConversationPage {
   readonly nextCursor?: string | undefined;
 }
 
+export interface CreateConversationInput extends GatewayRequestOptions {
+  readonly title: string;
+}
+
 export type GatewayResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: ChatError };
@@ -165,6 +169,14 @@ export interface GatewaySubscription {
  */
 export interface ChatGateway {
   /**
+   * Optional for backward compatibility. Runtime returns a structured
+   * `unsupported` result when an adapter does not implement conversation
+   * creation.
+   */
+  createConversation?(
+    input: CreateConversationInput,
+  ): Promise<GatewayResult<Conversation>>;
+  /**
    * Optional during migration. Runtime dispatches only when both the normalized
    * capability and this method are present.
    */
@@ -240,6 +252,12 @@ const conversationPageParser: z.ZodType<ConversationPage> = z.object({
   conversations: z.array(conversationParser),
   nextCursor: z.string().optional(),
 });
+
+const createConversationInputParser: z.ZodType<CreateConversationInput> =
+  z.object({
+    title: z.string().trim().min(1),
+    deadlineAt: deadlineParser,
+  });
 
 const loadConversationInputParser: z.ZodType<LoadConversationInput> = z.object({
   conversationId: z.string().min(1),
@@ -319,6 +337,12 @@ export const conversationPageSchema = createRuntimeSchema(
 );
 export const conversationPageResultSchema = createRuntimeSchema(
   gatewayResultParser(conversationPageParser),
+);
+export const createConversationInputSchema = createRuntimeSchema(
+  createConversationInputParser,
+);
+export const createConversationResultSchema = createRuntimeSchema(
+  gatewayResultParser(conversationParser),
 );
 export const loadConversationInputSchema = createRuntimeSchema(
   loadConversationInputParser,

@@ -1,0 +1,282 @@
+:root {
+  color: #172033;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(
+      circle at 10% 0%,
+      rgb(219 234 254 / 90%),
+      transparent 35rem
+    ),
+    #f6f8fc;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.playground-page {
+  display: grid;
+  gap: 18px;
+  width: min(1440px, calc(100% - 32px));
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 26px 0;
+}
+
+.playground-hero,
+.scenario-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.playground-hero h2,
+.playground-hero p,
+.scenario-heading h4 {
+  margin: 0;
+}
+
+.playground-hero p {
+  max-width: 760px;
+  margin-top: 6px;
+}
+
+.eyebrow {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.scenario-panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  background: rgb(255 255 255 / 88%);
+  border: 1px solid #dbe3f0;
+  border-radius: 14px;
+  box-shadow: 0 12px 35px rgb(15 23 42 / 7%);
+  backdrop-filter: blur(12px);
+}
+
+.scenario-status {
+  max-width: 42rem;
+  text-align: end;
+}
+
+.conversation-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.conversation-header > .ant-typography {
+  min-width: 0;
+}
+
+.chat-stage {
+  min-height: 620px;
+  height: calc(100vh - 330px);
+}
+
+.playground-conversation-frame {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.playground-run-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.playground-conversation-has-run > :first-child {
+  display: none;
+}
+
+.playground-fallback {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+}
+
+.connection-panel {
+  display: grid;
+  gap: 20px;
+  width: min(640px, 100%);
+  margin: auto;
+  padding: 34px 38px;
+  background: rgb(255 255 255 / 94%);
+  border: 1px solid #dbe3f0;
+  border-radius: 16px;
+  box-shadow: 0 18px 55px rgb(15 23 42 / 10%);
+}
+
+.connection-page {
+  place-items: center;
+}
+
+.connection-intro {
+  display: grid;
+  gap: 8px;
+}
+
+.connection-panel h2,
+.connection-panel p {
+  margin: 0;
+}
+
+.connection-form {
+  display: grid;
+  gap: 20px;
+}
+
+.connection-section {
+  display: grid;
+  gap: 12px;
+}
+
+.connection-section h5 {
+  margin: 0;
+  color: #172033;
+}
+
+.connection-field {
+  display: grid;
+  gap: 7px;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.connection-field small {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.connection-field .ant-input,
+.connection-field .ant-input-affix-wrapper {
+  min-height: 42px;
+}
+
+.connection-advanced {
+  padding-top: 4px;
+  color: #334155;
+  font-size: 14px;
+}
+
+.connection-advanced summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style-position: outside;
+}
+
+.connection-advanced-fields {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+}
+
+.connection-identity {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.connection-label {
+  color: #334155;
+  font-weight: 600;
+}
+
+.connection-choice {
+  display: flex;
+}
+
+.connection-choice .ant-radio-button-wrapper {
+  flex: 1;
+  text-align: center;
+}
+
+.connection-actions {
+  width: 100%;
+}
+
+.connection-actions .ant-btn-primary {
+  min-width: 168px;
+}
+
+@media (max-width: 760px) {
+  .playground-page {
+    width: min(100% - 20px, 1440px);
+    padding: 14px 0;
+  }
+
+  .playground-hero,
+  .scenario-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .scenario-status {
+    text-align: start;
+  }
+
+  .chat-stage {
+    height: 720px;
+  }
+
+  .connection-form {
+    gap: 16px;
+  }
+
+  .connection-panel {
+    padding: 24px 18px;
+  }
+
+  .connection-choice {
+    display: grid;
+  }
+
+  .connection-choice .ant-radio-button-wrapper {
+    border-inline-start-width: 1px;
+    border-radius: 6px;
+  }
+
+  .connection-identity {
+    grid-template-columns: 1fr;
+  }
+}

@@ -71,6 +71,8 @@ isolated consumer projects and verifies:
 - the Tauri topology mounts the packed Ant Design shell in the same tree as the
   Runtime provider while window, file and tray behavior remains behind a
   host-owned narrow port;
+- the Tauri topology selects a compact event row and opens the public split
+  detail view from the packed `ChatConversationView` API;
 - mounted host controls reach the mock platform port, while Chat Kit commands
   do not invoke it;
 - React StrictMode effect replay replaces and fully disposes its rehearsal

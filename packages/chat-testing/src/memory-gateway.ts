@@ -5,6 +5,8 @@ import {
   chatSnapshotSchema,
   chatUpdateSchema,
   conversationPageSchema,
+  createConversationInputSchema,
+  createConversationResultSchema,
   createGatewayDeadlineExceededError,
   interruptRunInputSchema,
   interruptRunResultSchema,
@@ -21,7 +23,9 @@ import {
   type ChatGateway,
   type ChatSnapshot,
   type ChatUpdate,
+  type Conversation,
   type ConversationPage,
+  type CreateConversationInput,
   type GatewayObserver,
   type GatewayRequestOptions,
   type GatewayResult,
@@ -60,6 +64,10 @@ export type MemoryGatewayCall =
       readonly operation: "answerInteraction";
       readonly input: AnswerInteractionInput;
     }
+  | {
+      readonly operation: "createConversation";
+      readonly input: CreateConversationInput;
+    }
   | { readonly operation: "interrupt"; readonly input: InterruptRunInput }
   | {
       readonly operation: "listConversations";
@@ -94,20 +102,25 @@ export interface MemoryGatewayController {
   now(): number;
   advanceTimeTo(timestamp: number): void;
   reconnect(): void;
+  /** Scripts the exact page returned by every subsequent list request. */
   setConversationPage(page: ConversationPage): void;
   setAnswerInteractionResult(
     result: GatewayResult<AnswerInteractionSuccess>,
   ): void;
   setInterruptResult(result: GatewayResult<InterruptRunSuccess>): void;
   setSendTextResult(result: GatewayResult<SendTextSuccess>): void;
+  /** Upserts one snapshot and makes its capabilities the creation defaults. */
   setSnapshot(snapshot: ChatSnapshot): void;
 }
 
 export interface MemoryGatewayHarness {
   readonly controller: MemoryGatewayController;
   readonly fixtures: ChatContractFixtures;
-  readonly gateway: ChatGateway;
+  readonly gateway: MemoryChatGatewayPort;
 }
+
+export type MemoryChatGatewayPort = ChatGateway &
+  Required<Pick<ChatGateway, "createConversation">>;
 
 interface ObserverRegistration {
   active: boolean;
@@ -182,14 +195,18 @@ class MemoryChatGateway implements ChatGateway {
   readonly #failures = new Map<MemoryGatewayOperation, ChatError[]>();
   readonly #holds = new Map<MemoryGatewayHoldPoint, PendingHold[]>();
   readonly #observers = new Set<ObserverRegistration>();
+  readonly #snapshots = new Map<string, ChatSnapshot>();
   #connected: boolean;
   #answerInteractionResult: GatewayResult<AnswerInteractionSuccess>;
-  #conversationPage: ConversationPage;
+  readonly #conversations = new Map<string, Conversation>();
+  #conversationIds: string[] = [];
+  #conversationSequence = 0;
+  #defaultCapabilities: ChatSnapshot["capabilities"];
   #disposed = false;
   #disposePromise: Promise<void> | undefined;
   #interruptResult: GatewayResult<InterruptRunSuccess>;
+  #scriptedConversationPage: ConversationPage | undefined;
   #sendTextResult: GatewayResult<SendTextSuccess>;
-  #snapshot: ChatSnapshot;
 
   constructor(
     options: MemoryChatGatewayOptions,
@@ -197,10 +214,8 @@ class MemoryChatGateway implements ChatGateway {
   ) {
     this.#connected = options.connected ?? true;
     this.#clock = new MemoryGatewayClock(options.now?.() ?? Date.now());
-    this.#conversationPage = conversationPageSchema.parse({
-      conversations: [fixtures.conversation],
-    });
-    this.#snapshot = fixtures.initialSnapshot;
+    this.#defaultCapabilities = fixtures.initialSnapshot.capabilities;
+    this.#setSnapshot(fixtures.initialSnapshot, "append");
     this.#answerInteractionResult = answerInteractionResultSchema.parse({
       ok: true,
       value: fixtures.answerInteractionSuccess,
@@ -229,6 +244,88 @@ class MemoryChatGateway implements ChatGateway {
 
   #record(call: MemoryGatewayCall): void {
     this.#calls.push(Object.freeze(call));
+  }
+
+  #setSnapshot(
+    snapshot: ChatSnapshot,
+    position: "append" | "front",
+  ): ChatSnapshot {
+    const parsed = chatSnapshotSchema.parse(snapshot);
+    const conversationId = parsed.conversation.id;
+    this.#snapshots.set(conversationId, parsed);
+    this.#conversations.set(conversationId, parsed.conversation);
+    if (!this.#conversationIds.includes(conversationId)) {
+      if (position === "front") this.#conversationIds.unshift(conversationId);
+      else this.#conversationIds.push(conversationId);
+    }
+    return parsed;
+  }
+
+  #snapshotFor(conversationId: string): ChatSnapshot | undefined {
+    return this.#snapshots.get(conversationId);
+  }
+
+  #nextConversationId(): string {
+    const isReserved = (conversationId: string): boolean =>
+      this.#snapshots.has(conversationId) ||
+      this.#conversations.has(conversationId) ||
+      (this.#scriptedConversationPage?.conversations.some(
+        (conversation) => conversation.id === conversationId,
+      ) ??
+        false);
+    do {
+      this.#conversationSequence += 1;
+    } while (isReserved(`memory-conversation-${this.#conversationSequence}`));
+    return `memory-conversation-${this.#conversationSequence}`;
+  }
+
+  #cursorOffset(cursor: string | undefined): number | undefined {
+    if (cursor === undefined) return 0;
+    if (!cursor.startsWith("memory:")) return undefined;
+    try {
+      const conversationId = decodeURIComponent(cursor.slice("memory:".length));
+      const anchorIndex = this.#conversationIds.indexOf(conversationId);
+      return anchorIndex === -1 ? undefined : anchorIndex + 1;
+    } catch {
+      return undefined;
+    }
+  }
+
+  #conversationPageFor(
+    input: ListConversationsInput,
+  ): GatewayResult<ConversationPage> {
+    if (this.#scriptedConversationPage !== undefined) {
+      return { ok: true, value: this.#scriptedConversationPage };
+    }
+    const offset = this.#cursorOffset(input.cursor);
+    if (offset === undefined) {
+      return {
+        ok: false,
+        error: chatErrorSchema.parse({
+          code: "validation",
+          message: "Memory Gateway conversation cursor is invalid",
+          retryable: false,
+        }),
+      };
+    }
+    const end = Math.min(
+      this.#conversationIds.length,
+      offset + (input.limit ?? this.#conversationIds.length),
+    );
+    const conversations = this.#conversationIds
+      .slice(offset, end)
+      .map((conversationId) => this.#conversations.get(conversationId)!);
+    const nextCursor =
+      end < this.#conversationIds.length
+        ? `memory:${encodeURIComponent(this.#conversationIds[end - 1]!)}`
+        : undefined;
+    return {
+      ok: true,
+      value: conversationPageSchema.parse({
+        conversations,
+        ...(nextCursor === undefined ? {} : { nextCursor }),
+      }),
+    };
   }
 
   #takeHold(point: MemoryGatewayHoldPoint): PendingHold | undefined {
@@ -289,8 +386,7 @@ class MemoryChatGateway implements ChatGateway {
     if (outcome === "transport") deadline.cancel();
   }
 
-  #guard<T>(
-    operation: MemoryGatewayOperation,
+  #deadlineOrDisposedGuard<T>(
     input: GatewayRequestOptions,
   ): GatewayResult<T> | undefined {
     if (isGatewayDeadlineExceeded(input, this.#clock.now())) {
@@ -304,26 +400,46 @@ class MemoryChatGateway implements ChatGateway {
       };
     }
     if (this.#disposed) return disposedError();
+    return undefined;
+  }
+
+  #disconnectedGuard<T>(
+    input: GatewayRequestOptions,
+  ): GatewayResult<T> | undefined {
+    if (this.#connected) return undefined;
+    return {
+      ok: false,
+      error: chatErrorSchema.parse({
+        code: "network",
+        message: "Memory Gateway is disconnected",
+        retryable: true,
+        ...("conversationId" in input &&
+        typeof input.conversationId === "string"
+          ? { conversationId: input.conversationId }
+          : {}),
+      }),
+    };
+  }
+
+  #guard<T>(
+    operation: MemoryGatewayOperation,
+    input: GatewayRequestOptions,
+  ): GatewayResult<T> | undefined {
+    const unavailable = this.#deadlineOrDisposedGuard<T>(input);
+    if (unavailable !== undefined) return unavailable;
 
     const failures = this.#failures.get(operation);
     const failure = failures?.shift();
     if (failure !== undefined) return { ok: false, error: failure };
 
-    if (!this.#connected) {
-      return {
-        ok: false,
-        error: chatErrorSchema.parse({
-          code: "network",
-          message: "Memory Gateway is disconnected",
-          retryable: true,
-          ...("conversationId" in input &&
-          typeof input.conversationId === "string"
-            ? { conversationId: input.conversationId }
-            : {}),
-        }),
-      };
-    }
-    return undefined;
+    return this.#disconnectedGuard<T>(input);
+  }
+
+  #settledGuard<T>(input: GatewayRequestOptions): GatewayResult<T> | undefined {
+    return (
+      this.#deadlineOrDisposedGuard<T>(input) ??
+      this.#disconnectedGuard<T>(input)
+    );
   }
 
   async listConversations(
@@ -338,15 +454,56 @@ class MemoryChatGateway implements ChatGateway {
     if (guarded !== undefined) return guarded;
     const held = await this.#waitForOperation("listConversations", parsedInput);
     if (held?.failure !== undefined) return held.failure;
+    const settled = this.#settledGuard<ConversationPage>(parsedInput);
+    if (settled !== undefined) return settled;
     if (
       !isGatewayOperationSupported(
-        this.#snapshot.capabilities,
+        this.#defaultCapabilities,
         "listConversations",
       )
     ) {
       return unsupported("Conversation listing is unavailable");
     }
-    return { ok: true, value: this.#conversationPage };
+    return this.#conversationPageFor(parsedInput);
+  }
+
+  async createConversation(
+    input: CreateConversationInput,
+  ): Promise<GatewayResult<Conversation>> {
+    const parsedInput = createConversationInputSchema.parse(input);
+    this.#record({ operation: "createConversation", input: parsedInput });
+    const guarded = this.#guard<Conversation>(
+      "createConversation",
+      parsedInput,
+    );
+    if (guarded !== undefined) return guarded;
+    const held = await this.#waitForOperation(
+      "createConversation",
+      parsedInput,
+    );
+    if (held?.failure !== undefined) return held.failure;
+    const settled = this.#settledGuard<Conversation>(parsedInput);
+    if (settled !== undefined) return settled;
+
+    const conversation: Conversation = {
+      id: this.#nextConversationId(),
+      title: parsedInput.title,
+      updatedAt: this.#clock.now(),
+    };
+    this.#setSnapshot(
+      {
+        conversation,
+        timeline: [],
+        run: null,
+        capabilities: this.#defaultCapabilities,
+        pageInfo: { hasPreviousPage: false },
+      },
+      "front",
+    );
+    return createConversationResultSchema.parse({
+      ok: true,
+      value: conversation,
+    });
   }
 
   async answerInteraction(
@@ -375,21 +532,18 @@ class MemoryChatGateway implements ChatGateway {
     if (guarded !== undefined) return guarded;
     const held = await this.#waitForOperation("answerInteraction", parsedInput);
     if (held?.failure !== undefined) return held.failure;
-    if (parsedInput.conversationId !== this.#snapshot.conversation.id) {
-      return notFound(parsedInput.conversationId);
-    }
+    const settled = this.#settledGuard<AnswerInteractionSuccess>(parsedInput);
+    if (settled !== undefined) return settled;
+    const snapshot = this.#snapshotFor(parsedInput.conversationId);
+    if (snapshot === undefined) return notFound(parsedInput.conversationId);
     if (
-      !isGatewayOperationSupported(
-        this.#snapshot.capabilities,
-        "answerInteraction",
-      )
+      !isGatewayOperationSupported(snapshot.capabilities, "answerInteraction")
     ) {
       return unsupported("Interaction answers are unavailable");
     }
     if (
-      this.#snapshot.pendingInteraction?.requestId !==
-        parsedInput.answer.requestId ||
-      this.#snapshot.pendingInteraction.revision !== parsedInput.answer.revision
+      snapshot.pendingInteraction?.requestId !== parsedInput.answer.requestId ||
+      snapshot.pendingInteraction.revision !== parsedInput.answer.revision
     ) {
       return {
         ok: false,
@@ -413,16 +567,17 @@ class MemoryChatGateway implements ChatGateway {
     if (guarded !== undefined) return guarded;
     const held = await this.#waitForOperation("loadConversation", parsedInput);
     if (held?.failure !== undefined) return held.failure;
-    if (parsedInput.conversationId !== this.#snapshot.conversation.id) {
-      return notFound(parsedInput.conversationId);
-    }
+    const settled = this.#settledGuard<ChatSnapshot>(parsedInput);
+    if (settled !== undefined) return settled;
+    const snapshot = this.#snapshotFor(parsedInput.conversationId);
+    if (snapshot === undefined) return notFound(parsedInput.conversationId);
     if (
       parsedInput.previousCursor !== undefined &&
-      !isGatewayOperationSupported(this.#snapshot.capabilities, "loadHistory")
+      !isGatewayOperationSupported(snapshot.capabilities, "loadHistory")
     ) {
       return unsupported("History loading is unavailable");
     }
-    return { ok: true, value: this.#snapshot };
+    return { ok: true, value: snapshot };
   }
 
   async subscribe(
@@ -435,13 +590,17 @@ class MemoryChatGateway implements ChatGateway {
     if (guarded !== undefined) return guarded;
     const held = await this.#waitForOperation("subscribe", parsedInput);
     if (held?.failure !== undefined) return held.failure;
-    if (parsedInput.conversationId !== this.#snapshot.conversation.id) {
+    const settled = this.#settledGuard<GatewaySubscription>(parsedInput);
+    if (settled !== undefined) {
+      held?.transportSubscription?.dispose();
+      return settled;
+    }
+    const snapshot = this.#snapshotFor(parsedInput.conversationId);
+    if (snapshot === undefined) {
       held?.transportSubscription?.dispose();
       return notFound(parsedInput.conversationId);
     }
-    if (
-      !isGatewayOperationSupported(this.#snapshot.capabilities, "subscribe")
-    ) {
+    if (!isGatewayOperationSupported(snapshot.capabilities, "subscribe")) {
       held?.transportSubscription?.dispose();
       return unsupported("Live updates are unavailable");
     }
@@ -477,10 +636,11 @@ class MemoryChatGateway implements ChatGateway {
     if (guarded !== undefined) return guarded;
     const held = await this.#waitForOperation("sendText", parsedInput);
     if (held?.failure !== undefined) return held.failure;
-    if (parsedInput.conversationId !== this.#snapshot.conversation.id) {
-      return notFound(parsedInput.conversationId);
-    }
-    if (!isGatewayOperationSupported(this.#snapshot.capabilities, "sendText")) {
+    const settled = this.#settledGuard<SendTextSuccess>(parsedInput);
+    if (settled !== undefined) return settled;
+    const snapshot = this.#snapshotFor(parsedInput.conversationId);
+    if (snapshot === undefined) return notFound(parsedInput.conversationId);
+    if (!isGatewayOperationSupported(snapshot.capabilities, "sendText")) {
       return unsupported("Text sending is unavailable");
     }
     return this.#sendTextResult;
@@ -495,20 +655,21 @@ class MemoryChatGateway implements ChatGateway {
     if (guarded !== undefined) return guarded;
     const held = await this.#waitForOperation("interrupt", parsedInput);
     if (held?.failure !== undefined) return held.failure;
-    if (parsedInput.conversationId !== this.#snapshot.conversation.id) {
-      return notFound(parsedInput.conversationId);
-    }
+    const settled = this.#settledGuard<InterruptRunSuccess>(parsedInput);
+    if (settled !== undefined) return settled;
+    const snapshot = this.#snapshotFor(parsedInput.conversationId);
+    if (snapshot === undefined) return notFound(parsedInput.conversationId);
     if (
       parsedInput.runId !== undefined &&
-      parsedInput.runId !== this.#snapshot.run?.id
+      parsedInput.runId !== snapshot.run?.id
     ) {
       return staleInterrupt(parsedInput.conversationId, parsedInput.runId);
     }
     if (
       !isGatewayOperationSupported(
-        this.#snapshot.capabilities,
+        snapshot.capabilities,
         "interrupt",
-        this.#snapshot.run,
+        snapshot.run,
       )
     ) {
       return unsupported("Run interruption is unavailable");
@@ -608,7 +769,7 @@ class MemoryChatGateway implements ChatGateway {
   }
 
   setConversationPage(page: ConversationPage): void {
-    this.#conversationPage = conversationPageSchema.parse(page);
+    this.#scriptedConversationPage = conversationPageSchema.parse(page);
   }
 
   setAnswerInteractionResult(
@@ -626,7 +787,10 @@ class MemoryChatGateway implements ChatGateway {
   }
 
   setSnapshot(snapshot: ChatSnapshot): void {
-    this.#snapshot = chatSnapshotSchema.parse(snapshot);
+    this.#defaultCapabilities = this.#setSnapshot(
+      snapshot,
+      "append",
+    ).capabilities;
   }
 }
 

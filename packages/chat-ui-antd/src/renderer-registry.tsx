@@ -1,4 +1,4 @@
-import { Alert, Card, Skeleton, Space, Tag, Typography, theme } from "antd";
+import { Alert, Skeleton, Typography, theme } from "antd";
 import {
   Component,
   Suspense,
@@ -7,13 +7,14 @@ import {
   type ReactNode,
 } from "react";
 
-import type {
-  Message,
-  TimelineItem,
-  ToolAgentEvent,
-} from "@turingfocus/chat-protocol";
+import type { Message, TimelineItem } from "@turingfocus/chat-protocol";
 
-import { AskUserInteractionResultView } from "./ask-user-interaction.js";
+import {
+  AgentEventRenderer,
+  ToolEventRenderer,
+  UnknownEventRenderer,
+  getEventSummary,
+} from "./event-renderers.js";
 import { ChatMarkdownContent } from "./markdown-content.js";
 
 export type ChatRendererKey =
@@ -25,9 +26,13 @@ export type ChatRendererKey =
   | `unknown-event:${string}`;
 
 export interface ChatRendererProps {
+  readonly displayMode?: ChatRendererDisplayMode | undefined;
   readonly formatTimestamp: (timestamp: number) => string;
   readonly item: TimelineItem;
+  readonly selected?: boolean | undefined;
 }
+
+export type ChatRendererDisplayMode = "detail" | "timeline";
 
 export type ChatRenderer = ComponentType<ChatRendererProps>;
 /**
@@ -48,20 +53,6 @@ export const formatChatTimestampUtc = (timestamp: number): string => {
   if (Number.isNaN(date.getTime())) return "Unknown time";
   const iso = date.toISOString();
   return `${iso.slice(0, 10)} ${iso.slice(11, 19)} UTC`;
-};
-
-const getItemSummary = (item: TimelineItem): string => {
-  if (item.kind === "message") {
-    return item.content.kind === "text"
-      ? item.content.text
-      : item.content.summary;
-  }
-  if (item.kind === "unknown-event") return item.summary;
-  return (
-    item.summary ??
-    item.transitions.at(-1)?.summary ??
-    `${item.eventType} (${item.status})`
-  );
 };
 
 export interface ChatMessageContentProps {
@@ -108,200 +99,6 @@ const MessageRenderer = ({ formatTimestamp, item }: ChatRendererProps) => {
         <ChatMessageContent message={item} />
       </div>
     </div>
-  );
-};
-
-const AgentEventRenderer = ({ formatTimestamp, item }: ChatRendererProps) => {
-  if (item.kind !== "agent-event") return null;
-  const { token } = theme.useToken();
-  const failed = item.status === "failed" || item.status === "timeout";
-  const statusColor =
-    item.status === "success"
-      ? "success"
-      : item.status === "failed" || item.status === "timeout"
-        ? "error"
-        : item.status === "running"
-          ? "processing"
-          : "default";
-
-  return (
-    <Card
-      extra={<Tag color={statusColor}>{item.status}</Tag>}
-      size="small"
-      {...(failed ? { style: { borderColor: token.colorError } } : {})}
-      title={item.eventType}
-    >
-      {failed ? (
-        <Alert
-          message={
-            item.transitions.at(-1)?.error?.message ??
-            item.summary ??
-            "Event failed"
-          }
-          showIcon
-          style={{ marginBottom: token.marginXS }}
-          type="error"
-        />
-      ) : null}
-      <Typography.Paragraph style={{ marginBottom: 4, whiteSpace: "pre-wrap" }}>
-        {getItemSummary(item)}
-      </Typography.Paragraph>
-      <Typography.Text type="secondary">
-        {formatTimestamp(item.createdAt)}
-      </Typography.Text>
-    </Card>
-  );
-};
-
-const latestToolField = <T,>(
-  item: ToolAgentEvent,
-  select: (transition: ToolAgentEvent["transitions"][number]) => T | undefined,
-): T | undefined => {
-  for (let index = item.transitions.length - 1; index >= 0; index -= 1) {
-    const value = select(item.transitions[index]!);
-    if (value !== undefined) return value;
-  }
-  return undefined;
-};
-
-const TOOL_RESULT_CHARACTER_LIMIT = 4_000;
-
-const formatToolResult = (
-  result: NonNullable<
-    ToolAgentEvent["transitions"][number]["toolReturn"]
-  >["result"],
-): string => {
-  const serialized =
-    typeof result === "string" ? result : JSON.stringify(result, null, 2);
-  if (serialized.length <= TOOL_RESULT_CHARACTER_LIMIT) return serialized;
-  return `${serialized.slice(0, TOOL_RESULT_CHARACTER_LIMIT)}\n[Result truncated]`;
-};
-
-const ToolEventRenderer = ({ formatTimestamp, item }: ChatRendererProps) => {
-  if (item.kind !== "agent-event" || item.eventCategory !== "tool") return null;
-  const { token } = theme.useToken();
-  const toolCall = latestToolField(item, (transition) => transition.toolCall);
-  const toolReturn = latestToolField(
-    item,
-    (transition) => transition.toolReturn,
-  );
-  const interaction = latestToolField(
-    item,
-    (transition) => transition.interaction,
-  );
-  const failed =
-    item.status === "failed" ||
-    item.status === "timeout" ||
-    interaction?.status === "failed" ||
-    interaction?.status === "timeout" ||
-    toolReturn?.success === false;
-  const displayStatus =
-    interaction?.status ??
-    (toolReturn?.success === false ? "failed" : item.status);
-  return (
-    <Card
-      extra={
-        <Tag
-          color={
-            failed
-              ? "error"
-              : displayStatus === "success" ||
-                  displayStatus === "answered" ||
-                  displayStatus === "chat-about-this"
-                ? "success"
-                : displayStatus === "running"
-                  ? "processing"
-                  : "default"
-          }
-        >
-          {displayStatus}
-        </Tag>
-      }
-      size="small"
-      {...(failed ? { style: { borderColor: token.colorError } } : {})}
-      title={toolCall?.name ?? item.eventType}
-    >
-      <Space direction="vertical" size="small">
-        {failed ? (
-          <Alert
-            message={
-              interaction?.error ??
-              item.transitions.at(-1)?.error?.message ??
-              item.summary ??
-              "Tool failed"
-            }
-            showIcon
-            type="error"
-          />
-        ) : null}
-        {interaction === undefined ? (
-          <>
-            <Typography.Text>{getItemSummary(item)}</Typography.Text>
-            {toolReturn === undefined ? null : (
-              <>
-                {toolReturn.result === undefined ? null : (
-                  <Typography.Paragraph
-                    code
-                    style={{
-                      margin: 0,
-                      maxWidth: "min(48rem, 80vw)",
-                      overflowWrap: "anywhere",
-                      whiteSpace: "pre-wrap",
-                    }}
-                  >
-                    {formatToolResult(toolReturn.result)}
-                  </Typography.Paragraph>
-                )}
-                {toolReturn.success === undefined &&
-                toolReturn.done === undefined ? null : (
-                  <Typography.Text type="secondary">
-                    {[
-                      toolReturn.success === undefined
-                        ? undefined
-                        : `success: ${String(toolReturn.success)}`,
-                      toolReturn.done === undefined
-                        ? undefined
-                        : `done: ${String(toolReturn.done)}`,
-                    ]
-                      .filter((value) => value !== undefined)
-                      .join(" · ")}
-                  </Typography.Text>
-                )}
-              </>
-            )}
-          </>
-        ) : (
-          <AskUserInteractionResultView result={interaction} />
-        )}
-        <Typography.Text type="secondary">
-          {formatTimestamp(item.createdAt)}
-        </Typography.Text>
-      </Space>
-    </Card>
-  );
-};
-
-const UnknownEventRenderer = ({ formatTimestamp, item }: ChatRendererProps) => {
-  if (item.kind !== "unknown-event") return null;
-
-  return (
-    <Alert
-      description={
-        <>
-          <Typography.Paragraph
-            style={{ marginBottom: 4, whiteSpace: "pre-wrap" }}
-          >
-            {item.summary}
-          </Typography.Paragraph>
-          <Typography.Text type="secondary">
-            {formatTimestamp(item.createdAt)}
-          </Typography.Text>
-        </>
-      }
-      message={`Unknown event: ${item.originalType}`}
-      showIcon
-      type="warning"
-    />
   );
 };
 
@@ -370,7 +167,7 @@ const SafeItemFallback = ({
           <Typography.Paragraph
             style={{ marginBottom: 4, whiteSpace: "pre-wrap" }}
           >
-            {getItemSummary(item)}
+            {getEventSummary(item)}
           </Typography.Paragraph>
           <Typography.Text type="secondary">
             {formatTimestamp(item.createdAt)}
@@ -386,6 +183,7 @@ const SafeItemFallback = ({
 
 interface RendererBoundaryProps {
   readonly children: ReactNode;
+  readonly displayMode: ChatRendererDisplayMode;
   readonly fallback: ReactNode;
   readonly item: TimelineItem;
   readonly onError?: ((failure: ChatRendererFailure) => void) | undefined;
@@ -418,6 +216,7 @@ class RendererBoundary extends Component<
     if (
       this.state.failed &&
       (previous.item !== this.props.item ||
+        previous.displayMode !== this.props.displayMode ||
         previous.renderer !== this.props.renderer)
     ) {
       this.setState({ failed: false });
@@ -430,18 +229,22 @@ class RendererBoundary extends Component<
 }
 
 export interface ChatTimelineItemProps {
+  readonly displayMode?: ChatRendererDisplayMode | undefined;
   readonly formatTimestamp?: ((timestamp: number) => string) | undefined;
   readonly item: TimelineItem;
   readonly onRendererError?:
     ((failure: ChatRendererFailure) => void) | undefined;
   readonly registry: ChatRendererRegistry;
+  readonly selected?: boolean | undefined;
 }
 
 export const ChatTimelineItem = ({
+  displayMode = "detail",
   formatTimestamp = formatChatTimestampUtc,
   item,
   onRendererError,
   registry,
+  selected,
 }: ChatTimelineItemProps) => {
   const renderer = resolveChatRenderer(registry, item);
   const fallback = (
@@ -456,13 +259,19 @@ export const ChatTimelineItem = ({
 
   return (
     <RendererBoundary
+      displayMode={displayMode}
       fallback={fallback}
       item={item}
       onError={onRendererError}
       renderer={renderer}
     >
       <Suspense fallback={<Skeleton active paragraph={{ rows: 2 }} />}>
-        {createElement(renderer, { formatTimestamp, item })}
+        {createElement(renderer, {
+          displayMode,
+          formatTimestamp,
+          item,
+          selected,
+        })}
       </Suspense>
     </RendererBoundary>
   );

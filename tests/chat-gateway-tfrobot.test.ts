@@ -143,6 +143,506 @@ const createSocketFixture = () => {
 };
 
 describe("TFRobotChatGateway REST boundary", () => {
+  it("invokes the browser global fetch with its required Window receiver", async () => {
+    const browserFetch = vi.fn(function (this: typeof globalThis) {
+      if (this !== globalThis) {
+        throw new TypeError("Failed to execute 'fetch': Illegal invocation");
+      }
+      return Promise.resolve(
+        envelope({ conversations: [conversationDto], cursor: null }),
+      );
+    });
+    vi.stubGlobal("fetch", browserFetch);
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/api/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+    });
+    try {
+      await expect(
+        gateway.listConversations({ deadlineAt: deadline() }),
+      ).resolves.toMatchObject({
+        ok: true,
+        value: { conversations: [{ id: "42" }] },
+      });
+      expect(browserFetch).toHaveBeenCalledOnce();
+    } finally {
+      gateway.dispose({ deadlineAt: deadline() });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each([
+    {
+      credentialHeader: "Authorization",
+      credentialValue: "Bearer header.payload.signature",
+      label: "Bearer token",
+      missingHeader: "admin_key",
+      session: {
+        kind: "bearer" as const,
+        token: "header.payload.signature",
+      },
+    },
+    {
+      credentialHeader: "admin_key",
+      credentialValue: "admin-secret",
+      label: "admin key",
+      missingHeader: "Authorization",
+      session: { kind: "admin" as const, adminKey: "admin-secret" },
+    },
+  ])(
+    "creates and maps a conversation with $label authentication",
+    async ({ credentialHeader, credentialValue, missingHeader, session }) => {
+      const provider = sessionProvider(session);
+      let request: Request | undefined;
+      const fetch = vi.fn(
+        async (
+          input: Parameters<typeof globalThis.fetch>[0],
+          init?: Parameters<typeof globalThis.fetch>[1],
+        ) => {
+          request = new Request(input, init);
+          return envelope({
+            ...conversationDto,
+            futureField: "preserved",
+            token: "created-conversation-secret",
+          });
+        },
+      );
+      const gateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/api/",
+        messageCreatorProvider,
+        sessionProvider: provider,
+        platformId: "platform/7",
+        fetch,
+        socketFactory: createSocketFixture().factory,
+      });
+
+      const result = await gateway.createConversation!({
+        title: "Created & mapped",
+        deadlineAt: deadline(),
+      });
+
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          id: "42",
+          title: "Gateway conversation",
+          updatedAt: 1_773_705_600_000,
+          raw: {
+            futureField: "preserved",
+            token: "[REDACTED]",
+          },
+        },
+      });
+      expect(request?.method).toBe("POST");
+      expect(new URL(request!.url).pathname).toBe("/api/v1/chat/conversations");
+      expect(new URL(request!.url).searchParams.get("title")).toBe(
+        "Created & mapped",
+      );
+      expect(new URL(request!.url).searchParams.get("platformId")).toBe(
+        "platform/7",
+      );
+      expect(request?.headers.get(credentialHeader)).toBe(credentialValue);
+      expect(request?.headers.get(missingHeader)).toBeNull();
+      expect(provider.getSession).toHaveBeenCalledWith({
+        purpose: "request",
+        operation: "send",
+      });
+      expect(JSON.stringify(result)).not.toContain(
+        "created-conversation-secret",
+      );
+    },
+  );
+
+  it.each([
+    {
+      credential: { kind: "bearer" as const, token: "cobalt-dawn-47" },
+      label: "Bearer token",
+      secret: "cobalt-dawn-47",
+    },
+    {
+      credential: { adminKey: "violet-ridge-84", kind: "admin" as const },
+      label: "Admin key",
+      secret: "violet-ridge-84",
+    },
+  ])(
+    "redacts an opaque exact $label from successful list, create and history payloads",
+    async ({ credential, secret }) => {
+      const fetch = vi.fn(
+        async (
+          input: Parameters<typeof globalThis.fetch>[0],
+          init?: Parameters<typeof globalThis.fetch>[1],
+        ) => {
+          const request = new Request(input, init);
+          const path = new URL(request.url).pathname;
+          if (request.method === "GET" && path.endsWith("/conversations")) {
+            return envelope({
+              conversations: [
+                {
+                  ...conversationDto,
+                  description: `Description ${secret}`,
+                  title: `List ${secret}`,
+                },
+              ],
+              cursor: null,
+            });
+          }
+          if (request.method === "POST" && path.endsWith("/conversations")) {
+            return envelope({
+              ...conversationDto,
+              conversationId: 43,
+              title: `Created ${secret}`,
+            });
+          }
+          if (request.method === "GET" && path.endsWith("/messages")) {
+            return envelope({
+              cursor: null,
+              events: [{ ...eventDto, content: `Event ${secret}` }],
+              messages: [{ ...messageDto, content: `History ${secret}` }],
+            });
+          }
+          if (request.method === "GET" && path.endsWith("/status")) {
+            return envelope({ taskId: null, working: false });
+          }
+          throw new Error(`Unexpected request: ${request.method} ${path}`);
+        },
+      );
+      const gateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        sessionProvider: sessionProvider(credential),
+        fetch,
+        socketFactory: createSocketFixture().factory,
+      });
+
+      const listed = await gateway.listConversations({
+        deadlineAt: deadline(),
+      });
+      const created = await gateway.createConversation!({
+        deadlineAt: deadline(),
+        title: "Created safely",
+      });
+      const loaded = await gateway.loadConversation({
+        conversationId: "42",
+        deadlineAt: deadline(),
+      });
+
+      expect({ listed, created, loaded }).toMatchObject({
+        listed: {
+          ok: true,
+          value: {
+            conversations: [
+              {
+                description: "Description [REDACTED]",
+                title: "List [REDACTED]",
+              },
+            ],
+          },
+        },
+        created: {
+          ok: true,
+          value: { title: "Created [REDACTED]" },
+        },
+        loaded: { ok: true },
+      });
+      expect(JSON.stringify({ listed, created, loaded })).not.toContain(secret);
+      expect(JSON.stringify(loaded)).toContain("[REDACTED]");
+    },
+  );
+
+  it("caches a created conversation for immediate loading", async () => {
+    const requests: Request[] = [];
+    let sentBody: unknown;
+    const fetch = vi.fn(
+      async (
+        input: Parameters<typeof globalThis.fetch>[0],
+        init?: Parameters<typeof globalThis.fetch>[1],
+      ) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        const path = new URL(request.url).pathname;
+        if (request.method === "POST" && path.endsWith("/conversations")) {
+          return envelope(conversationDto);
+        }
+        if (request.method === "POST" && path.endsWith("/messages")) {
+          sentBody = (await request.json()) as unknown;
+          return envelope({ taskId: "run-created" });
+        }
+        if (path.endsWith("/messages")) {
+          return envelope({ messages: [], events: [], cursor: null });
+        }
+        if (path.endsWith("/status")) {
+          return envelope({ working: false, taskId: null });
+        }
+        throw new Error(`Unexpected request: ${request.method} ${path}`);
+      },
+    );
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      platformId: 7,
+      fetch,
+      socketFactory: createSocketFixture().factory,
+    });
+
+    const created = await gateway.createConversation!({
+      title: "Cached conversation",
+      deadlineAt: deadline(),
+    });
+    expect(created).toMatchObject({ ok: true, value: { id: "42" } });
+    await expect(
+      gateway.loadConversation({
+        conversationId: "42",
+        deadlineAt: deadline(),
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { conversation: { id: "42" } },
+    });
+    await expect(
+      gateway.sendText({
+        conversationId: "42",
+        text: "Hello",
+        deadlineAt: deadline(),
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { runId: "run-created" },
+    });
+    expect(sentBody).toMatchObject({ conversationId: 42 });
+    expect(
+      requests.filter(
+        (request) =>
+          request.method === "GET" &&
+          new URL(request.url).pathname.endsWith("/conversations"),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it.each([
+    ["a missing session", undefined],
+    ["an empty bearer token", { kind: "bearer", token: "" }],
+    ["an empty admin key", { kind: "admin", adminKey: "" }],
+  ])("rejects %s before conversation creation", async (_label, session) => {
+    const fetch = vi.fn();
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: {
+        getSession: vi.fn(() => session as TFRobotSession),
+      },
+      fetch,
+      socketFactory: createSocketFixture().factory,
+    });
+
+    await expect(
+      gateway.createConversation!({
+        title: "Rejected conversation",
+        deadlineAt: deadline(),
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "authentication" },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [401, "authentication", "expired"],
+    [403, "authorization", "forbidden"],
+  ] as const)(
+    "maps HTTP %i creation failures without leaking credentials",
+    async (status, code, reason) => {
+      const provider = sessionProvider({
+        kind: "admin",
+        adminKey: "admin-secret",
+      });
+      const fetch = vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              detail:
+                "Rejected Authorization: Bearer header.payload.signature admin_key=admin-secret",
+            }),
+            {
+              status,
+              headers: { "Content-Type": "application/json" },
+            },
+          ),
+      );
+      const gateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        sessionProvider: provider,
+        fetch,
+        socketFactory: createSocketFixture().factory,
+      });
+
+      const result = await gateway.createConversation!({
+        title: "Unauthorized conversation",
+        deadlineAt: deadline(),
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code, retryable: false },
+      });
+      expect(provider.onSessionInvalid).toHaveBeenCalledWith(
+        expect.objectContaining({ reason }),
+      );
+      expect(JSON.stringify(result)).not.toContain("header.payload.signature");
+      expect(JSON.stringify(result)).not.toContain("admin-secret");
+    },
+  );
+
+  it("rejects malformed creation DTOs and creation after disposal", async () => {
+    const malformedFetch = vi.fn(async () =>
+      envelope({ conversationId: null, title: "Malformed" }),
+    );
+    const malformedGateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch: malformedFetch,
+      socketFactory: createSocketFixture().factory,
+    });
+    await expect(
+      malformedGateway.createConversation!({
+        title: "Malformed response",
+        deadlineAt: deadline(),
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "validation" },
+    });
+
+    const disposedFetch = vi.fn();
+    const disposedGateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch: disposedFetch,
+      socketFactory: createSocketFixture().factory,
+    });
+    disposedGateway.dispose({ deadlineAt: deadline() });
+    await expect(
+      disposedGateway.createConversation!({
+        title: "Disposed",
+        deadlineAt: deadline(),
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(disposedFetch).not.toHaveBeenCalled();
+  });
+
+  it("bounds creation deadlines and aborts in-flight creation on disposal", async () => {
+    vi.useFakeTimers();
+    try {
+      const hangingSessionGateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        sessionProvider: {
+          getSession: () => new Promise<TFRobotSession>(() => undefined),
+        },
+        fetch: vi.fn(),
+        socketFactory: createSocketFixture().factory,
+        now: () => Date.now(),
+      });
+      const timedOut = hangingSessionGateway.createConversation!({
+        title: "Timed out",
+        deadlineAt: Date.now() + 100,
+      });
+      await vi.advanceTimersByTimeAsync(100);
+      await expect(timedOut).resolves.toMatchObject({
+        ok: false,
+        error: { code: "timeout" },
+      });
+
+      const response = deferred<Response>();
+      const fetch = vi.fn(() => response.promise);
+      const disposedGateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        sessionProvider: sessionProvider(),
+        fetch,
+        socketFactory: createSocketFixture().factory,
+        now: () => Date.now(),
+      });
+      const pending = disposedGateway.createConversation!({
+        title: "Disposed in flight",
+        deadlineAt: Date.now() + 1_000,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetch).toHaveBeenCalledOnce();
+      disposedGateway.dispose({ deadlineAt: Date.now() + 1_000 });
+      response.resolve(envelope(conversationDto));
+      await expect(pending).resolves.toMatchObject({
+        ok: false,
+        error: { code: "conflict" },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects creation when disposal lands after HTTP parsing", async () => {
+    const holder: {
+      gateway?: ReturnType<typeof createTFRobotChatGateway>;
+    } = {};
+    const parsedConversation = Object.defineProperty(
+      {
+        title: "Disposed after parsing",
+        description: null,
+        updateTimestamp: 1_773_705_600_000,
+      },
+      "conversationId",
+      {
+        enumerable: true,
+        get: () => {
+          queueMicrotask(() =>
+            holder.gateway?.dispose({ deadlineAt: deadline() }),
+          );
+          return 42;
+        },
+      },
+    );
+    const response = envelope({});
+    vi.spyOn(response, "json").mockResolvedValue({
+      code: 200,
+      message: "Success",
+      data: parsedConversation,
+    });
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch: vi.fn(async () => response),
+      socketFactory: createSocketFixture().factory,
+    });
+    holder.gateway = gateway;
+
+    await expect(
+      gateway.createConversation!({
+        title: "Disposed after parsing",
+        deadlineAt: deadline(),
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    await expect(
+      gateway.createConversation!({
+        title: "Still disposed",
+        deadlineAt: deadline(),
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+  });
+
   it("normalizes historical Ask User tool results without enabling live answers", async () => {
     const askUserEvent = {
       ...eventDto,
@@ -794,6 +1294,57 @@ describe("TFRobotChatGateway REST boundary", () => {
     expect(JSON.stringify(bodies)).not.toContain("admin-secret");
   });
 
+  it("preserves a numeric TFRobot conversation id when sending a normalized conversation", async () => {
+    let sentBody: unknown;
+    const fetch = vi.fn(
+      async (
+        input: Parameters<typeof globalThis.fetch>[0],
+        init?: Parameters<typeof globalThis.fetch>[1],
+      ) => {
+        const url = new URL(input instanceof Request ? input.url : input);
+        if (url.pathname.endsWith("/conversations") && init?.method === "GET") {
+          return envelope({ conversations: [conversationDto], cursor: null });
+        }
+        if (
+          url.pathname.endsWith("/conversations/42/messages") &&
+          init?.method === "POST"
+        ) {
+          sentBody = JSON.parse(init.body as string) as unknown;
+          return envelope({ taskId: "run-accepted" });
+        }
+        throw new Error(`Unexpected request: ${url.pathname}`);
+      },
+    );
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch,
+      socketFactory: createSocketFixture().factory,
+    });
+
+    const listed = await gateway.listConversations({
+      deadlineAt: deadline(),
+    });
+    expect(listed).toMatchObject({
+      ok: true,
+      value: { conversations: [{ id: "42" }] },
+    });
+    if (!listed.ok) return;
+
+    await expect(
+      gateway.sendText({
+        conversationId: listed.value.conversations[0]!.id,
+        text: "Hello",
+        deadlineAt: deadline(),
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { runId: "run-accepted" },
+    });
+    expect(sentBody).toMatchObject({ conversationId: 42 });
+  });
+
   it("rejects an invalid current-user creator before sending", async () => {
     const fetch = vi.fn();
     const gateway = createTFRobotChatGateway({
@@ -818,6 +1369,40 @@ describe("TFRobotChatGateway REST boundary", () => {
       },
     });
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("omits an unknown credential-shaped conversation context from local creator errors", async () => {
+    const secret = "actual-credential";
+    const getSession = vi.fn(() => ({
+      kind: "bearer" as const,
+      token: secret,
+    }));
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider: () => {
+        throw new Error(`Creator failed with ${secret}`);
+      },
+      sessionProvider: { getSession },
+      fetch: vi.fn(),
+      socketFactory: createSocketFixture().factory,
+    });
+
+    const result = await gateway.sendText({
+      conversationId: secret,
+      text: "Hello",
+      deadlineAt: deadline(),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "validation",
+        message: "Unable to obtain the current TFRobot message creator",
+      },
+    });
+    expect(result.ok ? undefined : result.error.conversationId).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(getSession).not.toHaveBeenCalled();
   });
 
   it("classifies authentication failures and invalidates the host session", async () => {
@@ -857,6 +1442,131 @@ describe("TFRobotChatGateway REST boundary", () => {
       expect.objectContaining({ reason: "expired" }),
     );
   });
+
+  it.each([
+    {
+      credential: { kind: "bearer" as const, token: "cobalt-dawn-47" },
+      label: "Bearer token",
+      secret: "cobalt-dawn-47",
+    },
+    {
+      credential: { adminKey: "violet-ridge-84", kind: "admin" as const },
+      label: "Admin key",
+      secret: "violet-ridge-84",
+    },
+  ])(
+    "redacts an opaque exact $label from create and send HTTP failures",
+    async ({ credential, secret }) => {
+      const fetch = vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              detail: `RobotServer echoed ${secret} without a label`,
+              nested: {
+                [secret]: "opaque key",
+                "[REDACTED]": "colliding safe key",
+                echoed: secret,
+                embedded: `before-${secret}-after`,
+              },
+            }),
+            {
+              status: 500,
+              headers: { "Content-Type": "application/json" },
+            },
+          ),
+      );
+      const gateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        sessionProvider: sessionProvider(credential),
+        fetch,
+        socketFactory: createSocketFixture().factory,
+      });
+
+      const createResult = await gateway.createConversation!({
+        deadlineAt: deadline(),
+        title: "Will fail safely",
+      });
+      const sendResult = await gateway.sendText({
+        conversationId: secret,
+        deadlineAt: deadline(),
+        text: "Will also fail safely",
+      });
+
+      expect(createResult).toMatchObject({
+        ok: false,
+        error: {
+          code: "server",
+          details: {
+            payload: {
+              nested: {
+                echoed: "[REDACTED]",
+                embedded: "before-[REDACTED]-after",
+              },
+            },
+          },
+          message: "RobotServer echoed [REDACTED] without a label",
+        },
+      });
+      expect(sendResult).toMatchObject({
+        ok: false,
+        error: {
+          code: "server",
+          conversationId: "[REDACTED]",
+          message: expect.stringContaining("[REDACTED]"),
+        },
+      });
+      expect(JSON.stringify({ createResult, sendResult })).not.toContain(
+        secret,
+      );
+    },
+  );
+
+  it.each([
+    {
+      credential: { kind: "bearer" as const, token: "cobalt-dawn-47" },
+      label: "Bearer token",
+      secret: "cobalt-dawn-47",
+    },
+    {
+      credential: { adminKey: "violet-ridge-84", kind: "admin" as const },
+      label: "Admin key",
+      secret: "violet-ridge-84",
+    },
+  ])(
+    "redacts an opaque exact $label from an injected structured HTTP error",
+    async ({ credential, secret }) => {
+      const gateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        sessionProvider: sessionProvider(credential),
+        fetch: vi.fn(async () => {
+          throw {
+            code: "network",
+            conversationId: secret,
+            details: { echoed: secret },
+            message: `Injected ${secret}`,
+            retryable: true,
+          } satisfies ChatError;
+        }),
+        socketFactory: createSocketFixture().factory,
+      });
+
+      const result = await gateway.listConversations({
+        deadlineAt: deadline(),
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          conversationId: "[REDACTED]",
+          details: { echoed: "[REDACTED]" },
+          message: "Injected [REDACTED]",
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain(secret);
+    },
+  );
 
   it("bounds host hooks and transport work while isolating invalidation callbacks", async () => {
     vi.useFakeTimers();
@@ -1029,9 +1739,67 @@ describe("TFRobotChatGateway REST boundary", () => {
       }),
     ).toThrow("must not contain URL credentials");
   });
+
+  it("does not expose an unavailable SessionProvider credential in HTTP errors", async () => {
+    const secret = "provider-only-credential";
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: {
+        getSession: () => {
+          throw new Error(`Provider failed with ${secret}`);
+        },
+      },
+      fetch: vi.fn(),
+      socketFactory: createSocketFixture().factory,
+    });
+
+    const result = await gateway.listConversations({
+      deadlineAt: deadline(),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "authentication",
+        message: "Unable to obtain a TFRobot session",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
 });
 
 describe("TFRobotChatGateway Socket boundary", () => {
+  it("does not expose an unavailable SessionProvider credential in Socket errors", async () => {
+    const secret = "provider-only-credential";
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: {
+        getSession: () => {
+          throw new Error(`Provider failed with ${secret}`);
+        },
+      },
+      fetch: vi.fn(),
+      socketFactory: createSocketFixture().factory,
+    });
+
+    const result = await gateway.subscribe(
+      { conversationId: secret, deadlineAt: deadline() },
+      { next: () => undefined },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "authentication",
+        message: "Unable to obtain a TFRobot Socket session",
+      },
+    });
+    expect(result.ok ? undefined : result.error.conversationId).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
   it("joins, maps realtime updates, filters foreign data and falls back safely", async () => {
     const socketFixture = createSocketFixture();
     const updates: ChatUpdate[] = [];
@@ -1126,6 +1894,281 @@ describe("TFRobotChatGateway Socket boundary", () => {
     socket.trigger("chat_message", messageDto);
     expect(updates).toHaveLength(4);
     expect(socket.connected).toBe(false);
+  });
+
+  it.each([
+    {
+      credential: { kind: "bearer" as const, token: "cobalt-dawn-47" },
+      label: "Bearer token",
+      secret: "cobalt-dawn-47",
+    },
+    {
+      credential: { adminKey: "violet-ridge-84", kind: "admin" as const },
+      label: "Admin key",
+      secret: "violet-ridge-84",
+    },
+  ])(
+    "redacts an opaque exact $label from realtime Socket diagnostics",
+    async ({ credential, secret }) => {
+      const socketFixture = createSocketFixture();
+      const updates: ChatUpdate[] = [];
+      const errors: ChatError[] = [];
+      const diagnostics: ChatError[] = [];
+      const gateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        sessionProvider: sessionProvider(credential),
+        fetch: vi.fn(),
+        socketFactory: socketFixture.factory,
+        onDiagnostic: (error) => {
+          diagnostics.push(error);
+        },
+      });
+      const subscribed = await gateway.subscribe(
+        { conversationId: "42", deadlineAt: deadline() },
+        {
+          next: (update) => updates.push(update),
+          error: (error) => errors.push(error),
+        },
+      );
+      expect(subscribed.ok).toBe(true);
+      if (!subscribed.ok) return;
+      const socket = socketFixture.sockets[0]!;
+
+      socket.trigger("chat_message", {
+        ...messageDto,
+        content: `Realtime ${secret}`,
+      });
+      socket.trigger("chat_event", {
+        ...eventDto,
+        content: `Event ${secret}`,
+      });
+      socket.trigger(`future_${secret}`, {
+        conversationId: 42,
+        summary: `Unknown ${secret}`,
+      });
+      socket.trigger("chat_error", {
+        conversationId: 42,
+        error: `Realtime echoed ${secret} without a label`,
+        nested: { echoed: secret, embedded: `before-${secret}-after` },
+      });
+      socket.trigger("error", {
+        message: `Protocol echoed ${secret} without a label`,
+      });
+      socket.trigger("connect_error", {
+        code: "network",
+        conversationId: secret,
+        details: { echoed: secret },
+        message: `Injected connect ${secret}`,
+        retryable: true,
+      } satisfies ChatError);
+      socket.trigger("disconnect", {
+        code: "network",
+        conversationId: secret,
+        details: { echoed: secret },
+        message: `Injected disconnect ${secret}`,
+        retryable: true,
+      } satisfies ChatError);
+
+      expect(errors[0]).toMatchObject({
+        code: "server",
+        details: {
+          nested: {
+            echoed: "[REDACTED]",
+            embedded: "before-[REDACTED]-after",
+          },
+        },
+        message: "Realtime echoed [REDACTED] without a label",
+      });
+      expect(errors[1]).toMatchObject({
+        code: "validation",
+        message: "Protocol echoed [REDACTED] without a label",
+      });
+      expect(errors.slice(2)).toMatchObject([
+        {
+          conversationId: "[REDACTED]",
+          message: "Injected connect [REDACTED]",
+        },
+        {
+          conversationId: "[REDACTED]",
+          message: "Injected disconnect [REDACTED]",
+        },
+      ]);
+      expect(updates).toHaveLength(3);
+      expect(JSON.stringify(updates)).toContain("[REDACTED]");
+      expect(JSON.stringify({ diagnostics, errors, updates })).not.toContain(
+        secret,
+      );
+
+      await subscribed.value.dispose({ deadlineAt: deadline() });
+    },
+  );
+
+  it.each([
+    {
+      credential: { kind: "bearer" as const, token: "cobalt-dawn-47" },
+      label: "Bearer token",
+      secret: "cobalt-dawn-47",
+    },
+    {
+      credential: { adminKey: "violet-ridge-84", kind: "admin" as const },
+      label: "Admin key",
+      secret: "violet-ridge-84",
+    },
+  ])(
+    "redacts an opaque exact $label from a generated Socket transport error",
+    async ({ credential, secret }) => {
+      const gateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        sessionProvider: sessionProvider(credential),
+        fetch: vi.fn(),
+        socketFactory: () => {
+          throw new Error("Socket factory failed safely");
+        },
+      });
+
+      const result = await gateway.subscribe(
+        { conversationId: secret, deadlineAt: deadline() },
+        { next: () => undefined },
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          code: "network",
+          conversationId: "[REDACTED]",
+          message: "Socket factory failed safely",
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain(secret);
+    },
+  );
+
+  it("uses the live credential set when redacting generated errors after Socket auth rotation", async () => {
+    const conversationId = "rotated-credential";
+    const socketFixture = createSocketFixture();
+    const getSession = vi
+      .fn()
+      .mockReturnValueOnce({
+        kind: "bearer" as const,
+        token: "initial-credential",
+      })
+      .mockReturnValueOnce({
+        kind: "bearer" as const,
+        token: conversationId,
+      });
+    const errors: ChatError[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: { getSession },
+      fetch: vi.fn(),
+      socketFactory: socketFixture.factory,
+    });
+    const subscribed = await gateway.subscribe(
+      { conversationId, deadlineAt: deadline() },
+      {
+        next: () => undefined,
+        error: (error) => errors.push(error),
+      },
+    );
+    expect(subscribed.ok).toBe(true);
+    if (!subscribed.ok) return;
+
+    await expect(socketFixture.inputs[0]!.getAuth()).resolves.toEqual({
+      token: "initial-credential",
+    });
+    await expect(socketFixture.inputs[0]!.getAuth()).resolves.toEqual({
+      token: conversationId,
+    });
+    socketFixture.sockets[0]!.trigger("chat_message", { conversationId });
+
+    expect(errors.at(-1)).toMatchObject({
+      code: "validation",
+      conversationId: "[REDACTED]",
+    });
+    expect(JSON.stringify(errors)).not.toContain(conversationId);
+    await subscribed.value.dispose({ deadlineAt: deadline() });
+  });
+
+  it.each([
+    {
+      credential: { kind: "bearer" as const, token: "cobalt-dawn-47" },
+      label: "Bearer token",
+      secret: "cobalt-dawn-47",
+    },
+    {
+      credential: { adminKey: "violet-ridge-84", kind: "admin" as const },
+      label: "Admin key",
+      secret: "violet-ridge-84",
+    },
+  ])(
+    "redacts an opaque exact $label from an unknown-event fallback conversation",
+    async ({ credential, secret }) => {
+      const socketFixture = createSocketFixture();
+      const updates: ChatUpdate[] = [];
+      const gateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        sessionProvider: sessionProvider(credential),
+        fetch: vi.fn(),
+        socketFactory: socketFixture.factory,
+      });
+      const subscribed = await gateway.subscribe(
+        { conversationId: secret, deadlineAt: deadline() },
+        { next: (update) => updates.push(update) },
+      );
+      expect(subscribed.ok).toBe(true);
+      if (!subscribed.ok) return;
+
+      socketFixture.sockets[0]!.trigger("future_event", { summary: "safe" });
+
+      expect(updates).toHaveLength(1);
+      expect(updates[0]).toMatchObject({
+        conversationId: "[REDACTED]",
+        item: { conversationId: "[REDACTED]" },
+        kind: "timeline.upsert",
+      });
+      expect(JSON.stringify(updates)).not.toContain(secret);
+      await subscribed.value.dispose({ deadlineAt: deadline() });
+    },
+  );
+
+  it("redacts the opaque active credential from a Socket handshake rejection", async () => {
+    const secret = "ember-field-29";
+    const socket = new FakeSocket();
+    socket.connect = () => {
+      socket.trigger(
+        "connect_error",
+        new Error(`Connection rejected by server: ${secret}`),
+      );
+    };
+    const diagnostics: ChatError[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider({ kind: "bearer", token: secret }),
+      fetch: vi.fn(),
+      socketFactory: () => socket,
+      onDiagnostic: (error) => {
+        diagnostics.push(error);
+      },
+    });
+
+    const result = await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: () => undefined },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "authentication",
+        message: "Connection rejected by server: [REDACTED]",
+      },
+    });
+    expect(JSON.stringify({ diagnostics, result })).not.toContain(secret);
   });
 
   it("bounds initial Socket authentication and prevents late creation after dispose", async () => {
@@ -1382,6 +2425,146 @@ describe("TFRobotChatGateway Socket boundary", () => {
     ]);
   });
 
+  it("redacts a rotated credential from reconnect reconciliation updates", async () => {
+    const conversationId = "rotated-credential";
+    const socketFixture = createSocketFixture();
+    const updates: ChatUpdate[] = [];
+    const getSession = vi
+      .fn()
+      .mockReturnValueOnce({
+        kind: "bearer" as const,
+        token: "initial-credential",
+      })
+      .mockReturnValue({
+        kind: "bearer" as const,
+        token: conversationId,
+      });
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: { getSession },
+      fetch: vi.fn(async () =>
+        envelope({
+          working: true,
+          taskId: "task-initial-credential",
+        }),
+      ),
+      socketFactory: socketFixture.factory,
+    });
+    const subscribed = await gateway.subscribe(
+      { conversationId, deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    expect(subscribed.ok).toBe(true);
+    if (!subscribed.ok) return;
+
+    await expect(socketFixture.inputs[0]!.getAuth()).resolves.toEqual({
+      token: "initial-credential",
+    });
+    await expect(socketFixture.inputs[0]!.getAuth()).resolves.toEqual({
+      token: conversationId,
+    });
+    const socket = socketFixture.sockets[0]!;
+    socket.trigger("conversation_state_changed", {
+      conversationId,
+      state: "working",
+      taskId: "run-before-disconnect",
+    });
+    updates.length = 0;
+    socket.trigger("disconnect", "transport close");
+    socket.connect();
+
+    await vi.waitFor(() => {
+      expect(updates).toEqual([
+        {
+          kind: "run.replace",
+          conversationId: "[REDACTED]",
+          run: {
+            id: "task-[REDACTED]",
+            conversationId: "[REDACTED]",
+            status: "running",
+            canInterrupt: true,
+          },
+        },
+      ]);
+    });
+    expect(JSON.stringify(updates)).not.toContain("initial-credential");
+    expect(JSON.stringify(updates)).not.toContain(conversationId);
+    await subscribed.value.dispose({ deadlineAt: deadline() });
+  });
+
+  it("redacts historical Socket credentials from reconnect REST errors", async () => {
+    const previousCredential = "previous-opaque-credential";
+    const currentCredential = "current-opaque-credential";
+    const socketFixture = createSocketFixture();
+    const errors: ChatError[] = [];
+    const getSession = vi
+      .fn()
+      .mockReturnValueOnce({
+        kind: "bearer" as const,
+        token: previousCredential,
+      })
+      .mockReturnValue({
+        kind: "bearer" as const,
+        token: currentCredential,
+      });
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: { getSession },
+      fetch: vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              detail: previousCredential,
+              nested: { current: currentCredential },
+            }),
+            {
+              status: 500,
+              headers: { "Content-Type": "application/json" },
+            },
+          ),
+      ),
+      socketFactory: socketFixture.factory,
+    });
+    const subscribed = await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      {
+        next: () => undefined,
+        error: (error) => errors.push(error),
+      },
+    );
+    expect(subscribed.ok).toBe(true);
+    if (!subscribed.ok) return;
+
+    await expect(socketFixture.inputs[0]!.getAuth()).resolves.toEqual({
+      token: previousCredential,
+    });
+    await expect(socketFixture.inputs[0]!.getAuth()).resolves.toEqual({
+      token: currentCredential,
+    });
+    const socket = socketFixture.sockets[0]!;
+    socket.trigger("disconnect", "transport close");
+    socket.connect();
+
+    await vi.waitFor(() => {
+      expect(errors.some((error) => error.code === "server")).toBe(true);
+    });
+    const serverError = errors.find((error) => error.code === "server");
+    expect(serverError).toMatchObject({
+      message: "[REDACTED]",
+      details: {
+        payload: {
+          detail: "[REDACTED]",
+          nested: { current: "[REDACTED]" },
+        },
+      },
+    });
+    expect(JSON.stringify(errors)).not.toContain(previousCredential);
+    expect(JSON.stringify(errors)).not.toContain(currentCredential);
+    await subscribed.value.dispose({ deadlineAt: deadline() });
+  });
+
   it("discards stale reconnect status after realtime updates or a newer reconnect", async () => {
     const socketFixture = createSocketFixture();
     const responses: Array<ReturnType<typeof deferred<Response>>> = [];
@@ -1598,9 +2781,7 @@ describe("TFRobotChatGateway Socket boundary", () => {
         kind: "bearer",
         token: "initial.header.signature",
       })
-      .mockRejectedValueOnce(
-        new Error("Refresh failed token=reconnect-secret"),
-      );
+      .mockRejectedValueOnce(new Error("opaque-provider-reason-do-not-expose"));
     const onSessionInvalid = vi.fn();
     const errors: ChatError[] = [];
     const gateway = createTFRobotChatGateway({
@@ -1624,7 +2805,7 @@ describe("TFRobotChatGateway Socket boundary", () => {
       token: "initial.header.signature",
     });
     await expect(socketFixture.inputs[0]!.getAuth()).rejects.toThrow(
-      "Refresh failed",
+      "opaque-provider-reason-do-not-expose",
     );
     socketFixture.sockets[0]!.trigger(
       "connect_error",
@@ -1633,9 +2814,12 @@ describe("TFRobotChatGateway Socket boundary", () => {
     await vi.waitFor(() => expect(onSessionInvalid).toHaveBeenCalledOnce());
     expect(errors.at(-1)).toMatchObject({
       code: "authentication",
+      message: "Unable to refresh the TFRobot Socket session",
       retryable: true,
     });
-    expect(JSON.stringify(errors)).not.toContain("reconnect-secret");
+    expect(JSON.stringify(errors)).not.toContain(
+      "opaque-provider-reason-do-not-expose",
+    );
     await subscribed.value.dispose({ deadlineAt: deadline() });
   });
 

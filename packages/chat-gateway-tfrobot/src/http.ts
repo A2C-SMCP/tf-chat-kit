@@ -2,8 +2,6 @@ import {
   chatErrorSchema,
   createGatewayDeadlineExceededError,
   isGatewayDeadlineExceeded,
-  sanitizeDiagnosticText,
-  sanitizeRaw,
   type ChatError,
   type GatewayRequestOptions,
   type GatewayResult,
@@ -14,6 +12,11 @@ import type { z } from "zod/v4";
 
 import { awaitBounded } from "./bounded.js";
 import { responseEnvelopeSchema } from "./dto.js";
+import {
+  sanitizeCredentialError,
+  sanitizeCredentialRaw,
+  sanitizeCredentialText,
+} from "./redaction.js";
 import { isValidTFRobotSession } from "./types.js";
 import type { TFRobotGatewayOptions, TFRobotSession } from "./types.js";
 
@@ -45,23 +48,32 @@ const isRetryableStatus = (status: number): boolean =>
 
 const safeDetails = (
   value: unknown,
-): { readonly details?: ReturnType<typeof sanitizeRaw> | undefined } => {
+  credentialValues: Iterable<string>,
+): {
+  readonly details?: ReturnType<typeof sanitizeCredentialRaw> | undefined;
+} => {
   try {
-    return { details: sanitizeRaw(value) };
+    return { details: sanitizeCredentialRaw(value, credentialValues) };
   } catch {
     return {};
   }
 };
 
-const responseMessage = (payload: unknown, fallback: string): string => {
-  if (typeof payload === "string") return sanitizeDiagnosticText(payload);
+const responseMessage = (
+  payload: unknown,
+  fallback: string,
+  credentialValues: Iterable<string>,
+): string => {
+  if (typeof payload === "string") {
+    return sanitizeCredentialText(payload, credentialValues);
+  }
   if (payload !== null && typeof payload === "object") {
     const record = payload as Record<string, unknown>;
     if (typeof record["detail"] === "string") {
-      return sanitizeDiagnosticText(record["detail"]);
+      return sanitizeCredentialText(record["detail"], credentialValues);
     }
     if (typeof record["message"] === "string") {
-      return sanitizeDiagnosticText(record["message"]);
+      return sanitizeCredentialText(record["message"], credentialValues);
     }
   }
   return fallback;
@@ -91,7 +103,8 @@ export class TFRobotHttpClient {
     this.#baseUrl = new URL(
       options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`,
     );
-    this.#fetch = options.fetch ?? globalThis.fetch;
+    this.#fetch =
+      options.fetch ?? ((input, init) => globalThis.fetch(input, init));
     this.#now = options.now ?? Date.now;
   }
 
@@ -103,16 +116,13 @@ export class TFRobotHttpClient {
           code: "conflict",
           message: "TFRobot Gateway is disposed",
           retryable: false,
-          ...(input.conversationId === undefined
-            ? {}
-            : { conversationId: input.conversationId }),
         }),
       };
     }
     if (isGatewayDeadlineExceeded(input.options, this.#now())) {
       return {
         ok: false,
-        error: createGatewayDeadlineExceededError(input.conversationId),
+        error: createGatewayDeadlineExceededError(),
       };
     }
 
@@ -125,6 +135,8 @@ export class TFRobotHttpClient {
         Math.max(0, input.options.deadlineAt - this.#now()),
       ),
     );
+    let credentialValues: readonly string[] = [];
+    let errorConversationId: string | undefined;
     try {
       const sessionRequest: SessionRequest = {
         purpose: "request",
@@ -145,21 +157,15 @@ export class TFRobotHttpClient {
       switch (sessionOutcome.kind) {
         case "aborted":
         case "deadline": {
-          return this.#interruptedResult(input.conversationId);
+          return this.#interruptedResult(errorConversationId);
         }
         case "error": {
           return {
             ok: false,
             error: chatErrorSchema.parse({
               code: "authentication",
-              message:
-                sessionOutcome.reason instanceof Error
-                  ? sanitizeDiagnosticText(sessionOutcome.reason.message)
-                  : "Unable to obtain a TFRobot session",
+              message: "Unable to obtain a TFRobot session",
               retryable: true,
-              ...(input.conversationId === undefined
-                ? {}
-                : { conversationId: input.conversationId }),
             }),
           };
         }
@@ -174,11 +180,19 @@ export class TFRobotHttpClient {
             code: "authentication",
             message: "SessionProvider returned invalid TFRobot credentials",
             retryable: true,
-            ...(input.conversationId === undefined
-              ? {}
-              : { conversationId: input.conversationId }),
           }),
         };
+      }
+      if (session.kind === "bearer") {
+        credentialValues = [session.token];
+      } else {
+        credentialValues = [session.adminKey];
+      }
+      if (input.conversationId !== undefined) {
+        errorConversationId = sanitizeCredentialText(
+          input.conversationId,
+          credentialValues,
+        );
       }
       const url = new URL(input.path.replace(/^\//u, ""), this.#baseUrl);
       for (const [key, value] of Object.entries(input.query ?? {})) {
@@ -208,7 +222,7 @@ export class TFRobotHttpClient {
         responseOutcome.kind === "aborted" ||
         responseOutcome.kind === "deadline"
       ) {
-        return this.#interruptedResult(input.conversationId);
+        return this.#interruptedResult(errorConversationId);
       }
       if (responseOutcome.kind === "error") throw responseOutcome.reason;
       const response = responseOutcome.value;
@@ -222,12 +236,19 @@ export class TFRobotHttpClient {
         payloadOutcome.kind === "aborted" ||
         payloadOutcome.kind === "deadline"
       ) {
-        return this.#interruptedResult(input.conversationId);
+        return this.#interruptedResult(errorConversationId);
       }
       if (payloadOutcome.kind === "error") {
         payload = undefined;
       } else {
-        payload = payloadOutcome.value;
+        try {
+          payload = sanitizeCredentialRaw(
+            payloadOutcome.value,
+            credentialValues,
+          );
+        } catch {
+          payload = undefined;
+        }
       }
       if (!response.ok) {
         const error = chatErrorSchema.parse({
@@ -235,15 +256,19 @@ export class TFRobotHttpClient {
           message: responseMessage(
             payload,
             `TFRobot request failed with HTTP ${response.status}`,
+            credentialValues,
           ),
           retryable: isRetryableStatus(response.status),
-          ...(input.conversationId === undefined
+          ...(errorConversationId === undefined
             ? {}
-            : { conversationId: input.conversationId }),
-          ...safeDetails({
-            status: response.status,
-            payload,
-          }),
+            : { conversationId: errorConversationId }),
+          ...safeDetails(
+            {
+              status: response.status,
+              payload,
+            },
+            credentialValues,
+          ),
         });
         this.#invalidateSession(response.status, error);
         return { ok: false, error };
@@ -255,12 +280,12 @@ export class TFRobotHttpClient {
           error: chatErrorSchema.parse({
             code: "validation",
             message: envelope.success
-              ? sanitizeDiagnosticText(envelope.data.message)
+              ? sanitizeCredentialText(envelope.data.message, credentialValues)
               : "TFRobot response envelope is invalid",
             retryable: false,
-            ...(input.conversationId === undefined
+            ...(errorConversationId === undefined
               ? {}
-              : { conversationId: input.conversationId }),
+              : { conversationId: errorConversationId }),
           }),
         };
       }
@@ -272,15 +297,18 @@ export class TFRobotHttpClient {
             code: "validation",
             message: "TFRobot response data is invalid",
             retryable: false,
-            ...(input.conversationId === undefined
+            ...(errorConversationId === undefined
               ? {}
-              : { conversationId: input.conversationId }),
-            ...safeDetails({
-              issues: parsed.error.issues.map(({ code, path }) => ({
-                code,
-                path,
-              })),
-            }),
+              : { conversationId: errorConversationId }),
+            ...safeDetails(
+              {
+                issues: parsed.error.issues.map(({ code, path }) => ({
+                  code,
+                  path,
+                })),
+              },
+              credentialValues,
+            ),
           }),
         };
       }
@@ -288,13 +316,16 @@ export class TFRobotHttpClient {
         controller.signal.aborted ||
         isGatewayDeadlineExceeded(input.options, this.#now())
       ) {
-        return this.#interruptedResult(input.conversationId);
+        return this.#interruptedResult(errorConversationId);
       }
       return { ok: true, value: parsed.data };
     } catch (reason) {
       const injectedError = chatErrorSchema.safeParse(reason);
       if (injectedError.success) {
-        return { ok: false, error: injectedError.data };
+        return {
+          ok: false,
+          error: sanitizeCredentialError(injectedError.data, credentialValues),
+        };
       }
       if (
         controller.signal.aborted ||
@@ -302,7 +333,7 @@ export class TFRobotHttpClient {
       ) {
         return {
           ok: false,
-          error: createGatewayDeadlineExceededError(input.conversationId),
+          error: createGatewayDeadlineExceededError(errorConversationId),
         };
       }
       return {
@@ -311,12 +342,12 @@ export class TFRobotHttpClient {
           code: "network",
           message:
             reason instanceof Error
-              ? sanitizeDiagnosticText(reason.message)
+              ? sanitizeCredentialText(reason.message, credentialValues)
               : "TFRobot network request failed",
           retryable: true,
-          ...(input.conversationId === undefined
+          ...(errorConversationId === undefined
             ? {}
-            : { conversationId: input.conversationId }),
+            : { conversationId: errorConversationId }),
         }),
       };
     } finally {

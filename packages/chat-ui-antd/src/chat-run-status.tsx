@@ -12,6 +12,7 @@ export interface ChatRunStatusProps {
   readonly labels?: ChatUiLabelOverrides | undefined;
   readonly onInterrupt: () => boolean | PromiseLike<boolean>;
   readonly run: Run | null;
+  readonly showInterruptButton?: boolean | undefined;
   readonly style?: CSSProperties | undefined;
 }
 
@@ -21,6 +22,7 @@ export const ChatRunStatus = ({
   labels: labelOverrides,
   onInterrupt,
   run,
+  showInterruptButton = true,
   style,
 }: ChatRunStatusProps) => {
   const { token } = theme.useToken();
@@ -81,7 +83,7 @@ export const ChatRunStatus = ({
         <Typography.Text>
           {labels.runStatusLabel}: <Tag color={statusColor}>{run.status}</Tag>
         </Typography.Text>
-        {run.status === "running" ? (
+        {showInterruptButton && run.status === "running" ? (
           <Button
             danger
             disabled={!interruptAvailable}
