@@ -179,6 +179,10 @@ const buildAgentEvent = (
   update: AgentEventTransitionUpdate,
   existing?: AgentEvent,
 ): AgentEvent => {
+  const createdAt =
+    existing?.createdAt ??
+    update.event.createdAt ??
+    update.event.transition.occurredAt;
   if (update.event.eventCategory === "tool") {
     const byId = new Map(
       existing?.eventCategory === "tool"
@@ -198,7 +202,7 @@ const buildAgentEvent = (
       conversationId: update.conversationId,
       eventType: update.event.eventType,
       status: latest.status,
-      createdAt: update.event.createdAt,
+      createdAt,
       updatedAt: latest.occurredAt,
       ...(update.event.sequence === undefined
         ? {}
@@ -231,7 +235,7 @@ const buildAgentEvent = (
     conversationId: update.conversationId,
     eventType: update.event.eventType,
     status: latest.status,
-    createdAt: update.event.createdAt,
+    createdAt,
     updatedAt: latest.occurredAt,
     ...(update.event.sequence === undefined
       ? {}

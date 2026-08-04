@@ -229,8 +229,11 @@ interface AgentEventTransitionPayloadBase {
   readonly id: TimelineItemId;
   /** Immutable for an event ID; conflicting updates must be rejected. */
   readonly eventType: string;
-  /** Immutable for an event ID; conflicting updates must be rejected. */
-  readonly createdAt: number;
+  /**
+   * Stable event creation time when the transport exposes one. Runtime derives
+   * it from the first accepted transition when this metadata is unavailable.
+   */
+  readonly createdAt?: number | undefined;
   /** Immutable for an event ID; conflicting updates must be rejected. */
   readonly sequence?: number | undefined;
 }
@@ -428,5 +431,6 @@ export const hasCompatibleAgentEventMetadata = (
   event.id === update.event.id &&
   event.eventCategory === update.event.eventCategory &&
   event.eventType === update.event.eventType &&
-  event.createdAt === update.event.createdAt &&
+  (update.event.createdAt === undefined ||
+    event.createdAt === update.event.createdAt) &&
   event.sequence === update.event.sequence;

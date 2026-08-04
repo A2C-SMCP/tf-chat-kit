@@ -579,6 +579,37 @@ describe("normalized protocol schemas", () => {
       throw new TypeError("expected an event transition update");
     }
     expect(hasCompatibleAgentEventMetadata(event, firstUpdate)).toBe(true);
+    const updateWithoutCreationTime = chatUpdateSchema.parse({
+      kind: "event.transition.upsert",
+      conversationId: conversation.id,
+      event: {
+        eventCategory: "tool",
+        id: "event-streamed-tool",
+        eventType: "tool",
+        transition: {
+          id: "transition-without-event-time",
+          status: "success",
+          occurredAt: 1_773_705_600_300,
+          toolReturn: { success: true, done: true },
+        },
+      },
+    });
+    if (updateWithoutCreationTime.kind !== "event.transition.upsert") {
+      throw new TypeError("expected an event transition update");
+    }
+    expect(updateWithoutCreationTime.event.createdAt).toBeUndefined();
+    expect(
+      hasCompatibleAgentEventMetadata(event, updateWithoutCreationTime),
+    ).toBe(true);
+    expect(
+      hasCompatibleAgentEventMetadata(event, {
+        ...firstUpdate,
+        event: {
+          ...firstUpdate.event,
+          createdAt: firstUpdate.event.createdAt! + 1,
+        },
+      }),
+    ).toBe(false);
     expect(
       hasCompatibleAgentEventMetadata(event, {
         ...firstUpdate,

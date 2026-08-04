@@ -716,6 +716,7 @@ const mergeEvents = (events: readonly AgentEvent[]): readonly AgentEvent[] => {
       agentEventSchema.parse({
         ...current,
         status: latest.status,
+        createdAt: Math.min(current.createdAt, event.createdAt),
         transitions: ordered,
         ...(latest.summary === undefined ? {} : { summary: latest.summary }),
       }),
@@ -775,7 +776,9 @@ export const mapEventUpdate = (dto: EventDto): ChatUpdate => {
       id: event.id,
       eventCategory: event.eventCategory,
       eventType: event.eventType,
-      createdAt: event.createdAt,
+      ...(dto.eventCreateTimestamp === undefined
+        ? {}
+        : { createdAt: dto.eventCreateTimestamp }),
       ...(event.sequence === undefined ? {} : { sequence: event.sequence }),
       transition: event.transitions[0]!,
     },

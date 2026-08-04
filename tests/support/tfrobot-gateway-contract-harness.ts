@@ -170,7 +170,9 @@ const eventDto = (
     eventScene: update.event.eventType,
     conversationId: update.conversationId,
     createTimestamp: transition.occurredAt,
-    eventCreateTimestamp: update.event.createdAt,
+    ...(update.event.createdAt === undefined
+      ? {}
+      : { eventCreateTimestamp: update.event.createdAt }),
     sequence: update.event.sequence,
     exception: transition.error?.message ?? null,
     content: transition.summary ?? "",

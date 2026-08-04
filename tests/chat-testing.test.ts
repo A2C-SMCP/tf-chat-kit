@@ -177,6 +177,10 @@ class ReferenceRuntimeAdapter implements RuntimeContractAdapter {
       compareAgentEventTransitions,
     );
     const latest = orderedTransitions.at(-1)!;
+    const createdAt =
+      existing?.createdAt ??
+      update.event.createdAt ??
+      update.event.transition.occurredAt;
     const event: AgentEvent =
       update.event.eventCategory === "tool"
         ? {
@@ -186,7 +190,7 @@ class ReferenceRuntimeAdapter implements RuntimeContractAdapter {
             conversationId: update.conversationId,
             eventType: update.event.eventType,
             status: latest.status,
-            createdAt: update.event.createdAt,
+            createdAt,
             ...(update.event.sequence === undefined
               ? {}
               : { sequence: update.event.sequence }),
@@ -199,7 +203,7 @@ class ReferenceRuntimeAdapter implements RuntimeContractAdapter {
             conversationId: update.conversationId,
             eventType: update.event.eventType,
             status: latest.status,
-            createdAt: update.event.createdAt,
+            createdAt,
             ...(update.event.sequence === undefined
               ? {}
               : { sequence: update.event.sequence }),
