@@ -466,7 +466,7 @@ export const agentEventParser: z.ZodType<AgentEvent> = z
 const agentEventTransitionPayloadBaseShape = {
   id: idParser,
   eventType: z.string().min(1),
-  createdAt: timestampParser,
+  createdAt: timestampParser.optional(),
   sequence: sequenceParser.optional(),
 };
 

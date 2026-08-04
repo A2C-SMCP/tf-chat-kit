@@ -8,7 +8,10 @@ import {
   type TFRobotSocketFactoryInput,
   type TFRobotSocketListener,
 } from "../packages/chat-gateway-tfrobot/src/index.js";
-import { mapEvent } from "../packages/chat-gateway-tfrobot/src/mapper.js";
+import {
+  mapEvent,
+  mapEventUpdate,
+} from "../packages/chat-gateway-tfrobot/src/mapper.js";
 import type {
   ChatError,
   ChatUpdate,
@@ -978,6 +981,48 @@ describe("TFRobotChatGateway REST boundary", () => {
     expect(options[0]).toEqual({ label: "[REDACTED]", value: "[REDACTED]" });
     expect(options[1]?.label).toHaveLength(2_000);
     expect(options[1]?.value).toHaveLength(2_000);
+  });
+
+  it("does not expose transition timestamps as immutable event creation metadata", () => {
+    const running = mapEventUpdate({
+      ...eventDto,
+      eventId: "event-with-transition-timestamps",
+      status: "running",
+      createTimestamp: 1_773_705_600_100,
+    });
+    const success = mapEventUpdate({
+      ...eventDto,
+      eventId: "event-with-transition-timestamps",
+      status: "success",
+      createTimestamp: 1_773_705_600_200,
+    });
+
+    expect(running).toMatchObject({
+      kind: "event.transition.upsert",
+      event: { transition: { occurredAt: 1_773_705_600_100 } },
+    });
+    expect(success).toMatchObject({
+      kind: "event.transition.upsert",
+      event: { transition: { occurredAt: 1_773_705_600_200 } },
+    });
+    if (
+      running.kind !== "event.transition.upsert" ||
+      success.kind !== "event.transition.upsert"
+    ) {
+      throw new TypeError("expected event transition updates");
+    }
+    expect(running.event).not.toHaveProperty("createdAt");
+    expect(success.event).not.toHaveProperty("createdAt");
+
+    const withStableCreationTime = mapEventUpdate({
+      ...eventDto,
+      eventId: "event-with-stable-creation-time",
+      eventCreateTimestamp: 1_773_705_600_000,
+    });
+    expect(withStableCreationTime).toMatchObject({
+      kind: "event.transition.upsert",
+      event: { createdAt: 1_773_705_600_000 },
+    });
   });
 
   it("loads conversations, history and status through validated DTOs", async () => {

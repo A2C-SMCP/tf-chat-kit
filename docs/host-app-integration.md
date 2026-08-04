@@ -33,6 +33,16 @@ chat-gateway-tfrobot ──实现──> chat-protocol.ChatGateway
 
 Chat Kit 不读取宿主的 Router、全局 Store 或登录状态。所有宿主能力都通过构造参数、Provider 或回调显式注入。
 
+### 1.1 宿主与 Chat Kit 的责任边界
+
+| 接入方式                 | 宿主负责                                                                | Chat Kit 负责                                                      |
+| ------------------------ | ----------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| 使用 TFRobot Gateway     | 登录与 Token、服务端点和 Robot 路由、消息创建者、实例生命周期、错误上报 | DTO 校验与映射、实时订阅、事件 transition 合并、状态推导和冲突检测 |
+| 使用宿主自己的 UI        | 从 `ChatClient` 快照渲染界面，通过公开命令执行操作                      | 提供规范化、不可变的会话、时间轴、Run、能力和错误状态              |
+| 实现自定义 `ChatGateway` | 将后端数据映射为 Protocol，并保证 ID、时间和不可变事件元数据语义正确    | Runtime 按公开 Protocol 去重、排序、合并并发布一致快照             |
+
+使用官方 `@turingfocus/chat-gateway-tfrobot` 时，宿主不应再直接订阅 RobotServer 原始事件，也不应在全局 Store 中维护第二份事件或 transition 聚合逻辑。宿主只消费 `ChatClient` 快照；HTTP/Socket DTO 的兼容处理属于 Gateway 和 Runtime。
+
 ## 2. 环境和依赖
 
 公共包是 ESM 包。宿主构建工具需要支持 ESM，并满足以下 peer dependency：
@@ -162,6 +172,17 @@ export const getChatDeadlineAt = deadlineAt;
 - 内部受控宿主如果确实需要 Admin Token，可以返回 `{ kind: "admin", adminKey }`；不要把该模式用于第三方浏览器应用。
 - `messageCreatorProvider` 与认证分开，Gateway 不解析 Token 来猜用户身份。
 - `deadlineAt` 是 Unix epoch 毫秒的**绝对截止时间**，不是超时秒数；每次操作都要生成新值。
+
+### 4.1 事件时间和 transition 语义
+
+RobotServer 的一次 Agent Event 可以通过 Socket 多次上报，例如从 `running` 变为 `success` 或 `failed`。这些上报属于同一事件的不同 transition：
+
+- `transition.occurredAt` 表示本次状态变化发生的时间；TFRobot Gateway 将 RobotServer DTO 的 `createTimestamp` 映射到这里。
+- `event.createdAt` 只表示稳定的事件创建时间。TFRobot Gateway 仅在 DTO 明确提供 `eventCreateTimestamp` 时才把它放进实时 transition update。
+- 如果 RobotServer 没有提供稳定事件创建时间，Gateway 会省略 `event.createdAt`，Runtime 会在首次接收时从 transition 时间推导并固定该值。
+- Runtime 按 transition ID 去重并排序，根据最新 transition 推导事件状态；同一事件明确传入冲突的类型、分类、序号或稳定创建时间时仍会报告协议错误。
+
+使用官方 TFRobot Gateway 的宿主无需处理这些字段，也不要把每次 transition 的 `createTimestamp` 当作不可变的事件 `createdAt`。自定义 `ChatGateway` 的实现者必须遵守上述语义：`AgentEventTransitionPayload.createdAt` 可以省略，但一旦提供，就必须在同一事件 ID 的生命周期内保持稳定。
 
 ## 5. 在 React 生命周期中挂载
 
@@ -487,6 +508,8 @@ Chat Kit 负责：
 
 - 仅在请求和连接期间向 `SessionProvider` 获取会话材料；
 - 将 HTTP/Socket DTO 校验并映射为标准模型；
+- 对事件 transition 去重、排序和合并，维护稳定事件时间并推导最新状态；
+- 对真实的不可变事件元数据冲突报告结构化协议错误；
 - 将 401、403、超时、网络和协议错误映射为结构化 `ChatError`；
 - 在诊断信息中清洗已知凭据值；
 - 在客户端释放后停止订阅和晚到事件交付。
@@ -508,6 +531,8 @@ Chat Kit 负责：
 - [ ] 路由卸载、窗口关闭、Feature Flag 回滚和 StrictMode effect replay 不残留 Socket；
 - [ ] 日志、URL、浏览器存储和遥测中没有凭据；
 - [ ] UI 根据 `capabilities` 禁用不支持的操作；
+- [ ] 宿主只消费 `ChatClient` 快照，没有重复订阅或聚合 RobotServer 原始事件；
+- [ ] 同一事件从 `running` 更新到 `success`、`failed` 或 `aborted` 时不会产生 metadata conflict；
 - [ ] 已用真实目标环境验证 API 前缀、CORS、Socket Namespace/path 和重连；
 - [ ] 灰度开关能在旧实现与 Chat Kit 之间安全切换，切换期间不会同时拥有两个活动客户端。
 

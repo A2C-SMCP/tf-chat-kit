@@ -1,0 +1,4 @@
+interface:
+  display_name: "发布 tf-chat-kit"
+  short_description: "Create, publish, verify, and reconcile tf-chat-kit releases"
+  default_prompt: "Use $release-tf-chat-kit to publish tf-chat-kit with an explicit version or the next patch version."

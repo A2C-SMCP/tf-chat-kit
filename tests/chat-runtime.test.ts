@@ -1941,6 +1941,59 @@ describe("ChatClient lifecycle and merge behavior", () => {
     expect(client.getSnapshot()).toBeNull();
   });
 
+  it("derives event creation time once when transition updates omit it", async () => {
+    const memory = createMemoryChatGateway();
+    const conversationId = memory.fixtures.conversation.id;
+    const client = createChatClient({ gateway: memory.gateway });
+    await loadInitialSnapshot(client, conversationId);
+
+    memory.controller.emitUpdateToAll({
+      kind: "event.transition.upsert",
+      conversationId,
+      event: {
+        eventCategory: "generic",
+        id: "event-with-derived-creation-time",
+        eventType: "chain",
+        transition: {
+          id: "transition-running",
+          status: "running",
+          occurredAt: 1_773_705_600_100,
+        },
+      },
+    });
+    memory.controller.emitUpdateToAll({
+      kind: "event.transition.upsert",
+      conversationId,
+      event: {
+        eventCategory: "generic",
+        id: "event-with-derived-creation-time",
+        eventType: "chain",
+        transition: {
+          id: "transition-success",
+          status: "success",
+          occurredAt: 1_773_705_600_200,
+        },
+      },
+    });
+
+    const event = client
+      .getSnapshot()!
+      .timeline.find(({ id }) => id === "event-with-derived-creation-time");
+    expect(event).toMatchObject({
+      kind: "agent-event",
+      status: "success",
+      createdAt: 1_773_705_600_100,
+      updatedAt: 1_773_705_600_200,
+      transitions: [
+        { id: "transition-running", status: "running" },
+        { id: "transition-success", status: "success" },
+      ],
+    });
+    expect(client.getSnapshot()?.error).toBeUndefined();
+
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
   it("keeps message and event namespaces independent for the same raw id", async () => {
     const memory = createMemoryChatGateway();
     const sharedMessage: Message = {
