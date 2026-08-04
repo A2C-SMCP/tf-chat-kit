@@ -1,5 +1,15 @@
 # @turingfocus/chat-protocol
 
+## 0.3.0
+
+### Minor Changes
+
+- 2cff6fd: Handle TFRobot event transitions whose per-transition timestamps change without treating them as conflicting immutable event metadata.
+
+  `AgentEventTransitionPayload.createdAt` is now optional. Gateway consumers that
+  read this field directly must handle `undefined`; Runtime derives a stable event
+  creation time from the first accepted transition when the transport omits it.
+
 ## 0.2.0
 
 ### Minor Changes
