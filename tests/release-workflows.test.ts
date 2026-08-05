@@ -128,11 +128,16 @@ describe("TFCK-13 release workflows", () => {
       steps,
       "Publish with the one-time bootstrap credential",
     );
+    const hybridPublish = namedStep(
+      steps,
+      "Publish existing packages with OIDC and bootstrap the facade",
+    );
     const oidcPublish = namedStep(steps, "Publish with npm Trusted Publishing");
     const release = namedStep(
       steps,
       "Create or reconcile the GitHub Release after Registry verification",
     );
+    const incident = namedStep(steps, "Render a failed-release incident");
     const stepNames = steps.map((step) => step["name"]);
 
     expect(checkout["uses"]).toBe(
@@ -149,17 +154,30 @@ describe("TFCK-13 release workflows", () => {
       EXPECTED_VERSION: "${{ inputs.expected-version }}",
     });
     expect(manifest["run"]).not.toContain("${{ inputs.");
-    expect(bootstrapConfig["if"]).toBe("inputs.auth-mode == 'bootstrap-token'");
+    expect(bootstrapConfig["if"]).toBe(
+      "inputs.auth-mode == 'bootstrap-token' || inputs.auth-mode == 'oidc-with-bootstrap-facade'",
+    );
     expect(bootstrapPublish["if"]).toBe(
       "inputs.auth-mode == 'bootstrap-token'",
     );
-    expect(objectField(bootstrapConfig, "env")).toEqual({
-      NODE_AUTH_TOKEN: "${{ secrets.NPM_BOOTSTRAP_TOKEN }}",
-    });
+    expect(bootstrapConfig).not.toHaveProperty("env");
+    expect(bootstrapConfig["run"]).not.toContain("secrets.");
     expect(objectField(bootstrapPublish, "env")).toMatchObject({
       NODE_AUTH_TOKEN: "${{ secrets.NPM_BOOTSTRAP_TOKEN }}",
       NPM_CONFIG_USERCONFIG: "${{ runner.temp }}/tf-chat-kit-bootstrap.npmrc",
     });
+    expect(hybridPublish["if"]).toBe(
+      "inputs.auth-mode == 'oidc-with-bootstrap-facade'",
+    );
+    expect(objectField(hybridPublish, "env")).toEqual({
+      NPM_BOOTSTRAP_TOKEN: "${{ secrets.NPM_BOOTSTRAP_TOKEN }}",
+      NPM_BOOTSTRAP_USERCONFIG:
+        "${{ runner.temp }}/tf-chat-kit-bootstrap.npmrc",
+    });
+    expect(hybridPublish["run"]).toContain(
+      "--auth-mode oidc-with-bootstrap-facade",
+    );
+    expect(hybridPublish["run"]).not.toContain("NODE_AUTH_TOKEN");
     expect(oidcPublish["if"]).toBe("inputs.auth-mode == 'oidc'");
     expect(oidcPublish).not.toHaveProperty("env");
     expect(oidcPublish["run"]).not.toContain("NODE_AUTH_TOKEN");
@@ -167,6 +185,14 @@ describe("TFCK-13 release workflows", () => {
     expect(release["run"]).toContain("gh release upload");
     expect(release["run"]).toContain("reconcile-release-manifest.mjs");
     expect(release["run"]).toContain('cmp "${asset}"');
+    expect(incident["run"]).toContain(
+      "unauthenticated Registry consumer verification failed",
+    );
+    expect(incident["run"]).toContain("GitHub Release reconciliation failed");
+    expect(incident["run"]).toContain('--error "${failure_stage}"');
+    expect(incident["run"]).not.toContain(
+      "workflow failed before publication progress was recorded",
+    );
 
     expect(
       stepNames.indexOf("Build the immutable release manifest"),
@@ -178,6 +204,13 @@ describe("TFCK-13 release workflows", () => {
     ).toBeLessThan(stepNames.indexOf("Publish with npm Trusted Publishing"));
     expect(
       stepNames.indexOf("Publish with npm Trusted Publishing"),
+    ).toBeLessThan(
+      stepNames.indexOf("Verify unauthenticated Registry consumers"),
+    );
+    expect(
+      stepNames.indexOf(
+        "Publish existing packages with OIDC and bootstrap the facade",
+      ),
     ).toBeLessThan(
       stepNames.indexOf("Verify unauthenticated Registry consumers"),
     );

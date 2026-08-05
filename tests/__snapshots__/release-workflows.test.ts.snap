@@ -150,6 +150,7 @@ echo "tag=v\${version}" >> "\${GITHUB_OUTPUT}"
             "GH_TOKEN": "\${{ secrets.GITHUB_TOKEN }}",
             "RELEASE_TAG": "\${{ steps.manifest.outputs.tag }}",
           },
+          "id": "source_tag",
           "name": "Create or reconcile the immutable source tag",
           "run": "existing="$(gh api "repos/\${GITHUB_REPOSITORY}/git/ref/tags/\${RELEASE_TAG}" --jq '.object.sha' 2>/dev/null || true)"
 if [ -n "\${existing}" ]; then
@@ -162,13 +163,10 @@ fi
 ",
         },
         {
-          "env": {
-            "NODE_AUTH_TOKEN": "\${{ secrets.NPM_BOOTSTRAP_TOKEN }}",
-          },
-          "if": "inputs.auth-mode == 'bootstrap-token'",
+          "id": "bootstrap_config",
+          "if": "inputs.auth-mode == 'bootstrap-token' || inputs.auth-mode == 'oidc-with-bootstrap-facade'",
           "name": "Configure the one-time bootstrap npm credential",
-          "run": "test -n "\${NODE_AUTH_TOKEN}"
-printf '%s\\n' '//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}' > "\${RUNNER_TEMP}/tf-chat-kit-bootstrap.npmrc"
+          "run": "printf '%s\\n' '//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}' > "\${RUNNER_TEMP}/tf-chat-kit-bootstrap.npmrc"
 ",
         },
         {
@@ -176,6 +174,7 @@ printf '%s\\n' '//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}' > "\${RUNN
             "NODE_AUTH_TOKEN": "\${{ secrets.NPM_BOOTSTRAP_TOKEN }}",
             "NPM_CONFIG_USERCONFIG": "\${{ runner.temp }}/tf-chat-kit-bootstrap.npmrc",
           },
+          "id": "publish_bootstrap",
           "if": "inputs.auth-mode == 'bootstrap-token'",
           "name": "Publish with the one-time bootstrap credential",
           "run": "node scripts/publish-release.mjs \\
@@ -185,6 +184,21 @@ printf '%s\\n' '//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}' > "\${RUNN
 ",
         },
         {
+          "env": {
+            "NPM_BOOTSTRAP_TOKEN": "\${{ secrets.NPM_BOOTSTRAP_TOKEN }}",
+            "NPM_BOOTSTRAP_USERCONFIG": "\${{ runner.temp }}/tf-chat-kit-bootstrap.npmrc",
+          },
+          "id": "publish_hybrid",
+          "if": "inputs.auth-mode == 'oidc-with-bootstrap-facade'",
+          "name": "Publish existing packages with OIDC and bootstrap the facade",
+          "run": "node scripts/publish-release.mjs \\
+  --manifest .artifacts/release/release-manifest.json \\
+  --progress .artifacts/release/publish-progress.json \\
+  --auth-mode oidc-with-bootstrap-facade
+",
+        },
+        {
+          "id": "publish_oidc",
           "if": "inputs.auth-mode == 'oidc'",
           "name": "Publish with npm Trusted Publishing",
           "run": "node scripts/publish-release.mjs \\
@@ -194,10 +208,12 @@ printf '%s\\n' '//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}' > "\${RUNN
 ",
         },
         {
+          "id": "registry_consumers",
           "name": "Verify unauthenticated Registry consumers",
           "run": "node scripts/verify-packed-artifacts.mjs --source registry --version "\${{ steps.manifest.outputs.version }}"",
         },
         {
+          "id": "release_notes",
           "name": "Render release notes",
           "run": "node scripts/render-release-report.mjs \\
   --kind release \\
@@ -210,6 +226,7 @@ printf '%s\\n' '//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}' > "\${RUNN
             "GH_TOKEN": "\${{ secrets.GITHUB_TOKEN }}",
             "RELEASE_TAG": "\${{ steps.manifest.outputs.tag }}",
           },
+          "id": "github_release",
           "name": "Create or reconcile the GitHub Release after Registry verification",
           "run": "if gh release view "\${RELEASE_TAG}" --repo "\${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
   reconcile_dir="\${RUNNER_TEMP}/tf-chat-kit-release-reconcile"
@@ -249,15 +266,37 @@ fi
 ",
         },
         {
+          "env": {
+            "BOOTSTRAP_CONFIG_OUTCOME": "\${{ steps.bootstrap_config.outcome }}",
+            "GITHUB_RELEASE_OUTCOME": "\${{ steps.github_release.outcome }}",
+            "PUBLISH_BOOTSTRAP_OUTCOME": "\${{ steps.publish_bootstrap.outcome }}",
+            "PUBLISH_HYBRID_OUTCOME": "\${{ steps.publish_hybrid.outcome }}",
+            "PUBLISH_OIDC_OUTCOME": "\${{ steps.publish_oidc.outcome }}",
+            "REGISTRY_CONSUMERS_OUTCOME": "\${{ steps.registry_consumers.outcome }}",
+            "RELEASE_NOTES_OUTCOME": "\${{ steps.release_notes.outcome }}",
+            "SOURCE_TAG_OUTCOME": "\${{ steps.source_tag.outcome }}",
+          },
           "if": "failure() && steps.manifest.outcome == 'success'",
           "name": "Render a failed-release incident",
-          "run": "if [ ! -f .artifacts/release/publish-progress.json ]; then
-  printf '%s\\n' '{"states":{},"error":"workflow failed before publication progress was recorded"}' > .artifacts/release/publish-progress.json
+          "run": "failure_stage="workflow failed after release manifest creation"
+if [ "\${SOURCE_TAG_OUTCOME}" = "failure" ]; then
+  failure_stage="immutable source tag reconciliation failed"
+elif [ "\${BOOTSTRAP_CONFIG_OUTCOME}" = "failure" ]; then
+  failure_stage="bootstrap npm credential configuration failed"
+elif [ "\${PUBLISH_BOOTSTRAP_OUTCOME}" = "failure" ] || [ "\${PUBLISH_HYBRID_OUTCOME}" = "failure" ] || [ "\${PUBLISH_OIDC_OUTCOME}" = "failure" ]; then
+  failure_stage="protected npm publication failed"
+elif [ "\${REGISTRY_CONSUMERS_OUTCOME}" = "failure" ]; then
+  failure_stage="unauthenticated Registry consumer verification failed"
+elif [ "\${RELEASE_NOTES_OUTCOME}" = "failure" ]; then
+  failure_stage="release note rendering failed"
+elif [ "\${GITHUB_RELEASE_OUTCOME}" = "failure" ]; then
+  failure_stage="GitHub Release reconciliation failed"
 fi
 node scripts/render-release-report.mjs \\
   --kind incident \\
   --manifest .artifacts/release/release-manifest.json \\
   --progress .artifacts/release/publish-progress.json \\
+  --error "\${failure_stage}" \\
   --output .artifacts/release/release-incident.md
 ",
         },
@@ -297,9 +336,10 @@ fi
       "inputs": {
         "auth-mode": {
           "default": "oidc",
-          "description": "Use bootstrap-token only for the initial package creation",
+          "description": "Use facade bootstrap only while chat-kit is absent; otherwise use OIDC",
           "options": [
             "oidc",
+            "oidc-with-bootstrap-facade",
             "bootstrap-token",
           ],
           "required": true,

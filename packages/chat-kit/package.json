@@ -1,6 +1,6 @@
 {
   "name": "@turingfocus/chat-kit",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Unified headless, React, and Ant Design chat integration facade",
   "license": "MIT",
   "repository": {

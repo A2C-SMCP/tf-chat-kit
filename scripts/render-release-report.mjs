@@ -65,15 +65,29 @@ export function renderReleaseIncident(manifest, progress) {
     .map(([name, state]) => {
       const before = beforeTags[name];
       const current = currentTags[name];
-      return `- \`${name}\`: ${String(state)}; before=${before ? `\`${String(before)}\`` : "`<none>`"}; current=${current ? `\`${String(current)}\`` : "`<none>`"}`;
+      /** @param {unknown} value */
+      const formatTag = (value) =>
+        value === undefined
+          ? "`<unknown>`"
+          : value === null
+            ? "`<none>`"
+            : `\`${String(value)}\``;
+      return `- \`${name}\`: ${String(state)}; before=${formatTag(before)}; current=${formatTag(current)}`;
     });
   const targetVersion = String(manifest["version"]);
   const channel = String(manifest["channel"]);
+  const packagesAtTargetTag = Object.keys(states).filter(
+    (name) => currentTags[name] === targetVersion,
+  );
+  const packagesWithUnknownCurrentTag = Object.keys(states).filter(
+    (name) => !(name in currentTags),
+  );
   const recoveryCommands = Object.keys(states).flatMap((name) => {
     if (currentTags[name] !== targetVersion) return [];
+    if (!(name in beforeTags)) return [];
     const before = beforeTags[name];
     if (before === targetVersion) return [];
-    return before
+    return before !== null
       ? [`- \`npm dist-tag add ${name}@${String(before)} ${channel}\``]
       : [`- \`npm dist-tag rm ${name} ${channel}\``];
   });
@@ -93,12 +107,25 @@ export function renderReleaseIncident(manifest, progress) {
     ...(recoveryCommands.length > 0
       ? [
           "After Registry reconciliation, a Release Owner may approve only the following commands. They restore the recorded previous mapping, or remove a tag that had no previous mapping:",
+          ...(packagesWithUnknownCurrentTag.length > 0
+            ? [
+                "Some current dist-tag mappings could not be confirmed. The commands below apply only to mappings recorded at the target; do not change unknown mappings automatically.",
+              ]
+            : []),
           "",
           ...recoveryCommands,
         ]
-      : [
-          "No dist-tag currently points to the failed target version; do not change existing tags.",
-        ]),
+      : packagesAtTargetTag.length > 0
+        ? [
+            `One or more dist-tags are recorded at the failed target version, but no safe restoration command can be derived because the previous mapping is unknown or already matched the target. Do not change those tags automatically.${packagesWithUnknownCurrentTag.length > 0 ? " Other current mappings could not be confirmed and must not be changed automatically." : ""}`,
+          ]
+        : packagesWithUnknownCurrentTag.length > 0
+          ? [
+              "Current dist-tag mappings could not be fully confirmed; do not change unknown mappings automatically.",
+            ]
+          : [
+              "No dist-tag currently points to the failed target version; do not change existing tags.",
+            ]),
     "",
     "Do not move the source tag or overwrite this npm version. First reconcile Registry integrity. If no dist-tag has been removed, an approved rerun of the same commit may finish an identical partial batch. After any dist-tag removal, fix forward with a new patch version.",
     "",
@@ -131,10 +158,34 @@ export async function runRenderReleaseReport(args) {
     if (!progress) {
       throw new Error("incident reports require --progress.");
     }
-    report = renderReleaseIncident(
-      manifest,
-      requireObject(JSON.parse(await readFile(path.resolve(progress), "utf8"))),
-    );
+    let progressValue;
+    try {
+      progressValue = requireObject(
+        JSON.parse(await readFile(path.resolve(progress), "utf8")),
+      );
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !("code" in error) ||
+        error.code !== "ENOENT"
+      ) {
+        throw error;
+      }
+      const packages = Array.isArray(manifest["packages"])
+        ? manifest["packages"].map(requireObject)
+        : [];
+      progressValue = {
+        states: Object.fromEntries(
+          packages.map((entry) => [String(entry["name"]), "pending"]),
+        ),
+        beforeTags: {},
+        currentTags: {},
+      };
+    }
+    if (progressValue["error"] === undefined && values["error"] !== undefined) {
+      progressValue["error"] = values["error"];
+    }
+    report = renderReleaseIncident(manifest, progressValue);
   } else {
     throw new Error("--kind must be release or incident.");
   }

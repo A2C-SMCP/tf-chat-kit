@@ -1,8 +1,13 @@
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
   renderReleaseIncident,
   renderReleaseNotes,
+  runRenderReleaseReport,
 } from "../scripts/render-release-report.mjs";
 import { assertReleaseManifestReconciles } from "../scripts/reconcile-release-manifest.mjs";
 
@@ -104,12 +109,94 @@ describe("release audit reports", () => {
       states: {
         "@turingfocus/chat-protocol": "published",
       },
-      beforeTags: {},
+      beforeTags: {
+        "@turingfocus/chat-protocol": null,
+      },
       currentTags: {
         "@turingfocus/chat-protocol": "0.2.0-next.0",
       },
     });
 
     expect(report).toContain("npm dist-tag rm @turingfocus/chat-protocol next");
+  });
+
+  it("does not prescribe a destructive tag command when the previous mapping is unknown", () => {
+    const report = renderReleaseIncident(manifest, {
+      states: {
+        "@turingfocus/chat-protocol": "publish-attempted",
+      },
+      beforeTags: {},
+      currentTags: {
+        "@turingfocus/chat-protocol": "0.2.0-next.0",
+      },
+    });
+
+    expect(report).toContain("before=`<unknown>`");
+    expect(report).not.toContain("npm dist-tag rm");
+    expect(report).not.toContain("npm dist-tag add");
+    expect(report).toContain(
+      "One or more dist-tags are recorded at the failed target version",
+    );
+    expect(report).not.toContain(
+      "No dist-tag currently points to the failed target version",
+    );
+  });
+
+  it("does not claim an unknown current mapping is confirmed absent", () => {
+    const report = renderReleaseIncident(manifest, {
+      states: {
+        "@turingfocus/chat-protocol": "publish-attempted",
+      },
+      beforeTags: {
+        "@turingfocus/chat-protocol": null,
+      },
+      currentTags: {},
+    });
+
+    expect(report).toContain("current=`<unknown>`");
+    expect(report).toContain(
+      "Current dist-tag mappings could not be fully confirmed",
+    );
+    expect(report).not.toContain(
+      "No dist-tag currently points to the failed target version",
+    );
+    expect(report).not.toContain("npm dist-tag rm");
+  });
+
+  it("records the concrete workflow stage after publication progress succeeded", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "tf-chat-kit-release-report-"),
+    );
+    const manifestFile = path.join(directory, "manifest.json");
+    const progressFile = path.join(directory, "progress.json");
+    const outputFile = path.join(directory, "incident.md");
+    await writeFile(manifestFile, JSON.stringify(manifest));
+    await writeFile(
+      progressFile,
+      JSON.stringify({
+        states: { "@turingfocus/chat-protocol": "published" },
+        beforeTags: { "@turingfocus/chat-protocol": null },
+        currentTags: {
+          "@turingfocus/chat-protocol": "0.2.0-next.0",
+        },
+      }),
+    );
+
+    await runRenderReleaseReport([
+      "--kind",
+      "incident",
+      "--manifest",
+      manifestFile,
+      "--progress",
+      progressFile,
+      "--error",
+      "unauthenticated Registry consumer verification failed",
+      "--output",
+      outputFile,
+    ]);
+
+    expect(await readFile(outputFile, "utf8")).toContain(
+      "Error: unauthenticated Registry consumer verification failed",
+    );
   });
 });

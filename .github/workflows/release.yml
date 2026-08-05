@@ -16,12 +16,13 @@ on:
           - next
           - latest
       auth-mode:
-        description: Use bootstrap-token only for the initial package creation
+        description: Use facade bootstrap only while chat-kit is absent; otherwise use OIDC
         required: true
         default: oidc
         type: choice
         options:
           - oidc
+          - oidc-with-bootstrap-facade
           - bootstrap-token
 
 permissions:
@@ -87,6 +88,7 @@ jobs:
           echo "tag=v${version}" >> "${GITHUB_OUTPUT}"
 
       - name: Create or reconcile the immutable source tag
+        id: source_tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.manifest.outputs.tag }}
@@ -101,14 +103,13 @@ jobs:
           fi
 
       - name: Configure the one-time bootstrap npm credential
-        if: inputs.auth-mode == 'bootstrap-token'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
+        id: bootstrap_config
+        if: inputs.auth-mode == 'bootstrap-token' || inputs.auth-mode == 'oidc-with-bootstrap-facade'
         run: |
-          test -n "${NODE_AUTH_TOKEN}"
           printf '%s\n' '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' > "${RUNNER_TEMP}/tf-chat-kit-bootstrap.npmrc"
 
       - name: Publish with the one-time bootstrap credential
+        id: publish_bootstrap
         if: inputs.auth-mode == 'bootstrap-token'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
@@ -119,7 +120,20 @@ jobs:
             --progress .artifacts/release/publish-progress.json \
             --auth-mode bootstrap-token
 
+      - name: Publish existing packages with OIDC and bootstrap the facade
+        id: publish_hybrid
+        if: inputs.auth-mode == 'oidc-with-bootstrap-facade'
+        env:
+          NPM_BOOTSTRAP_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
+          NPM_BOOTSTRAP_USERCONFIG: ${{ runner.temp }}/tf-chat-kit-bootstrap.npmrc
+        run: |
+          node scripts/publish-release.mjs \
+            --manifest .artifacts/release/release-manifest.json \
+            --progress .artifacts/release/publish-progress.json \
+            --auth-mode oidc-with-bootstrap-facade
+
       - name: Publish with npm Trusted Publishing
+        id: publish_oidc
         if: inputs.auth-mode == 'oidc'
         run: |
           node scripts/publish-release.mjs \
@@ -128,9 +142,11 @@ jobs:
             --auth-mode oidc
 
       - name: Verify unauthenticated Registry consumers
+        id: registry_consumers
         run: node scripts/verify-packed-artifacts.mjs --source registry --version "${{ steps.manifest.outputs.version }}"
 
       - name: Render release notes
+        id: release_notes
         run: |
           node scripts/render-release-report.mjs \
             --kind release \
@@ -138,6 +154,7 @@ jobs:
             --output .artifacts/release/release-notes.md
 
       - name: Create or reconcile the GitHub Release after Registry verification
+        id: github_release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.manifest.outputs.tag }}
@@ -180,14 +197,35 @@ jobs:
 
       - name: Render a failed-release incident
         if: failure() && steps.manifest.outcome == 'success'
+        env:
+          SOURCE_TAG_OUTCOME: ${{ steps.source_tag.outcome }}
+          BOOTSTRAP_CONFIG_OUTCOME: ${{ steps.bootstrap_config.outcome }}
+          PUBLISH_BOOTSTRAP_OUTCOME: ${{ steps.publish_bootstrap.outcome }}
+          PUBLISH_HYBRID_OUTCOME: ${{ steps.publish_hybrid.outcome }}
+          PUBLISH_OIDC_OUTCOME: ${{ steps.publish_oidc.outcome }}
+          REGISTRY_CONSUMERS_OUTCOME: ${{ steps.registry_consumers.outcome }}
+          RELEASE_NOTES_OUTCOME: ${{ steps.release_notes.outcome }}
+          GITHUB_RELEASE_OUTCOME: ${{ steps.github_release.outcome }}
         run: |
-          if [ ! -f .artifacts/release/publish-progress.json ]; then
-            printf '%s\n' '{"states":{},"error":"workflow failed before publication progress was recorded"}' > .artifacts/release/publish-progress.json
+          failure_stage="workflow failed after release manifest creation"
+          if [ "${SOURCE_TAG_OUTCOME}" = "failure" ]; then
+            failure_stage="immutable source tag reconciliation failed"
+          elif [ "${BOOTSTRAP_CONFIG_OUTCOME}" = "failure" ]; then
+            failure_stage="bootstrap npm credential configuration failed"
+          elif [ "${PUBLISH_BOOTSTRAP_OUTCOME}" = "failure" ] || [ "${PUBLISH_HYBRID_OUTCOME}" = "failure" ] || [ "${PUBLISH_OIDC_OUTCOME}" = "failure" ]; then
+            failure_stage="protected npm publication failed"
+          elif [ "${REGISTRY_CONSUMERS_OUTCOME}" = "failure" ]; then
+            failure_stage="unauthenticated Registry consumer verification failed"
+          elif [ "${RELEASE_NOTES_OUTCOME}" = "failure" ]; then
+            failure_stage="release note rendering failed"
+          elif [ "${GITHUB_RELEASE_OUTCOME}" = "failure" ]; then
+            failure_stage="GitHub Release reconciliation failed"
           fi
           node scripts/render-release-report.mjs \
             --kind incident \
             --manifest .artifacts/release/release-manifest.json \
             --progress .artifacts/release/publish-progress.json \
+            --error "${failure_stage}" \
             --output .artifacts/release/release-incident.md
 
       - name: Create or update the Release Incident
