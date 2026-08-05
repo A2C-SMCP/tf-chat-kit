@@ -29,6 +29,7 @@ export default defineConfig(({ command }) => ({
       "@turingfocus/chat-gateway-tfrobot": packageSource(
         "chat-gateway-tfrobot",
       ),
+      "@turingfocus/chat-kit": packageSource("chat-kit"),
       "@turingfocus/chat-protocol": packageSource("chat-protocol"),
       "@turingfocus/chat-react": packageSource("chat-react"),
       "@turingfocus/chat-runtime": packageSource("chat-runtime"),

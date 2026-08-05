@@ -9,8 +9,9 @@
 The committed consumer models the dependency injection and lifecycle shape
 required by a Web + React + Ant Design host without importing TFRobotFront,
 Next.js, a host store, a router, a global socket or persistent authentication.
-It is copied into a system temporary directory, installed from the tarballs
-listed in `.artifacts/packages/manifest.json`, type-checked, built and run.
+It declares only `@turingfocus/chat-kit` as its Chat Kit production dependency,
+is copied into a system temporary directory, installed from the tarballs listed
+in `.artifacts/packages/manifest.json`, type-checked, built and run.
 
 This proves that the published package surface can compose a host adapter. It
 does not prove that TFRobotFront has installed, enabled, grey-released or
@@ -21,6 +22,8 @@ Feature Flag and legacy removal remain host responsibilities.
 
 `pnpm run pack:check` verifies:
 
+- the default host imports only the facade while all leaf dependencies resolve
+  from the same packed fixed-group version;
 - the installed package name, version and GitHub repository metadata match the
   packed artifacts;
 - API and Socket endpoints, `SessionProvider`, message creator, Ant Design

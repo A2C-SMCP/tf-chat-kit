@@ -20,6 +20,10 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // pack-workspace.test.ts performs a clean build and pack of the shared
+    // workspace. Running other test files beside that destructive fixture can
+    // race generated outputs and starve jsdom tests on release runners.
+    fileParallelism: false,
     include: ["tests/**/*.test.ts"],
     sequence: { concurrent: false },
   },

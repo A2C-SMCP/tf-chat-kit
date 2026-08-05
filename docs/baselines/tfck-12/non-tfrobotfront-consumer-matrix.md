@@ -51,7 +51,7 @@ not replace the package-level declaration gate.
 
 ## Automated evidence
 
-`pnpm run pack:check` builds the six workspace packages, packs them, creates
+`pnpm run pack:check` builds the seven workspace packages, packs them, creates
 isolated consumer projects and verifies:
 
 - the Office consumer installs no Ant Design, ReactDOM, Office, Next.js, Tauri

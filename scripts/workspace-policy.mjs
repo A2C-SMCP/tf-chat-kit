@@ -5,6 +5,8 @@ import path from "node:path";
 import npa from "npm-package-arg";
 import ts from "typescript";
 
+import { validateFacadeEntryIsolation } from "./facade-entry-policy.mjs";
+
 /** @typedef {Record<string, string>} DependencyMap */
 /**
  * @typedef {"dependencies" | "devDependencies" | "optionalDependencies" | "peerDependencies"} DependencySection
@@ -32,6 +34,7 @@ import ts from "typescript";
  *   devDependencies?: DependencyMap;
  *   optionalDependencies?: DependencyMap;
  *   peerDependencies?: DependencyMap;
+ *   peerDependenciesMeta?: Record<string, { optional?: boolean }>;
  *   pnpm?: { overrides?: DependencyMap };
  * }} PackageManifest
  */
@@ -78,6 +81,17 @@ const ROOT_DEV_ENGINE_POLICY = Object.freeze({
   }),
 });
 const RELEASE_NPM_VERSION = "11.18.0";
+const FACADE_EXPORT_POLICY = Object.freeze({
+  ".": "index",
+  "./headless": "headless",
+  "./react": "react",
+  "./antd": "antd",
+});
+const FACADE_PEER_META_POLICY = Object.freeze({
+  antd: Object.freeze({ optional: true }),
+  react: Object.freeze({ optional: true }),
+  "react-dom": Object.freeze({ optional: true }),
+});
 
 /** @type {Readonly<Record<string, PackageRule>>} */
 export const PACKAGE_POLICY = Object.freeze({
@@ -138,6 +152,25 @@ export const PACKAGE_POLICY = Object.freeze({
       peerDependencies: ["antd", "react", "react-dom"],
     },
   },
+  "chat-kit": {
+    name: "@turingfocus/chat-kit",
+    internalDependencies: [
+      "@turingfocus/chat-gateway-tfrobot",
+      "@turingfocus/chat-protocol",
+      "@turingfocus/chat-react",
+      "@turingfocus/chat-runtime",
+      "@turingfocus/chat-ui-antd",
+    ],
+    allowedNodeBuiltins: [],
+    peerDependencies: {
+      antd: ">=5.23.4 <6.0.0",
+      react: ">=18.2.0 <19.0.0",
+      "react-dom": ">=18.2.0 <19.0.0",
+    },
+    allowedExternalDependencies: {
+      peerDependencies: ["antd", "react", "react-dom"],
+    },
+  },
   "chat-testing": {
     name: "@turingfocus/chat-testing",
     internalDependencies: ["@turingfocus/chat-protocol"],
@@ -171,9 +204,9 @@ const ROOT_SCRIPT_POLICY = Object.freeze({
   "check:workspace": "node scripts/check-workspace.mjs",
   clean: "node scripts/clean-workspace.mjs",
   format:
-    'prettier --write "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "playwright.config.ts" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "playground/**/*.{css,html,json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.{md,ts}" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/{README,007-versioning-and-release,008-github-and-public-npm-release,009-independent-compatibility-testing}.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
+    'prettier --write "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "playwright.config.ts" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "playground/**/*.{css,html,json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.{md,ts}" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/*.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
   "format:check":
-    'prettier --check "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "playwright.config.ts" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "playground/**/*.{css,html,json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.{md,ts}" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/{README,007-versioning-and-release,008-github-and-public-npm-release,009-independent-compatibility-testing}.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
+    'prettier --check "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "playwright.config.ts" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "playground/**/*.{css,html,json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.{md,ts}" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/*.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
   lint: "eslint . --max-warnings=0",
   "pack:check": "node scripts/verify-packed-artifacts.mjs",
   "pack:workspace": "node scripts/pack-workspace.mjs",
@@ -2334,6 +2367,37 @@ export function validateWorkspaceSnapshot(snapshot) {
     if (manifest.exports?.["."]?.import !== "./dist/index.js") {
       errors.push(`${label}: exports must expose the ESM build`);
     }
+    if (entry.directory === "chat-kit") {
+      if (
+        JSON.stringify(sorted(Object.keys(manifest.exports ?? {}))) !==
+        JSON.stringify(sorted(Object.keys(FACADE_EXPORT_POLICY)))
+      ) {
+        errors.push(
+          `${label}: exports must expose exactly the root, headless, react, and antd facade entries`,
+        );
+      }
+      for (const [specifier, fileName] of Object.entries(
+        FACADE_EXPORT_POLICY,
+      )) {
+        const exported = manifest.exports?.[specifier];
+        if (
+          exported?.types !== `./dist/${fileName}.d.ts` ||
+          exported.import !== `./dist/${fileName}.js`
+        ) {
+          errors.push(
+            `${label}: export ${specifier} must expose dist/${fileName} declarations and ESM`,
+          );
+        }
+      }
+      if (
+        stableObjectJson(manifest.peerDependenciesMeta ?? {}) !==
+        stableObjectJson(FACADE_PEER_META_POLICY)
+      ) {
+        errors.push(
+          `${label}: React and Ant Design peers must remain optional for layered facade entries`,
+        );
+      }
+    }
 
     validateApprovedScripts(label, manifest, {}, errors);
     validatePublishScripts(label, manifest, errors);
@@ -2399,13 +2463,18 @@ export function validateWorkspaceSnapshot(snapshot) {
       if (
         entry.directory !== "chat-react" &&
         entry.directory !== "chat-ui-antd" &&
+        entry.directory !== "chat-kit" &&
         dependencies["react"]
       ) {
         errors.push(
           `${label}: React is only allowed in chat-react and chat-ui-antd`,
         );
       }
-      if (entry.directory !== "chat-ui-antd" && dependencies["antd"]) {
+      if (
+        entry.directory !== "chat-ui-antd" &&
+        entry.directory !== "chat-kit" &&
+        dependencies["antd"]
+      ) {
         errors.push(`${label}: Ant Design is only allowed in chat-ui-antd`);
       }
       if (dependencies["next"])
@@ -2426,6 +2495,25 @@ export function validateWorkspaceSnapshot(snapshot) {
     if (entry && policy)
       validateSourceImports(sourceFile, entry, policy, errors);
   }
+
+  const facadeSourceFiles = Object.fromEntries(
+    snapshot.sourceFiles
+      .filter(({ path: filePath }) => filePath.startsWith("packages/chat-kit/"))
+      .map(({ path: filePath, content }) => [
+        filePath.slice("packages/chat-kit/".length),
+        content,
+      ]),
+  );
+  errors.push(
+    ...validateFacadeEntryIsolation({
+      label: "@turingfocus/chat-kit source",
+      files: facadeSourceFiles,
+      entries: {
+        headless: ["src/headless.ts"],
+        react: ["src/react.ts"],
+      },
+    }),
+  );
 
   return errors;
 }

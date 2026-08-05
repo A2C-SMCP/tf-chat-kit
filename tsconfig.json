@@ -6,6 +6,7 @@
     { "path": "./packages/chat-gateway-tfrobot" },
     { "path": "./packages/chat-react" },
     { "path": "./packages/chat-ui-antd" },
+    { "path": "./packages/chat-kit" },
     { "path": "./packages/chat-testing" }
   ]
 }

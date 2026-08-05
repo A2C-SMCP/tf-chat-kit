@@ -1,7 +1,8 @@
 # ADR-001：包边界与依赖方向
 
-- 状态：Accepted
+- 状态：Superseded
 - 日期：2026-07-14
+- 替代者：[ADR-010](010-default-host-facade.md)
 
 ## 背景
 
@@ -11,14 +12,14 @@
 
 采用一个 Git 仓库、六个 workspace 包：
 
-| 包 | 公共职责 | 禁止承担的职责 |
-| --- | --- | --- |
-| `@turingfocus/chat-protocol` | 标准模型、运行时校验契约、Gateway 端口 | 状态管理、网络连接、React UI |
-| `@turingfocus/chat-runtime` | ChatClient、状态机、更新归并和命令协调 | Socket.IO、DOM、宿主路由 |
-| `@turingfocus/chat-gateway-tfrobot` | TFRobotServer REST/Socket.IO 适配 | UI、产品页面状态 |
-| `@turingfocus/chat-react` | Provider、hooks、React 生命周期绑定 | Ant Design 视觉、服务端 DTO 解析 |
-| `@turingfocus/chat-ui-antd` | Ant Design 成品 UI、默认 renderer registry | 认证持久化、Socket 连接 |
-| `@turingfocus/chat-testing` | 内存 Gateway、fixtures、契约测试工具 | 生产网络行为 |
+| 包                                  | 公共职责                                   | 禁止承担的职责                   |
+| ----------------------------------- | ------------------------------------------ | -------------------------------- |
+| `@turingfocus/chat-protocol`        | 标准模型、运行时校验契约、Gateway 端口     | 状态管理、网络连接、React UI     |
+| `@turingfocus/chat-runtime`         | ChatClient、状态机、更新归并和命令协调     | Socket.IO、DOM、宿主路由         |
+| `@turingfocus/chat-gateway-tfrobot` | TFRobotServer REST/Socket.IO 适配          | UI、产品页面状态                 |
+| `@turingfocus/chat-react`           | Provider、hooks、React 生命周期绑定        | Ant Design 视觉、服务端 DTO 解析 |
+| `@turingfocus/chat-ui-antd`         | Ant Design 成品 UI、默认 renderer registry | 认证持久化、Socket 连接          |
+| `@turingfocus/chat-testing`         | 内存 Gateway、fixtures、契约测试工具       | 生产网络行为                     |
 
 依赖方向固定为：
 
