@@ -1,5 +1,12 @@
 # @turingfocus/chat-ui-antd
 
+## 0.4.1
+
+### Patch Changes
+
+- @turingfocus/chat-protocol@0.4.1
+- @turingfocus/chat-react@0.4.1
+
 ## 0.4.0
 
 ### Patch Changes
