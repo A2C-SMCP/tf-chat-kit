@@ -9,6 +9,7 @@
       "@turingfocus/chat-gateway-tfrobot",
       "@turingfocus/chat-react",
       "@turingfocus/chat-ui-antd",
+      "@turingfocus/chat-kit",
       "@turingfocus/chat-testing"
     ]
   ],

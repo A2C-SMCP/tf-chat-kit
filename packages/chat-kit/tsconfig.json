@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "types": ["react"],
+    "tsBuildInfoFile": "../../.artifacts/tsbuildinfo/chat-kit.tsbuildinfo"
+  },
+  "references": [
+    { "path": "../chat-protocol" },
+    { "path": "../chat-runtime" },
+    { "path": "../chat-gateway-tfrobot" },
+    { "path": "../chat-react" },
+    { "path": "../chat-ui-antd" }
+  ],
+  "include": ["src/**/*.ts"]
+}

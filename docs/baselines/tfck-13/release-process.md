@@ -2,10 +2,10 @@
 
 ## 发布模型
 
-六个 `@turingfocus/*` 包是不可拆分的 fixed group：同一 release commit、同一 `0.x` 版本、同一
+七个 `@turingfocus/*` 包是不可拆分的 fixed group：同一 release commit、同一 `0.x` 版本、同一
 dist-tag。`.github/workflows/release-pr.yml` 在 `main` 更新 Changesets 版本 PR，但不发布。
 `.github/workflows/release.yml` 只能从 `main` 手工触发，并引用 `npm-production` Environment；
-该引用会产生 GitHub Deployment 记录。发布清单记录 source commit、workflow run、tag、六个
+该引用会产生 GitHub Deployment 记录。发布清单记录 source commit、workflow run、tag、七个
 tarball 的 SHA-512 完整性和兼容证据。
 
 `release/compatibility.json` 是机器可读门禁。Front、Office 和 Tauri 风格版本化消费者以及
@@ -37,12 +37,12 @@ Release Owner 需要单独审批并完成以下外部变更：
 
 npm 只有在包存在后才能绑定 Trusted Publisher。因此首发采用一次性 bootstrap：
 
-1. 合并版本 PR并确认六包版本完全一致。
+1. 合并版本 PR并确认七包版本完全一致。
 2. 在 Actions 手工运行 `tf-chat-kit protected npm release`，输入精确版本，选择 `next` 和
    `bootstrap-token`，由 Environment reviewer 审批。
 3. workflow 先执行完整质量门、打包并生成 release manifest，再创建或核对不可移动的 `v<version>`
    tag，随后使用固定的 npm 11.18.0 发布 tarball 并生成 provenance。
-4. 六个包在 Registry 完整性和无认证 consumer 验证全部通过后，workflow 才创建 GitHub Release。
+4. 七个包在 Registry 完整性和无认证 consumer 验证全部通过后，workflow 才创建 GitHub Release。
 5. 确认 Release Owner 的 npm 账号已启用 2FA，然后为每个包绑定 GitHub Actions Trusted
    Publisher：organization `A2C-SMCP`、repository `tf-chat-kit`、workflow `release.yml`、
    environment `npm-production`，allowed action **只选择 `npm publish`**，不授予 stage publish。
@@ -56,7 +56,7 @@ npm 只有在包存在后才能绑定 Trusted Publisher。因此首发采用一�
      --allow-publish
    ```
 
-6. 对六包分别运行 `npm trust list <package> --json`，核对 provider、repository、workflow、
+6. 对七包分别运行 `npm trust list <package> --json`，核对 provider、repository、workflow、
    environment 与 publish permission；删除 `NPM_BOOTSTRAP_TOKEN`，并在 npm 撤销该 token。
    后续发布只允许选择 `oidc`。
 
@@ -70,7 +70,7 @@ npm 只有在包存在后才能绑定 Trusted Publisher。因此首发采用一�
 3. 确认 `main` CI 与所有仓库内兼容消费者通过，手工触发 release workflow，填写版本、channel
    和 `oidc`。
 4. Environment reviewer 对 commit、版本、兼容矩阵和 channel 进行审批。
-5. 下载 GitHub Release 中的 manifest，核对 npm provenance、source commit、tag 和六包 integrity。
+5. 下载 GitHub Release 中的 manifest，核对 npm provenance、source commit、tag 和七包 integrity。
 6. `latest` 必须发布新的稳定版本，不能把已存在的 `next` 版本原地改标；真实外部 E2E 状态随
    `release/compatibility.json` 进入报告，但不是切换 channel 的前置条件。
 
@@ -81,7 +81,7 @@ Registry consumer 验证固定安装 `@turingfocus/*@<exact-version>`，不依�
 
 发布脚本在每个写操作前读取一次 Registry，并以 tarball integrity 判定同版本是否可安全跳过；
 失败后只做一次对账，不轮询。相同 commit 的批准重跑可以补齐 integrity 完全一致且尚未发布的包；
-若六包已经全部成功，则跳过写入并继续无认证 Registry consumer 验证。GitHub Release 创建也可重入：
+若七包已经全部成功，则跳过写入并继续无认证 Registry consumer 验证。GitHub Release 创建也可重入：
 已存在 tarball 必须与当前制品字节一致；manifest 允许重跑产生新的 `runUrl`/`createdAt`，但其余不可变
 发布身份必须结构化完全一致。缺失 asset 才会补传，冲突 asset 直接失败。
 不能覆盖冲突版本或 Release asset。失败 workflow 会创建或更新 `[Release incident] v<version>` Issue。

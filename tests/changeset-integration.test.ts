@@ -115,7 +115,7 @@ async function createReleaseFixture(): Promise<ReleaseFixture> {
   );
   await writeFile(
     path.join(directory, ".changeset", "quiet-chats-bootstrap.md"),
-    "---\n---\n\nRecord the initial unpublished six-package workspace bootstrap.\n",
+    "---\n---\n\nRecord the initial unpublished seven-package workspace bootstrap.\n",
   );
 
   for (const [packageDirectory, { name }] of packageEntries) {

@@ -31,8 +31,9 @@ const sourceManifest = {
 
 type MutableArtifactInput = Omit<
   Parameters<typeof validatePackedArtifact>[0],
-  "extractedFiles"
+  "declaredFiles" | "extractedFiles"
 > & {
+  declaredFiles: string[];
   extractedFiles: Array<{
     path: string;
     content?: string;
@@ -64,9 +65,136 @@ const validInput = (): MutableArtifactInput => {
   };
 };
 
+const facadeArtifactInput = (): MutableArtifactInput => {
+  const input = validInput();
+  input.packageName = "@turingfocus/chat-kit";
+  const facadeFiles = [
+    {
+      path: "dist/headless.js",
+      content: 'export * from "./tfrobot-client.js";\n',
+    },
+    {
+      path: "dist/headless.d.ts",
+      content: 'export * from "./tfrobot-client.js";\n',
+    },
+    { path: "dist/tfrobot-client.js", content: "export {};\n" },
+    { path: "dist/tfrobot-client.d.ts", content: "export {};\n" },
+    {
+      path: "dist/react.js",
+      content:
+        'export * from "./headless.js";\nexport * from "./tfrobot-react.js";\nexport * from "@turingfocus/chat-react";\n',
+    },
+    {
+      path: "dist/react.d.ts",
+      content:
+        'export * from "./headless.js";\nexport * from "./tfrobot-react.js";\nexport * from "@turingfocus/chat-react";\n',
+    },
+    { path: "dist/tfrobot-react.js", content: "export {};\n" },
+    { path: "dist/tfrobot-react.d.ts", content: "export {};\n" },
+  ];
+  input.declaredFiles.push(...facadeFiles.map(({ path }) => path));
+  input.extractedFiles.push(...facadeFiles);
+  return input;
+};
+
 describe("packed artifact policy", () => {
   it("accepts an exact packed manifest and safe text files", () => {
     expect(validatePackedArtifact(validInput())).toEqual([]);
+  });
+
+  it("accepts isolated Headless and React graphs in the packed facade", () => {
+    expect(validatePackedArtifact(facadeArtifactInput())).toEqual([]);
+  });
+
+  it("keeps packed declaration traversal separate from JavaScript implementation edges", () => {
+    const input = facadeArtifactInput();
+    const declaration = input.extractedFiles.find(
+      ({ path }) => path === "dist/headless.d.ts",
+    );
+    if (!declaration) {
+      throw new Error("Missing packed Headless declaration fixture");
+    }
+    declaration.content += 'export * from "./declaration-bridge.js";\n';
+    const bridgeFiles = [
+      { path: "dist/declaration-bridge.d.ts", content: "export {};\n" },
+      {
+        path: "dist/declaration-bridge.js",
+        content: 'export * from "react";\n',
+      },
+    ];
+    input.declaredFiles.push(...bridgeFiles.map(({ path }) => path));
+    input.extractedFiles.push(...bridgeFiles);
+
+    expect(validatePackedArtifact(input)).toEqual([]);
+  });
+
+  it("does not treat an arbitrary object's require method as a module edge", () => {
+    const input = facadeArtifactInput();
+    const headless = input.extractedFiles.find(
+      ({ path }) => path === "dist/headless.js",
+    );
+    if (!headless) throw new Error("Missing packed Headless fixture");
+    headless.content +=
+      'const registry = { require: () => undefined };\nregistry.require("react");\n';
+
+    expect(validatePackedArtifact(input)).toEqual([]);
+  });
+
+  it.each([
+    ["dist/headless.js", "headless", "@turingfocus/chat-ui-antd"],
+    ["dist/react.d.ts", "react", "antd"],
+  ])(
+    "rejects forbidden entry dependencies in packed %s",
+    (filePath, entry, dependency) => {
+      const input = facadeArtifactInput();
+      const file = input.extractedFiles.find(({ path }) => path === filePath);
+      if (!file) throw new Error(`Missing packed fixture ${filePath}`);
+      file.content += `export * from ${JSON.stringify(dependency)};\n`;
+
+      expect(validatePackedArtifact(input)).toContainEqual(
+        expect.stringContaining(
+          `${entry} entry reaches forbidden ${dependency}`,
+        ),
+      );
+    },
+  );
+
+  it("rejects an import-equals type dependency in the packed Headless declarations", () => {
+    const input = facadeArtifactInput();
+    const file = input.extractedFiles.find(
+      ({ path }) => path === "dist/headless.d.ts",
+    );
+    if (!file) throw new Error("Missing packed Headless declaration fixture");
+    file.content +=
+      'import type React = require("react");\nexport type FacadeLeak = React.ReactNode;\n';
+
+    expect(validatePackedArtifact(input)).toContainEqual(
+      expect.stringContaining("headless entry reaches forbidden react"),
+    );
+  });
+
+  it("rejects an upward self-reference in the packed Headless entry", () => {
+    const input = facadeArtifactInput();
+    const headless = input.extractedFiles.find(
+      ({ path }) => path === "dist/headless.js",
+    );
+    if (!headless) throw new Error("Missing packed Headless fixture");
+    headless.content += 'export * from "@turingfocus/chat-kit/antd";\n';
+    const antdFiles = [
+      {
+        path: "dist/antd.js",
+        content: 'export * from "@turingfocus/chat-ui-antd";\n',
+      },
+      { path: "dist/antd.d.ts", content: "export {};\n" },
+    ];
+    input.declaredFiles.push(...antdFiles.map(({ path }) => path));
+    input.extractedFiles.push(...antdFiles);
+
+    expect(validatePackedArtifact(input)).toContainEqual(
+      expect.stringContaining(
+        "headless entry reaches forbidden @turingfocus/chat-ui-antd through dist/antd.js",
+      ),
+    );
   });
 
   it("accepts semantically identical manifest keys in a different order", () => {

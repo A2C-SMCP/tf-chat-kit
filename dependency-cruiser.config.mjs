@@ -2,7 +2,7 @@ const packageRule = (name, from, allowed) => ({
   name,
   severity: "error",
   comment:
-    "Keep package imports within the dependency direction accepted by ADR-001.",
+    "Keep package imports within the dependency direction accepted by the current package-boundary ADRs, including ADR-010.",
   from: { path: `^packages/${from}/` },
   to: { path: `^packages/(?!(${allowed.join("|")})/)` },
 });
@@ -36,6 +36,14 @@ export default {
       "chat-protocol",
     ]),
     packageRule("ui-only-depends-downward", "chat-ui-antd", [
+      "chat-ui-antd",
+      "chat-react",
+      "chat-runtime",
+      "chat-protocol",
+    ]),
+    packageRule("facade-only-depends-on-production-leaves", "chat-kit", [
+      "chat-kit",
+      "chat-gateway-tfrobot",
       "chat-ui-antd",
       "chat-react",
       "chat-runtime",

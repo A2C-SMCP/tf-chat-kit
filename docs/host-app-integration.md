@@ -1,6 +1,6 @@
 # 在宿主 App 中接入 Chat Kit
 
-本文面向负责 Web、Office Add-in、Tauri 或其他宿主 App 的开发者，说明如何把 Chat Kit 接入现有应用。默认示例使用 **React 18 + Ant Design 5 + TFRobotServer Gateway**；如果宿主有自己的 UI，可以只使用 Runtime 和 React hooks。
+本文面向负责 Web、Office Add-in、Tauri 或其他宿主 App 的开发者，说明如何把 Chat Kit 接入现有应用。所有普通宿主安装同一个 `@turingfocus/chat-kit` 门面包，再按技术栈选择 Headless、React 或 Ant Design 入口。默认示例使用 **React 18 + Ant Design 5 + TFRobotServer Gateway**。
 
 接入完成后，宿主应当能够：
 
@@ -12,23 +12,22 @@
 
 ## 1. 先选择接入层级
 
-| 需求                    | 需要安装的 Chat Kit 包                                                                | 说明                          |
-| ----------------------- | ------------------------------------------------------------------------------------- | ----------------------------- |
-| 直接使用成品聊天界面    | `chat-protocol`、`chat-runtime`、`chat-gateway-tfrobot`、`chat-react`、`chat-ui-antd` | 推荐的大多数 React 宿主接法   |
-| 使用宿主自己的 React UI | `chat-protocol`、`chat-runtime`、`chat-gateway-tfrobot`、`chat-react`                 | 通过 hooks 读取状态和执行命令 |
-| 非 React 或纯 Headless  | `chat-protocol`、`chat-runtime`、`chat-gateway-tfrobot`                               | 直接订阅 `ChatClient`         |
-| 接入非 TFRobot 后端     | `chat-protocol`、`chat-runtime`，按需增加 React/UI 包                                 | 由宿主实现 `ChatGateway`      |
+| 需求                    | 安装包     | 导入入口                           | 说明                          |
+| ----------------------- | ---------- | ---------------------------------- | ----------------------------- |
+| 直接使用成品聊天界面    | `chat-kit` | `@turingfocus/chat-kit` 或 `/antd` | 推荐的大多数 React 宿主接法   |
+| 使用宿主自己的 React UI | `chat-kit` | `@turingfocus/chat-kit/react`      | 通过 hooks 读取状态和执行命令 |
+| 非 React 或纯 Headless  | `chat-kit` | `@turingfocus/chat-kit/headless`   | 直接订阅 `ChatClient`         |
+| 接入非 TFRobot 后端     | `chat-kit` | `/headless`，按需再使用 `/react`   | 由宿主实现 `ChatGateway`      |
 
 各层的依赖方向如下：
 
 ```text
-宿主页面
-  └─ chat-ui-antd（可选成品 UI）
-       └─ chat-react（Provider 和 hooks）
-            └─ chat-runtime（状态与命令）
-                 └─ chat-protocol（模型与端口）
+普通宿主页面
+  └─ chat-kit（默认单入口）
+       ├─ chat-ui-antd -> chat-react -> chat-runtime -> chat-protocol
+       └─ chat-gateway-tfrobot ----------------------> chat-protocol
 
-chat-gateway-tfrobot ──实现──> chat-protocol.ChatGateway
+Headless 与 React 子路径不会加载更高层 UI 模块；需要严格最小安装树的高级消费者仍可直接使用叶子包。
 ```
 
 Chat Kit 不读取宿主的 Router、全局 Store 或登录状态。所有宿主能力都通过构造参数、Provider 或回调显式注入。
@@ -45,26 +44,23 @@ Chat Kit 不读取宿主的 Router、全局 Store 或登录状态。所有宿主
 
 ## 2. 环境和依赖
 
-公共包是 ESM 包。宿主构建工具需要支持 ESM，并满足以下 peer dependency：
+公共包是 ESM 包。宿主构建工具需要支持 ESM。门面中的 peer dependency 是可选声明，具体入口要求如下：
 
-- React：`>=18.2.0 <19.0.0`
-- ReactDOM：`>=18.2.0 <19.0.0`
-- Ant Design：`>=5.23.4 <6.0.0`，仅成品 UI 路径需要
+- `/headless`：不要求 React、ReactDOM 或 Ant Design。
+- `/react`：React `>=18.2.0 <19.0.0`。
+- 根入口或 `/antd`：React/ReactDOM `>=18.2.0 <19.0.0`，Ant Design `>=5.23.4 <6.0.0`。
 
 以 pnpm 为例：
 
 ```bash
-pnpm add \
-  @turingfocus/chat-protocol \
-  @turingfocus/chat-runtime \
-  @turingfocus/chat-gateway-tfrobot \
-  @turingfocus/chat-react \
-  @turingfocus/chat-ui-antd
-
+pnpm add @turingfocus/chat-kit
+# 仅 React 入口：
+pnpm add react@^18.2.0
+# Ant Design 入口再增加：
 pnpm add react@^18.2.0 react-dom@^18.2.0 antd@^5.23.4
 ```
 
-如果宿主已经安装兼容版本的 React、ReactDOM 和 Ant Design，不要重复安装。所有 `@turingfocus/chat-*` 包应锁定到同一个发布版本，避免协议、Runtime 和 UI 的版本错配。
+如果宿主已经安装兼容版本的 React、ReactDOM 和 Ant Design，不要重复安装。`@turingfocus/chat-kit` 会安装同版本的五个生产叶子包；宿主无需重复声明它们。npm 不能根据导入子路径改变安装依赖，因此 Headless 安装树仍包含这些叶子包，但 `/headless` 的运行时和声明入口不会加载 React、DOM 或 Ant Design。高级消费者如果直接组合多个叶子包，应将所有 `@turingfocus/chat-*` 包锁定到同一个发布版本。
 
 ## 3. 准备宿主配置
 
@@ -95,16 +91,13 @@ GET https://host.example.com/robot-proxy/v1/chat/conversations
 
 ```ts
 // host-chat-client.ts
-import type {
-  SessionInvalidation,
-  SessionProvider,
-} from "@turingfocus/chat-protocol";
 import {
-  createTFRobotChatGateway,
+  createTFRobotChatClientFactory,
+  type ChatClientFactory,
+  type SessionInvalidation,
+  type SessionProvider,
   type TFRobotSession,
-} from "@turingfocus/chat-gateway-tfrobot";
-import type { ChatClientFactory } from "@turingfocus/chat-react";
-import { createChatClient } from "@turingfocus/chat-runtime";
+} from "@turingfocus/chat-kit";
 
 export interface HostChatConfig {
   apiBaseUrl: string;
@@ -137,29 +130,21 @@ export function createHostChatClientFactory(
     onSessionInvalid: config.onSessionInvalid,
   };
 
-  return {
-    create() {
-      const gateway = createTFRobotChatGateway({
-        baseUrl: config.apiBaseUrl,
-        sessionProvider,
-        messageCreatorProvider: () => config.getCurrentUser(),
-        socketNamespaceUrl: config.socketNamespaceUrl,
-        ...(config.socketPath === undefined
-          ? {}
-          : { socketPath: config.socketPath }),
-        ...(config.platformId === undefined
-          ? {}
-          : { platformId: config.platformId }),
-        onDiagnostic: config.reportError,
-      });
-
-      return createChatClient({
-        gateway,
-        onUnhandledError: config.reportError,
-      });
-    },
+  return createTFRobotChatClientFactory({
+    baseUrl: config.apiBaseUrl,
+    sessionProvider,
+    messageCreatorProvider: () => config.getCurrentUser(),
+    socketNamespaceUrl: config.socketNamespaceUrl,
+    ...(config.socketPath === undefined
+      ? {}
+      : { socketPath: config.socketPath }),
+    ...(config.platformId === undefined
+      ? {}
+      : { platformId: config.platformId }),
+    onDiagnostic: config.reportError,
+    onUnhandledError: config.reportError,
     getDisposeOptions: () => ({ deadlineAt: deadlineAt() }),
-  };
+  });
 }
 
 export const getChatDeadlineAt = deadlineAt;
@@ -192,7 +177,7 @@ RobotServer 的一次 Agent Event 可以通过 Socket 多次上报，例如从 `
 // ChatRoute.tsx
 import { ConfigProvider, Spin } from "antd";
 import { useMemo } from "react";
-import { OwnedChatProvider } from "@turingfocus/chat-react";
+import { OwnedChatProvider } from "@turingfocus/chat-kit";
 
 import {
   createHostChatClientFactory,
@@ -240,13 +225,13 @@ await hostOwnedClient.dispose({ deadlineAt: Date.now() + 10_000 });
 ```tsx
 // HostChatWorkspace.tsx
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Conversation } from "@turingfocus/chat-protocol";
-import { useChatClient } from "@turingfocus/chat-react";
 import {
   ChatConversationView,
   ChatUiShell,
+  useChatClient,
+  type Conversation,
   type ChatContentState,
-} from "@turingfocus/chat-ui-antd";
+} from "@turingfocus/chat-kit";
 
 import { getChatDeadlineAt } from "./host-chat-client";
 
@@ -423,8 +408,10 @@ const changeEventDetailSplitRatio = useCallback((ratio: number) => {
 
 不使用 Ant Design UI 时，通过 React hooks 读取状态：
 
+这一接法仍安装同一个门面包，但只从 React 子路径导入：
+
 ```tsx
-import { useChatClient, useChatSelector } from "@turingfocus/chat-react";
+import { useChatClient, useChatSelector } from "@turingfocus/chat-kit/react";
 
 export function CompactComposer() {
   const client = useChatClient();
@@ -461,7 +448,14 @@ export function CompactComposer() {
 
 `ChatClient` 不依赖 React。非 React 页面、桌面壳或其他框架可以直接订阅它：
 
+这一接法只从 Headless 子路径导入，不加载 React 或 Ant Design：
+
 ```ts
+import {
+  createChatClient,
+  createTFRobotChatGateway,
+} from "@turingfocus/chat-kit/headless";
+
 const gateway = createTFRobotChatGateway(gatewayOptions);
 const client = createChatClient({ gateway });
 

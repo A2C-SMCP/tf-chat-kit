@@ -4,7 +4,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 
 import {
-  createTFRobotChatGateway,
+  ChatStateView,
+  createTFRobotChatClientFactory,
+  OwnedChatProvider,
+  useChatClient,
+  type ChatClient,
+  type ChatClientFactory,
+  type ChatClientUnhandledError,
+  type ChatError,
+  type SessionProvider,
   type TFRobotMessageCreatorProvider,
   type TFRobotSession,
   type TFRobotSocket,
@@ -12,19 +20,7 @@ import {
   type TFRobotSocketFactory,
   type TFRobotSocketFactoryInput,
   type TFRobotSocketListener,
-} from "@turingfocus/chat-gateway-tfrobot";
-import type { ChatError, SessionProvider } from "@turingfocus/chat-protocol";
-import {
-  OwnedChatProvider,
-  useChatClient,
-  type ChatClientFactory,
-} from "@turingfocus/chat-react";
-import {
-  createChatClient,
-  type ChatClient,
-  type ChatClientUnhandledError,
-} from "@turingfocus/chat-runtime";
-import { ChatStateView } from "@turingfocus/chat-ui-antd";
+} from "@turingfocus/chat-kit";
 
 const check = (condition: unknown, message: string): void => {
   if (!condition) throw new Error(message);
@@ -139,28 +135,31 @@ interface HostProbe {
 export const createHostChatClientFactory = (
   options: HostClientOptions,
   onCreate: (client: ChatClient) => void,
-): ChatClientFactory => ({
-  create() {
-    const gateway = createTFRobotChatGateway({
-      baseUrl: options.endpoints.apiBaseUrl,
-      messageCreatorProvider: options.callbacks.getMessageCreator,
-      onDiagnostic: options.callbacks.onDiagnostic,
-      platformId: options.platformId,
-      sessionProvider: options.sessionProvider,
-      socketFactory: options.socketFactory,
-      socketNamespaceUrl: options.endpoints.socketNamespaceUrl,
-      socketPath: options.endpoints.socketPath,
-      fetch: options.fetch,
-    });
-    const client = createChatClient({
-      gateway,
-      onUnhandledError: options.callbacks.onUnhandledError,
-    });
-    onCreate(client);
-    return client;
-  },
-  getDisposeOptions: () => ({ deadlineAt: options.getDisposeDeadlineAt() }),
-});
+): ChatClientFactory => {
+  const factory = createTFRobotChatClientFactory({
+    baseUrl: options.endpoints.apiBaseUrl,
+    messageCreatorProvider: options.callbacks.getMessageCreator,
+    onDiagnostic: options.callbacks.onDiagnostic,
+    onUnhandledError: options.callbacks.onUnhandledError,
+    platformId: options.platformId,
+    sessionProvider: options.sessionProvider,
+    socketFactory: options.socketFactory,
+    socketNamespaceUrl: options.endpoints.socketNamespaceUrl,
+    socketPath: options.endpoints.socketPath,
+    fetch: options.fetch,
+    getDisposeOptions: () => ({
+      deadlineAt: options.getDisposeDeadlineAt(),
+    }),
+  });
+  return {
+    create() {
+      const client = factory.create();
+      onCreate(client);
+      return client;
+    },
+    getDisposeOptions: factory.getDisposeOptions,
+  };
+};
 
 const ConsumerProbe = ({ probe }: { readonly probe: HostProbe }) => {
   const client = useChatClient();

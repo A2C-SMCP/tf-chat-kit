@@ -226,10 +226,14 @@ const readCurrentPackageManifests = async () =>
  */
 const readPackageManifestsAtRef = (ref) =>
   Object.fromEntries(
-    Object.entries(PACKAGE_POLICY).map(([directory, { name }]) => [
-      name,
-      readManifestAtRef(ref, `packages/${directory}/package.json`),
-    ]),
+    Object.entries(PACKAGE_POLICY)
+      .filter(([directory]) =>
+        fileExistsAtRef(ref, `packages/${directory}/package.json`),
+      )
+      .map(([directory, { name }]) => [
+        name,
+        readManifestAtRef(ref, `packages/${directory}/package.json`),
+      ]),
   );
 
 /** @returns {Promise<Record<string, string>>} */

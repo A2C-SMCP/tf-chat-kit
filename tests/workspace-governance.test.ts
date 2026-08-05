@@ -35,7 +35,7 @@ describe("workspace governance", () => {
     );
   });
 
-  it("accepts the committed six-package architecture", async () => {
+  it("accepts the committed seven-package architecture", async () => {
     const snapshot = await loadWorkspaceSnapshot(process.cwd());
     expect(validateWorkspaceSnapshot(snapshot)).toEqual([]);
   });
@@ -68,6 +68,120 @@ describe("workspace governance", () => {
     expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
       expect.stringContaining(
         "changeset configuration must exactly match the approved fixed-group policy",
+      ),
+    );
+  });
+
+  it("requires isolated Headless, React, and Ant Design facade entries", async () => {
+    const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
+    const facade = snapshot.packages.find(
+      ({ directory }) => directory === "chat-kit",
+    )!;
+    delete facade.manifest.exports?.["./headless"];
+    facade.manifest.peerDependenciesMeta = {
+      react: { optional: false },
+    };
+
+    const errors = validateWorkspaceSnapshot(snapshot);
+    expect(errors).toContainEqual(
+      expect.stringContaining(
+        "exports must expose exactly the root, headless, react, and antd facade entries",
+      ),
+    );
+    expect(errors).toContainEqual(
+      expect.stringContaining(
+        "React and Ant Design peers must remain optional for layered facade entries",
+      ),
+    );
+  });
+
+  it.each([
+    [
+      "headless",
+      "packages/chat-kit/src/headless.ts",
+      "@turingfocus/chat-ui-antd",
+    ],
+    ["react", "packages/chat-kit/src/react.ts", "@turingfocus/chat-ui-antd"],
+  ])(
+    "rejects a forbidden dependency reachable from the %s facade entry",
+    async (entry, filePath, dependency) => {
+      const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
+      const source = snapshot.sourceFiles.find(({ path }) => path === filePath);
+      if (!source) throw new Error(`Missing source fixture ${filePath}`);
+      source.content += `\nexport * from ${JSON.stringify(dependency)};\n`;
+
+      expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
+        expect.stringContaining(
+          `${entry} entry reaches forbidden ${dependency}`,
+        ),
+      );
+    },
+  );
+
+  it.each([
+    [
+      "TypeScript import-equals",
+      'import type React = require("react");\nexport type FacadeLeak = React.ReactNode;',
+      "react",
+      false,
+    ],
+    [
+      "triple-slash type reference",
+      '/// <reference types="react" />',
+      "react",
+      true,
+    ],
+  ])(
+    "rejects a %s dependency from the Headless facade entry",
+    async (_syntax, content, dependency, prepend) => {
+      const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
+      const source = snapshot.sourceFiles.find(
+        ({ path }) => path === "packages/chat-kit/src/headless.ts",
+      );
+      if (!source) throw new Error("Missing Headless source fixture");
+      source.content = prepend
+        ? `${content}\n${source.content}`
+        : `${source.content}\n${content}\n`;
+
+      expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
+        expect.stringContaining(
+          `headless entry reaches forbidden ${dependency}`,
+        ),
+      );
+    },
+  );
+
+  it("rejects a forbidden dependency reached through a local facade bridge", async () => {
+    const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
+    const source = snapshot.sourceFiles.find(
+      ({ path }) => path === "packages/chat-kit/src/headless.ts",
+    );
+    if (!source) throw new Error("Missing Headless source fixture");
+    source.content += '\nexport * from "./forbidden-bridge.js";\n';
+    snapshot.sourceFiles.push({
+      path: "packages/chat-kit/src/forbidden-bridge.ts",
+      content:
+        'const forbidden = require("@turingfocus/chat-ui-antd");\nexport { forbidden };\n',
+    });
+
+    expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
+      expect.stringContaining(
+        "headless entry reaches forbidden @turingfocus/chat-ui-antd through src/forbidden-bridge.ts",
+      ),
+    );
+  });
+
+  it("rejects an upward facade self-reference from Headless to Ant Design", async () => {
+    const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
+    const source = snapshot.sourceFiles.find(
+      ({ path }) => path === "packages/chat-kit/src/headless.ts",
+    );
+    if (!source) throw new Error("Missing Headless source fixture");
+    source.content += '\nexport * from "@turingfocus/chat-kit/antd";\n';
+
+    expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
+      expect.stringContaining(
+        "headless entry reaches forbidden @turingfocus/chat-ui-antd through src/antd.ts",
       ),
     );
   });
@@ -322,6 +436,7 @@ describe("workspace governance", () => {
     "chat-runtime",
     "chat-react",
     "chat-ui-antd",
+    "chat-kit",
     "chat-testing",
   ])("rejects socket.io-client outside the Gateway: %s", async (directory) => {
     const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));

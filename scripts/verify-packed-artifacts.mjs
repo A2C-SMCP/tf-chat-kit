@@ -263,6 +263,10 @@ const minimumUiConsumerDirectory = path.join(
   "minimum-ui-consumer",
 );
 const reactConsumerDirectory = path.join(verificationRoot, "react-consumer");
+const headlessFacadeConsumerDirectory = path.join(
+  verificationRoot,
+  "headless-facade-consumer",
+);
 const officeStyleConsumerDirectory = path.join(
   verificationRoot,
   "office-style-consumer",
@@ -282,6 +286,7 @@ try {
     mkdir(consumerDirectory),
     mkdir(minimumUiConsumerDirectory),
     mkdir(reactConsumerDirectory),
+    mkdir(headlessFacadeConsumerDirectory),
     mkdir(officeStyleConsumerDirectory),
     mkdir(tauriStyleConsumerDirectory),
     mkdir(tfrobotfrontStyleConsumerDirectory),
@@ -435,13 +440,16 @@ try {
     packManifest.packages,
   );
 
-  const reactConsumerPackageNames = [
+  const facadeProductionPackageNames = [
+    "@turingfocus/chat-kit",
+    "@turingfocus/chat-gateway-tfrobot",
     "@turingfocus/chat-protocol",
-    "@turingfocus/chat-runtime",
     "@turingfocus/chat-react",
+    "@turingfocus/chat-runtime",
+    "@turingfocus/chat-ui-antd",
   ];
   const reactConsumerPackageFiles = Object.fromEntries(
-    reactConsumerPackageNames.map((name) => [name, packageFiles[name]]),
+    facadeProductionPackageNames.map((name) => [name, packageFiles[name]]),
   );
   const reactConsumerManifest = {
     name: "tf-chat-kit-react-consumer",
@@ -450,7 +458,7 @@ try {
     type: "module",
     packageManager: "pnpm@10.34.5",
     dependencies: {
-      ...reactConsumerPackageFiles,
+      "@turingfocus/chat-kit": packageFiles["@turingfocus/chat-kit"],
       react: "18.3.1",
     },
     devDependencies: {
@@ -466,9 +474,7 @@ try {
       sourceFiles: {
         "index.ts": [
           'import { createElement } from "react";',
-          'import type { ChatSnapshot } from "@turingfocus/chat-protocol";',
-          'import type { ChatClient } from "@turingfocus/chat-runtime";',
-          'import { ChatProvider, useChatSelector } from "@turingfocus/chat-react";',
+          'import { ChatProvider, useChatSelector, type ChatClient, type ChatSnapshot } from "@turingfocus/chat-kit/react";',
           "",
           "const ConversationTitle = () =>",
           '  createElement("span", null, useChatSelector((snapshot: ChatSnapshot | null) => snapshot?.conversation.title ?? ""));',
@@ -480,6 +486,7 @@ try {
           "",
         ].join("\n"),
       },
+      packageNames: ["@turingfocus/chat-kit"],
       tsconfig: {
         compilerOptions: {
           module: "NodeNext",
@@ -487,6 +494,61 @@ try {
           outDir: "dist",
           strict: true,
           target: "ES2022",
+        },
+        include: ["index.ts"],
+      },
+    },
+    packManifest.packages,
+  );
+
+  const headlessFacadeConsumerManifest = {
+    name: "tf-chat-kit-headless-facade-consumer",
+    version: "0.0.0",
+    private: true,
+    type: "module",
+    packageManager: "pnpm@10.34.5",
+    dependencies: {
+      "@turingfocus/chat-kit": packageFiles["@turingfocus/chat-kit"],
+    },
+    devDependencies: { typescript: "5.9.3" },
+    pnpm: { overrides: reactConsumerPackageFiles },
+  };
+  await verifyConsumerProject(
+    {
+      directory: headlessFacadeConsumerDirectory,
+      manifest: headlessFacadeConsumerManifest,
+      packageNames: ["@turingfocus/chat-kit"],
+      sourceFiles: {
+        "index.ts": [
+          'import { createTFRobotChatClient, type SessionProvider, type TFRobotSession } from "@turingfocus/chat-kit/headless";',
+          "",
+          "let sessionReads = 0;",
+          "const sessionProvider: SessionProvider<TFRobotSession> = {",
+          '  getSession: () => { sessionReads += 1; return { kind: "bearer", token: "headless-facade-token" }; },',
+          "  onSessionInvalid: () => undefined,",
+          "};",
+          "const client = createTFRobotChatClient({",
+          '  baseUrl: "https://headless.example.test/api/",',
+          '  messageCreatorProvider: () => ({ uid: "headless-user", name: "Headless User" }),',
+          "  sessionProvider,",
+          '  socketFactory: () => { throw new Error("Headless construction must not create a Socket"); },',
+          "});",
+          'if (sessionReads !== 0) throw new Error("Headless construction read session material eagerly");',
+          "await client.dispose({ deadlineAt: Date.now() + 1_000 });",
+          'if (!client.disposed) throw new Error("Headless facade client did not dispose");',
+          'console.log("Verified the packed Headless facade entry without importing React APIs.");',
+          "",
+        ].join("\n"),
+      },
+      tsconfig: {
+        compilerOptions: {
+          exactOptionalPropertyTypes: true,
+          lib: ["ES2023", "DOM"],
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          outDir: "dist",
+          strict: true,
+          target: "ES2023",
         },
         include: ["index.ts"],
       },
@@ -666,6 +728,7 @@ try {
   );
 
   const tfrobotfrontStylePackageNames = [
+    "@turingfocus/chat-kit",
     "@turingfocus/chat-gateway-tfrobot",
     "@turingfocus/chat-protocol",
     "@turingfocus/chat-react",
@@ -682,7 +745,7 @@ try {
     type: "module",
     packageManager: "pnpm@10.34.5",
     dependencies: {
-      ...tfrobotfrontStylePackageFiles,
+      "@turingfocus/chat-kit": packageFiles["@turingfocus/chat-kit"],
       antd: "5.29.3",
       react: "18.3.1",
       "react-dom": "18.3.1",
@@ -707,11 +770,24 @@ try {
     ),
     "utf8",
   );
+  for (const forbiddenLeafImport of [
+    "@turingfocus/chat-gateway-tfrobot",
+    "@turingfocus/chat-protocol",
+    "@turingfocus/chat-react",
+    "@turingfocus/chat-runtime",
+    "@turingfocus/chat-ui-antd",
+  ]) {
+    if (tfrobotfrontConsumerSource.includes(`from "${forbiddenLeafImport}"`)) {
+      throw new Error(
+        `TFRobotFront-style default consumer must import only @turingfocus/chat-kit; found ${forbiddenLeafImport}`,
+      );
+    }
+  }
   await verifyConsumerProject(
     {
       directory: tfrobotfrontStyleConsumerDirectory,
       manifest: tfrobotfrontStyleConsumerManifest,
-      packageNames: tfrobotfrontStylePackageNames,
+      packageNames: ["@turingfocus/chat-kit"],
       sourceFiles: {
         "consumer.ts": tfrobotfrontConsumerSource,
         "index.ts": [

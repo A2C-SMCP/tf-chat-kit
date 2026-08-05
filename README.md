@@ -4,7 +4,7 @@ TFRobot 聊天能力的可复用模块。项目采用 Headless Runtime、宿主�
 
 ## 当前状态
 
-项目处于 V1 纵向切片建设阶段。六包 workspace、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-protocol` 提供标准模型、运行时 schema 与 Gateway/SessionProvider 端口，`@turingfocus/chat-testing` 提供内存 Gateway、标准 fixtures 与框架无关契约套件，`@turingfocus/chat-runtime` 提供实例化 ChatClient、不可变快照、历史/实时归并、聊天命令和显式释放，`@turingfocus/chat-gateway-tfrobot` 提供实例隔离的 TFRobotServer REST/Socket.IO、DTO 校验、短期认证注入和安全映射，`@turingfocus/chat-react` 提供无样式 Provider、选择性订阅 hooks 和明确的实例所有权，`@turingfocus/chat-ui-antd` 提供会话壳、虚拟化时间轴、安全 Markdown、文本发送、Run/中断控件、Ask User 交互和可扩展渲染器。真实 Gateway 与真实宿主 E2E 作为可选兼容观察记录；TFRobot `/remote-tool` 的多 Provider 与会话路由完成前，实时 Ask User 回答能力保持关闭。
+项目处于 V1 纵向切片建设阶段。七包 workspace、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-kit` 通过 `headless`、`react`、`antd` 分层入口为不同宿主提供一个生产门面和实例安全的组合工厂，其余叶子包继续提供可裁剪的 Protocol、Runtime、Gateway、React、UI 与 Testing 能力。真实 Gateway 与真实宿主 E2E 作为可选兼容观察记录；TFRobot `/remote-tool` 的多 Provider 与会话路由完成前，实时 Ask User 回答能力保持关闭。
 
 ## V1 承诺
 
@@ -18,7 +18,7 @@ TFRobot 聊天能力的可复用模块。项目采用 Headless Runtime、宿主�
 
 V1 不承诺 Fluent UI、Web Component、AG-UI、账号登录系统或为每个宿主提供独立视觉包。
 
-## 初始包
+## 公共包
 
 | 包                                  | 职责                                        |
 | ----------------------------------- | ------------------------------------------- |
@@ -27,6 +27,7 @@ V1 不承诺 Fluent UI、Web Component、AG-UI、账号登录系统或为每个�
 | `@turingfocus/chat-gateway-tfrobot` | TFRobotServer REST 与 Socket.IO 适配        |
 | `@turingfocus/chat-react`           | React Provider、hooks 和无样式接入层        |
 | `@turingfocus/chat-ui-antd`         | Ant Design 成品 UI 与默认渲染器             |
+| `@turingfocus/chat-kit`             | Headless、React 与 Ant Design 统一门面      |
 | `@turingfocus/chat-testing`         | 内存 Gateway、fixtures 和契约测试工具       |
 
 核心依赖方向为：
@@ -35,10 +36,11 @@ V1 不承诺 Fluent UI、Web Component、AG-UI、账号登录系统或为每个�
 chat-ui-antd -> chat-react -> chat-runtime -> chat-protocol
 chat-ui-antd -------------------------------> chat-protocol
                          chat-gateway-tfrobot -> chat-protocol
+chat-kit -> chat-ui-antd/chat-react/chat-runtime/chat-gateway-tfrobot/chat-protocol
                                   chat-testing -> chat-protocol
 ```
 
-`chat-testing` 不依赖 Runtime 实现；后续 Runtime 通过测试适配器接入其契约套件。
+普通宿主只需安装 `@turingfocus/chat-kit`：非 React 使用 `/headless`，自定义 React UI 使用 `/react`，成品 UI 使用根入口或 `/antd`。高级消费者仍可按需安装叶子包；`chat-testing` 是独立开发依赖，不进入生产门面。
 
 任何 Chat Kit 包都不得反向依赖 TFRobotFront 或其他宿主项目。
 
@@ -90,9 +92,9 @@ Token 凭据，密码登录路由只接受一个受限长度的 password 字段�
 检查前直接失败。显式使用 `--ignore-scripts` 会跳过前者，但不会绕过 `pnpm check`。
 
 `pnpm check` 会执行架构边界、lint、格式、类型、测试、构建、tarball 内容与安全检查，并在临时
-TypeScript 消费者中实际安装、构建和运行六个产物。宿主验证必须使用 tarball、npm prerelease
+TypeScript 消费者中实际安装、构建和运行七个产物。宿主验证必须使用 tarball、npm prerelease
 或 npm 官方 Registry 的正式版本，不得通过源码路径消费。
-`pnpm pack:workspace` 可从 clean workspace 直接构建并生成经过内容检查的六包 tarball。
+`pnpm pack:workspace` 可从 clean workspace 直接构建并生成经过内容检查的七包 tarball。
 
 Runtime V1 的时间轴性能门禁覆盖 5,000 个常驻条目上的 1,000 次连续增量更新，以及将 5,000
 个历史条目一次归并到 5,000 个当前条目。不可变快照会在每次可观察更新时复制时间轴的顶层数组，

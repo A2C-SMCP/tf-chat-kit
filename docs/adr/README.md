@@ -4,7 +4,7 @@
 
 | ADR                                             | 决策                       | 状态       |
 | ----------------------------------------------- | -------------------------- | ---------- |
-| [001](001-package-boundaries.md)                | 包边界与依赖方向           | Accepted   |
+| [001](001-package-boundaries.md)                | 包边界与依赖方向           | Superseded |
 | [002](002-runtime-instance-model.md)            | Runtime 实例模型           | Accepted   |
 | [003](003-gateway-and-socketio.md)              | Gateway 与 Socket.IO 边界  | Accepted   |
 | [004](004-normalized-chat-model.md)             | 标准聊天模型与 raw 数据    | Accepted   |
@@ -13,6 +13,7 @@
 | [007](007-versioning-and-release.md)            | 原版本与私有发布治理       | Superseded |
 | [008](008-github-and-public-npm-release.md)     | GitHub 托管与 npm 公开发布 | Accepted   |
 | [009](009-independent-compatibility-testing.md) | 独立项目与仓库内兼容测试   | Accepted   |
+| [010](010-default-host-facade.md)               | 统一宿主门面与七包边界     | Accepted   |
 
 ## 状态规则
 

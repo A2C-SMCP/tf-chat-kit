@@ -1,5 +1,7 @@
 import { TextDecoder } from "node:util";
 
+import { validateFacadeEntryIsolation } from "./facade-entry-policy.mjs";
+
 const dependencySections = [
   "dependencies",
   "optionalDependencies",
@@ -186,6 +188,29 @@ export function validatePackedArtifact({
       }
     }
     errors.push(...fileErrors);
+  }
+  if (packageName === "@turingfocus/chat-kit") {
+    const facadeFiles = Object.fromEntries(
+      extractedFiles
+        .filter(({ path: filePath }) =>
+          /^dist\/.+\.(?:d\.ts|js)$/u.test(filePath),
+        )
+        .map((file) => [
+          file.path,
+          file.content ??
+            (file.bytes === undefined ? "" : utf8Decoder.decode(file.bytes)),
+        ]),
+    );
+    errors.push(
+      ...validateFacadeEntryIsolation({
+        label: "@turingfocus/chat-kit packed artifact",
+        files: facadeFiles,
+        entries: {
+          headless: ["dist/headless.js", "dist/headless.d.ts"],
+          react: ["dist/react.js", "dist/react.d.ts"],
+        },
+      }),
+    );
   }
   return errors;
 }

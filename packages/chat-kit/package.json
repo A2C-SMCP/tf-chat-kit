@@ -1,0 +1,72 @@
+{
+  "name": "@turingfocus/chat-kit",
+  "version": "0.2.0",
+  "description": "Unified headless, React, and Ant Design chat integration facade",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/A2C-SMCP/tf-chat-kit.git",
+    "directory": "packages/chat-kit"
+  },
+  "homepage": "https://github.com/A2C-SMCP/tf-chat-kit#readme",
+  "bugs": {
+    "url": "https://github.com/A2C-SMCP/tf-chat-kit/issues"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./headless": {
+      "types": "./dist/headless.d.ts",
+      "import": "./dist/headless.js",
+      "default": "./dist/headless.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js",
+      "default": "./dist/react.js"
+    },
+    "./antd": {
+      "types": "./dist/antd.d.ts",
+      "import": "./dist/antd.js",
+      "default": "./dist/antd.js"
+    }
+  },
+  "dependencies": {
+    "@turingfocus/chat-gateway-tfrobot": "workspace:^",
+    "@turingfocus/chat-protocol": "workspace:^",
+    "@turingfocus/chat-react": "workspace:^",
+    "@turingfocus/chat-runtime": "workspace:^",
+    "@turingfocus/chat-ui-antd": "workspace:^"
+  },
+  "peerDependencies": {
+    "antd": ">=5.23.4 <6.0.0",
+    "react": ">=18.2.0 <19.0.0",
+    "react-dom": ">=18.2.0 <19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "antd": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}
