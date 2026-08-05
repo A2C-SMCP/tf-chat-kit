@@ -1,6 +1,6 @@
 {
   "name": "@turingfocus/chat-runtime",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Headless, instance-scoped chat runtime",
   "license": "MIT",
   "repository": {
