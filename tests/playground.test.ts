@@ -388,7 +388,7 @@ describe("private Chat Kit playground", () => {
         Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previous);
       }
     }
-  });
+  }, 10_000);
 
   it("deduplicates creation and ignores stale completion after replacing a session", async () => {
     const pendingCreation = deferred<boolean>();

@@ -218,9 +218,37 @@ export function ChatRoute({ config }: { config: HostChatConfig }) {
 await hostOwnedClient.dispose({ deadlineAt: Date.now() + 10_000 });
 ```
 
-## 6. 组合会话列表和聊天视图
+## 6. 使用托管会话工作区
 
-`ChatUiShell` 负责页面壳和会话列表，`ChatConversationView` 负责当前会话的时间轴、发送框、Run 中断、事件详情和 Ask User 展示。会话列表、选中项和切换动作仍由宿主控制。
+推荐的宿主路径是直接挂载 `ChatWorkspace`。它负责查询、刷新、分页和创建会话，维护 loading/error/selected/pending 状态，默认选择首个会话，并在创建后自动切换；慢请求不会覆盖用户更新的选择。宿主不再保存会话列表或编写创建和切换流程。
+
+```tsx
+import { ChatWorkspace } from "@turingfocus/chat-kit";
+
+export function HostChatWorkspace() {
+  return (
+    <div style={{ height: "100%", minHeight: 480 }}>
+      <ChatWorkspace
+        allowCreate
+        getDeadlineAt={() => Date.now() + 10_000}
+        pageSize={50}
+      />
+    </div>
+  );
+}
+```
+
+`ChatWorkspace` 必须位于 `ChatProvider` 或 `OwnedChatProvider` 内。宿主仍负责当前组织和 Robot、最终 HTTP/Socket endpoint、`SessionProvider`、当前用户身份、路由、权限与埋点；Robot、账号或环境变化时，通过替换上层稳定 factory 让旧 Client 和工作区一起释放。
+
+如果 Gateway 不支持创建会话，不传 `allowCreate`。需要定制列表顺序时传入 `orderConversations`；默认严格保留 Gateway 顺序，避免分页后按页重排。
+
+### 6.1 使用无样式托管绑定
+
+宿主需要自己的视觉但不想重复实现会话状态机时，使用 `useConversationWorkspace`。该 hook 返回不可变 `snapshot` 以及 `refresh`、`loadMore`、`createConversation` 和 `selectConversation`；它在 effect 中创建 controller，在 Client 更换、StrictMode 回放或卸载时停止旧异步工作，但不会释放宿主持有的 Client。
+
+### 6.2 高级受控组合
+
+只有产品交互确实不同的宿主才需要直接组合 `ChatUiShell` 与 `ChatConversationView`。这两个低层组件保持受控，以下示例展示如何自行管理列表和选择：
 
 ```tsx
 // HostChatWorkspace.tsx
@@ -345,9 +373,9 @@ export function HostChatWorkspace() {
 }
 ```
 
-生产代码通常还需要补充会话分页、创建会话按钮和业务埋点。`ChatClient` 对命令统一返回 `GatewayResult<T>`：先检查 `result.ok`，失败时读取结构化的 `result.error.code`、`message` 和 `retryable`，不要只依赖 Promise rejection。
+选择这种高级受控组合时，宿主通常还需要自行补充会话分页、创建会话按钮和业务埋点。`ChatClient` 对命令统一返回 `GatewayResult<T>`：先检查 `result.ok`，失败时读取结构化的 `result.error.code`、`message` 和 `retryable`，不要只依赖 Promise rejection。
 
-### 6.1 记忆事件详情双栏比例
+### 6.3 记忆事件详情双栏比例
 
 双栏模式的分隔条支持鼠标、触控和键盘调整。Chat Kit 只提供比例状态与回调，不会自行访问宿主存储：
 

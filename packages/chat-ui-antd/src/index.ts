@@ -25,6 +25,7 @@ export {
   type ChatUiCommand,
   type ChatUiCommandFailure,
 } from "./chat-conversation-view.js";
+export { ChatWorkspace, type ChatWorkspaceProps } from "./chat-workspace.js";
 export {
   ChatConversationList,
   type ChatConversationListProps,

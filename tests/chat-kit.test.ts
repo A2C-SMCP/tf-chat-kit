@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createConversationWorkspaceController,
   createTFRobotChatClient,
   type SessionProvider,
   type TFRobotSession,
 } from "../packages/chat-kit/src/headless.js";
-import { createTFRobotChatClientFactory } from "../packages/chat-kit/src/react.js";
+import {
+  createTFRobotChatClientFactory,
+  useConversationWorkspace,
+} from "../packages/chat-kit/src/react.js";
+import { ChatWorkspace } from "../packages/chat-kit/src/antd.js";
 
 const createOptions = () => {
   let identityReads = 0;
@@ -35,6 +40,12 @@ const createOptions = () => {
 };
 
 describe("@turingfocus/chat-kit facade", () => {
+  it("exports the managed workspace API from the matching layered entries", () => {
+    expect(createConversationWorkspaceController).toBeTypeOf("function");
+    expect(useConversationWorkspace).toBeTypeOf("function");
+    expect(ChatWorkspace).toBeTypeOf("function");
+  });
+
   it("creates an instance-owned client without eagerly reading host identity or session material", async () => {
     const fixture = createOptions();
     const client = createTFRobotChatClient(fixture.options);

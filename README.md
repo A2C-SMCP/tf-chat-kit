@@ -4,7 +4,7 @@ TFRobot 聊天能力的可复用模块。项目采用 Headless Runtime、宿主�
 
 ## 当前状态
 
-项目处于 V1 纵向切片建设阶段。七包 workspace、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-kit` 通过 `headless`、`react`、`antd` 分层入口为不同宿主提供一个生产门面和实例安全的组合工厂，其余叶子包继续提供可裁剪的 Protocol、Runtime、Gateway、React、UI 与 Testing 能力。真实 Gateway 与真实宿主 E2E 作为可选兼容观察记录；TFRobot `/remote-tool` 的多 Provider 与会话路由完成前，实时 Ask User 回答能力保持关闭。
+项目处于 V1 纵向切片建设阶段。七包 workspace、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-kit` 通过 `headless`、`react`、`antd` 分层入口为不同宿主提供一个生产门面和实例安全的组合工厂。叶子包继续提供可裁剪的 Protocol、Runtime、Gateway、React、UI 与 Testing 能力，其中 Runtime、React 和 Ant Design UI 分别提供实例隔离的会话工作区编排、无样式订阅绑定和可直接挂载的成品工作区。真实 Gateway 与真实宿主 E2E 作为可选兼容观察记录；TFRobot `/remote-tool` 的多 Provider 与会话路由完成前，实时 Ask User 回答能力保持关闭。
 
 ## V1 承诺
 
@@ -106,8 +106,9 @@ React 宿主通过 `ChatProvider` 注入自行持有的 `ChatClient`；该 Provi
 并提供释放失败处理。`useChatSelector` 用于订阅所需切片，避免无关快照更新触发组件渲染；
 `useChatSnapshot` 仅适用于确实需要完整快照的消费者。
 
-Ant Design 宿主可以在自己的页面布局中组合 `ChatUiShell` 与 `ChatConversationView`。会话列表、
-当前选择和切换回调均由宿主控制；当前会话视图只通过 `ChatProvider` 的 hooks 和 `ChatClient`
+Ant Design 宿主默认使用 `ChatWorkspace`，由它管理会话列表、分页、创建、当前选择、切换竞态与
+错误重试；宿主只需注入当前 Robot 对应的 `ChatClient`。需要完全自定义页面工作流时，仍可组合
+受控的 `ChatUiShell` 与 `ChatConversationView`。当前会话视图只通过 `ChatProvider` 的 hooks 和 `ChatClient`
 执行历史/实时展示、文本发送、Run 中断与受控 Ask User 回答，不读取 Gateway、SessionProvider、路由或全局 Store。
 Ask User 的“聊聊这个”按具体问题通过显式宿主回调交还给页面草稿流程，不冒充 Gateway answer action。
 时间轴默认虚拟化，离开底部后不会抢滚动，并通过提示返回最新消息。渲染器注册表支持宿主覆盖，

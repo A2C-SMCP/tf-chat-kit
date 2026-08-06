@@ -53,6 +53,14 @@ export interface ChatUiLabels {
   readonly composerLabel: string;
   readonly composerPlaceholder: string;
   readonly conversationListLabel: string;
+  /** Optional for backward compatibility with complete host label objects. */
+  readonly createConversation?: ReactNode | undefined;
+  /** Optional for backward compatibility with complete host label objects. */
+  readonly createConversationConfirm?: ReactNode | undefined;
+  /** Optional for backward compatibility with complete host label objects. */
+  readonly createConversationTitleLabel?: string | undefined;
+  /** Optional for backward compatibility with complete host label objects. */
+  readonly createConversationTitlePlaceholder?: string | undefined;
   readonly disconnectedDescription: ReactNode;
   readonly disconnectedTitle: ReactNode;
   readonly emptyDescription: ReactNode;
@@ -75,6 +83,8 @@ export interface ChatUiLabels {
   readonly interruptUnavailable: ReactNode;
   readonly interrupting: ReactNode;
   readonly jumpToLatest: ReactNode;
+  /** Optional for backward compatibility with complete host label objects. */
+  readonly loadMoreConversations?: ReactNode | undefined;
   readonly newMessages: ReactNode;
   readonly noConversations: ReactNode;
   readonly openEventDetail: string;

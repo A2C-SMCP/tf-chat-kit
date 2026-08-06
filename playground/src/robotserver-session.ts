@@ -1,9 +1,11 @@
-import type {
-  ChatError,
-  ChatSnapshot,
-  Conversation,
-} from "@turingfocus/chat-protocol";
-import { createChatClient, type ChatClient } from "@turingfocus/chat-runtime";
+import type { ChatError, ChatSnapshot } from "@turingfocus/chat-protocol";
+import {
+  createChatClient,
+  createConversationWorkspaceController,
+  type ChatClient,
+  type ConversationWorkspaceController,
+  type ConversationWorkspaceSnapshot,
+} from "@turingfocus/chat-runtime";
 import {
   createTFRobotChatGateway,
   type TFRobotSession,
@@ -267,13 +269,6 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
   #disposed = false;
   #intentRevision = 0;
   #lastClientSnapshot: ChatSnapshot | null = null;
-  #latestListRequest:
-    | {
-        readonly promise: Promise<readonly Conversation[] | undefined>;
-        readonly revision: number;
-      }
-    | undefined;
-  #listRevision = 0;
   readonly #listeners = new Set<() => void>();
   readonly #now: () => number;
   #state: PlaygroundState = {
@@ -284,6 +279,8 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
     status: "正在连接 RobotServer…",
   };
   readonly #unsubscribeClient: () => void;
+  readonly #unsubscribeWorkspace: () => void;
+  readonly #workspace: ConversationWorkspaceController;
 
   constructor(
     config: RobotServerConnectionConfig,
@@ -307,6 +304,15 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
       socketPath: config.socketPath,
     });
     this.client = createChatClient({ gateway });
+    this.#workspace = createConversationWorkspaceController({
+      client: this.client,
+      getDeadlineAt: () => this.#now() + REQUEST_TIMEOUT_MS,
+      orderConversations: orderConversationsByUpdatedAt,
+    });
+    const workspaceSubscription = this.#workspace.subscribe((snapshot) => {
+      this.#syncWorkspace(snapshot);
+    });
+    this.#unsubscribeWorkspace = () => workspaceSubscription.dispose();
     const subscription = this.client.subscribe(() => {
       const snapshot = this.client.getSnapshot();
       const previous = this.#lastClientSnapshot;
@@ -348,95 +354,52 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
 
   async start(): Promise<void> {
     const revision = this.#beginIntent();
-    await this.#refreshAndSelect(revision);
+    await this.#workspace.start();
+    if (!this.#isCurrentIntent(revision)) return;
+    const workspaceSnapshot = this.#workspace.getSnapshot();
+    const error =
+      workspaceSnapshot.selectionError ?? workspaceSnapshot.listError;
+    if (error !== undefined) {
+      this.#handleError(error);
+      return;
+    }
+    const selected = this.client.getSnapshot()?.conversation.title;
+    this.#setState({
+      status:
+        selected === undefined
+          ? `连接成功，已加载 ${this.#state.conversations.length} 个会话。`
+          : `正在查看「${selected}」。`,
+    });
   }
 
   async refresh(): Promise<void> {
-    await this.#refreshAndSelect(this.#beginIntent());
+    const revision = this.#beginIntent();
+    this.#setState({ status: "正在查询 RobotServer 会话…" });
+    const result = await this.#workspace.refresh();
+    if (!this.#isCurrentIntent(revision)) return;
+    if (!result.ok) {
+      this.#handleError(result.error);
+      return;
+    }
+    const selectionError = this.#workspace.getSnapshot().selectionError;
+    if (selectionError !== undefined) {
+      this.#handleError(selectionError);
+      return;
+    }
+    const selectedTitle = this.client.getSnapshot()?.conversation.title;
+    this.#setState({
+      connected: true,
+      status:
+        selectedTitle === undefined
+          ? `连接成功，已加载 ${result.value.conversations.length} 个会话。`
+          : `正在查看「${selectedTitle}」。`,
+    });
   }
 
   async loadConversations(): Promise<void> {
-    await this.#beginListRequest().promise;
-  }
-
-  async #refreshAndSelect(
-    revision: number,
-    preferredConversationId?: string,
-  ): Promise<void> {
-    if (!this.#isCurrentIntent(revision)) return;
-    this.#setState({
-      contentState:
-        this.client.getSnapshot() === null
-          ? { kind: "loading" }
-          : this.#state.contentState,
-      pendingConversationId: undefined,
-    });
-    let listRequest = this.#beginListRequest();
-    let conversations = await listRequest.promise;
-    while (true) {
-      const latestListRequest = this.#latestListRequest;
-      if (
-        latestListRequest === undefined ||
-        latestListRequest.revision <= listRequest.revision
-      ) {
-        break;
-      }
-      listRequest = latestListRequest;
-      conversations = await listRequest.promise;
-    }
-    if (!this.#isCurrentIntent(revision)) return;
-    const selected = this.#state.selectedConversationId;
-    const target =
-      conversations?.find(({ id }) => id === preferredConversationId) ??
-      conversations?.find(({ id }) => id === selected) ??
-      conversations?.[0];
-    if (target !== undefined) {
-      await this.#selectConversation(target.id, revision);
-    }
-  }
-
-  async #refresh(
-    revision: number,
-  ): Promise<readonly Conversation[] | undefined> {
-    if (!this.#isCurrentListRequest(revision)) return undefined;
-    this.#setState({
-      listError: undefined,
-      listLoading: true,
-      status: "正在查询 RobotServer 会话…",
-    });
-    const result = await this.client.listConversations(this.#requestOptions());
-    if (this.#disposed) return undefined;
-    if (!result.ok) {
-      if (this.#isCurrentListRequest(revision)) {
-        const errorPatch =
-          this.client.getSnapshot() === null
-            ? stateForError(result.error, this.#state.connected)
-            : {
-                connected: this.#state.connected,
-                contentState: this.#state.contentState,
-                status: "RobotServer 会话列表加载失败。",
-              };
-        this.#setState({
-          ...errorPatch,
-          listError: safeErrorDescription(result.error),
-          listLoading: false,
-        });
-      }
-      return undefined;
-    }
-    const conversations = orderConversationsByUpdatedAt(
-      result.value.conversations,
-    );
-    if (this.#isCurrentListRequest(revision)) {
-      this.#setState({
-        connected: true,
-        conversations,
-        listError: undefined,
-        listLoading: false,
-        status: `连接成功，已加载 ${conversations.length} 个会话。`,
-      });
-    }
-    return conversations;
+    const result = await this.#workspace.refresh();
+    if (this.#disposed || result.ok) return;
+    this.#setState({ status: "RobotServer 会话列表加载失败。" });
   }
 
   async createConversation(): Promise<boolean> {
@@ -444,50 +407,28 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
     if (!this.#isCurrentIntent(revision)) return false;
     const title = robotServerTestConversationTitle(this.#now());
     this.#setState({ status: "正在创建保留的 Playground 测试会话…" });
-    const result = await this.client.createConversation({
-      title,
-      ...this.#requestOptions(),
-    });
+    const result = await this.#workspace.createConversation({ title });
     if (!this.#isCurrentIntent(revision)) return false;
     if (!result.ok) {
       this.#handleError(result.error);
       return false;
     }
-    await this.#refreshAndSelect(revision, result.value.id);
+    this.#setState({ status: `正在查看「${result.value.title}」。` });
     return true;
   }
 
   async selectConversation(conversationId: string): Promise<void> {
-    await this.#selectConversation(conversationId, this.#beginIntent());
-  }
-
-  async #selectConversation(
-    conversationId: string,
-    revision: number,
-  ): Promise<void> {
+    const revision = this.#beginIntent();
     if (!this.#isCurrentIntent(revision)) return;
-    this.#setState({
-      contentState: { kind: "loading" },
-      pendingConversationId: conversationId,
-      status: "正在加载 RobotServer 会话并建立 Socket 订阅…",
-    });
-    const result = await this.client.loadConversation({
-      conversationId,
-      ...this.#requestOptions(),
-    });
+    this.#setState({ status: "正在加载 RobotServer 会话并建立 Socket 订阅…" });
+    const result = await this.#workspace.selectConversation(conversationId);
     if (!this.#isCurrentIntent(revision)) return;
     if (!result.ok) {
-      this.#setState({
-        ...stateForError(result.error, this.#state.connected),
-        pendingConversationId: undefined,
-      });
+      this.#handleError(result.error);
       return;
     }
     this.#setState({
       connected: true,
-      contentState: { kind: "ready" },
-      pendingConversationId: undefined,
-      selectedConversationId: conversationId,
       status: `正在查看「${result.value.conversation.title}」。`,
     });
   }
@@ -538,14 +479,23 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
   async reconnect(): Promise<void> {
     const revision = this.#beginIntent();
     if (!this.#isCurrentIntent(revision)) return;
-    await this.#refreshAndSelect(revision, this.#state.selectedConversationId);
+    const selected = this.#state.selectedConversationId;
+    this.#setState({ status: "正在重连 RobotServer REST 与 Socket…" });
+    if (selected === undefined) await this.#workspace.start();
+    else await this.#workspace.selectConversation(selected);
+    if (!this.#isCurrentIntent(revision)) return;
+    const error = this.#workspace.getSnapshot().selectionError;
+    if (error !== undefined) this.#handleError(error);
+    else
+      this.#setState({ connected: true, status: "RobotServer 已重新连接。" });
   }
 
   async dispose(): Promise<void> {
     if (this.#disposed) return;
     this.#disposed = true;
     this.#intentRevision += 1;
-    this.#listRevision += 1;
+    this.#unsubscribeWorkspace();
+    this.#workspace.dispose();
     this.#unsubscribeClient();
     this.#listeners.clear();
     await this.client.dispose({ deadlineAt: this.#now() + REQUEST_TIMEOUT_MS });
@@ -563,30 +513,62 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
     });
   }
 
+  #syncWorkspace(snapshot: ConversationWorkspaceSnapshot): void {
+    if (this.#disposed) return;
+    let contentState = this.#state.contentState;
+    let connected = this.#state.connected;
+    switch (snapshot.selectionStatus) {
+      case "ready":
+        connected = true;
+        contentState = { kind: "ready" };
+        break;
+      case "loading":
+        contentState = { kind: "loading" };
+        break;
+      case "empty":
+        contentState = { kind: "empty" };
+        break;
+      case "error":
+        if (snapshot.selectionError !== undefined) {
+          const errorState = stateForError(snapshot.selectionError, connected);
+          connected = errorState.connected;
+          contentState = errorState.contentState;
+        }
+        break;
+      case "idle":
+        break;
+    }
+    if (
+      snapshot.listError !== undefined &&
+      this.client.getSnapshot() === null
+    ) {
+      const errorState = stateForError(snapshot.listError, connected);
+      connected = errorState.connected;
+      contentState = errorState.contentState;
+    }
+    this.#setState({
+      connected,
+      contentState,
+      conversations: snapshot.conversations,
+      listError:
+        snapshot.listError === undefined
+          ? undefined
+          : safeErrorDescription(snapshot.listError),
+      listLoading:
+        snapshot.listStatus === "loading" ||
+        snapshot.listStatus === "loading-more",
+      pendingConversationId: snapshot.pendingConversationId,
+      selectedConversationId: snapshot.selectedConversationId,
+    });
+  }
+
   #beginIntent(): number {
     this.#intentRevision += 1;
     return this.#intentRevision;
   }
 
-  #beginListRequest(): {
-    readonly promise: Promise<readonly Conversation[] | undefined>;
-    readonly revision: number;
-  } {
-    this.#listRevision += 1;
-    const request = {
-      promise: this.#refresh(this.#listRevision),
-      revision: this.#listRevision,
-    };
-    this.#latestListRequest = request;
-    return request;
-  }
-
   #isCurrentIntent(revision: number): boolean {
     return !this.#disposed && revision === this.#intentRevision;
-  }
-
-  #isCurrentListRequest(revision: number): boolean {
-    return !this.#disposed && revision === this.#listRevision;
   }
 
   #requestOptions(): { readonly deadlineAt: number } {

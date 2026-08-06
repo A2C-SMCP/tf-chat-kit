@@ -12,24 +12,21 @@ import { ConfigProvider } from "antd";
 
 import {
   OwnedChatProvider,
+  ChatRunStatus,
+  ChatWorkspace,
+  createChatClient,
   useChatClient,
   useChatSnapshot,
+  type ChatClient,
   type ChatClientFactory,
-} from "@turingfocus/chat-react";
-import { createChatClient, type ChatClient } from "@turingfocus/chat-runtime";
+  type ChatEventDetailMode,
+} from "@turingfocus/chat-kit";
 import {
   createChatContractFixtures,
   createMemoryChatGateway,
   type ChatContractFixtures,
   type MemoryGatewayHarness,
 } from "@turingfocus/chat-testing";
-import {
-  ChatConversationView,
-  ChatRunStatus,
-  ChatUiShell,
-  type ChatContentState,
-  type ChatEventDetailMode,
-} from "@turingfocus/chat-ui-antd";
 
 const check = (condition: unknown, message: string): void => {
   if (!condition) throw new Error(message);
@@ -131,8 +128,6 @@ const TauriRuntimeView = ({
   const snapshot = useChatSnapshot();
   const platform = useTauriPlatform();
   const conversationId = snapshot?.conversation.id ?? "empty";
-  const contentState: ChatContentState =
-    snapshot === null ? { kind: "loading" } : { kind: "ready" };
   fixture.renderedConversationIds.push(conversationId);
 
   const platformActions = createElement(
@@ -179,32 +174,16 @@ const TauriRuntimeView = ({
       "data-conversation-id": conversationId,
       "data-window-label": platform.windowLabel,
     },
-    createElement(
-      ChatUiShell,
-      {
-        contentState,
-        conversations:
-          snapshot === null
-            ? []
-            : [
-                {
-                  id: snapshot.conversation.id,
-                  title: snapshot.conversation.title,
-                  updatedAt: snapshot.conversation.updatedAt,
-                },
-              ],
-        header: platformActions,
-        onConversationSelect: () => undefined,
-        selectedConversationId: snapshot?.conversation.id,
+    createElement(ChatWorkspace, {
+      conversationViewProps: {
+        defaultEventDetailMode: eventDetailMode,
+        defaultEventDetailSplitRatio: 0.6,
       },
-      createElement(
+      getDeadlineAt: deadlineAt,
+      header: createElement(
         "section",
         null,
-        createElement(ChatConversationView, {
-          defaultEventDetailMode: eventDetailMode,
-          defaultEventDetailSplitRatio: 0.6,
-          getDeadlineAt: deadlineAt,
-        }),
+        platformActions,
         createElement(ChatRunStatus, {
           canInterrupt: snapshot?.capabilities.interrupt ?? false,
           labels: {
@@ -253,7 +232,11 @@ const TauriRuntimeView = ({
           "Send from Tauri host",
         ),
       ),
-    ),
+      labels: {
+        interrupt: "Stop managed chat run",
+        interrupting: "Stopping managed chat run",
+      },
+    }),
   );
 };
 
@@ -408,16 +391,14 @@ export const runTauriConsumerVerification = async (): Promise<void> => {
       "Tauri StrictMode must fully dispose its rehearsal client before using the active client",
     );
 
-    let loaded = false;
     await act(async () => {
-      const result = await instance!.client.loadConversation({
-        conversationId: fixture.fixtures.conversation.id,
-        deadlineAt: deadlineAt(),
-      });
-      loaded = result.ok;
       await flushMicrotasks();
     });
-    check(loaded, "the Tauri client must load");
+    check(
+      instance.client.getSnapshot()?.conversation.id ===
+        fixture.fixtures.conversation.id,
+      "the managed Tauri workspace must load and select its first conversation",
+    );
     check(
       fixture.renderedConversationIds.includes(
         fixture.fixtures.conversation.id,

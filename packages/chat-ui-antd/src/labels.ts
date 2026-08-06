@@ -15,6 +15,10 @@ export const defaultChatUiLabels: ChatUiLabels = Object.freeze({
   composerLabel: "Message",
   composerPlaceholder: "Write a message",
   conversationListLabel: "Conversations",
+  createConversation: "New conversation",
+  createConversationConfirm: "Create",
+  createConversationTitleLabel: "Conversation title",
+  createConversationTitlePlaceholder: "Enter a conversation title",
   disconnectedDescription:
     "Live updates are unavailable. Check the connection and try again.",
   disconnectedTitle: "Disconnected",
@@ -35,6 +39,7 @@ export const defaultChatUiLabels: ChatUiLabels = Object.freeze({
   interruptUnavailable: "Stop unavailable",
   interrupting: "Stopping",
   jumpToLatest: "Jump to latest",
+  loadMoreConversations: "Load more conversations",
   loadingDescription: "The conversation is being prepared.",
   loadingTitle: "Loading conversation",
   newMessages: "new messages",

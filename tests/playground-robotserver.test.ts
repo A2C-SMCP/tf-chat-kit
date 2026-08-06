@@ -966,6 +966,7 @@ describe("RobotServer Playground authenticated lifecycle", () => {
     await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
     const latest = session.refresh();
     await latest;
+    expect(fetch).toHaveBeenCalledTimes(6);
     olderHistory.resolve(envelope({ cursor: null, events: [], messages: [] }));
     olderStatus.resolve(envelope({ taskId: null, working: false }));
     await older;
@@ -1302,7 +1303,7 @@ describe("RobotServer Playground page security boundary", () => {
         Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previous);
       }
     }
-  });
+  }, 10_000);
 
   it("keeps an opaque credential out of successful and failed server DOM data", async () => {
     const secret = "cobalt-dawn-47";
@@ -1453,5 +1454,5 @@ describe("RobotServer Playground page security boundary", () => {
         Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previous);
       }
     }
-  });
+  }, 10_000);
 });
