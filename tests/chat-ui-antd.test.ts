@@ -6,12 +6,17 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  ChatWorkspace,
   ChatConversationList,
   ChatStateView,
   ChatUiShell,
   defaultChatUiLabels,
   type ChatContentState,
 } from "../packages/chat-ui-antd/src/index.js";
+import { ChatProvider } from "../packages/chat-react/src/index.js";
+import { createChatClient } from "../packages/chat-runtime/src/index.js";
+import { createMemoryChatGateway } from "../packages/chat-testing/src/index.js";
+import { deadlineAt, flushMicrotasks } from "./support/chat-react.js";
 import { createConversationItems } from "./support/chat-ui-antd.js";
 
 const findButtonByText = (
@@ -62,6 +67,73 @@ const renderInDom = async (node: ReactNode): Promise<DomRender> => {
 };
 
 describe("@turingfocus/chat-ui-antd shell", () => {
+  it("manages conversation listing, creation and selection without host state", async () => {
+    const memory = createMemoryChatGateway();
+    const client = createChatClient({ gateway: memory.gateway });
+    const rendered = await renderInDom(
+      createElement(
+        ChatProvider,
+        { client },
+        createElement(ChatWorkspace, {
+          allowCreate: true,
+          getDeadlineAt: deadlineAt,
+        }),
+      ),
+    );
+
+    try {
+      await act(async () => {
+        await flushMicrotasks();
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      });
+      expect(rendered.container.textContent).toContain("Contract conversation");
+      expect(
+        rendered.container.querySelector('[aria-current="true"]')?.textContent,
+      ).toContain("Contract conversation");
+
+      await act(async () => {
+        findButtonByText(rendered.container, "New conversation").click();
+        await Promise.resolve();
+      });
+      const input = document.body.querySelector<HTMLInputElement>(
+        'input[aria-label="Conversation title"]',
+      );
+      if (input === null) throw new Error("Creation title input not found");
+      await act(async () => {
+        const valueSetter = Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          "value",
+        )?.set;
+        valueSetter?.call(input, "Created without host orchestration");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        await flushMicrotasks();
+      });
+      const dialog =
+        document.body.querySelector<HTMLElement>('[role="dialog"]');
+      if (dialog === null) throw new Error("Creation dialog not found");
+      await act(async () => {
+        findButtonByText(dialog, "Create").click();
+        await flushMicrotasks();
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      });
+
+      expect(rendered.container.textContent).toContain(
+        "Created without host orchestration",
+      );
+      expect(
+        rendered.container.querySelector('[aria-current="true"]')?.textContent,
+      ).toContain("Created without host orchestration");
+      expect(
+        memory.controller.calls.filter(
+          ({ operation }) => operation === "createConversation",
+        ),
+      ).toHaveLength(1);
+    } finally {
+      await rendered.unmount();
+      await client.dispose({ deadlineAt: deadlineAt() });
+    }
+  });
+
   it("keeps conversation selection controlled and renders ready content", async () => {
     const onConversationSelect = vi.fn();
     const items = createConversationItems(3);

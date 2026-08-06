@@ -13,3 +13,8 @@ export {
   type ChatSelector,
   type ChatSelectorEquality,
 } from "./hooks.js";
+export {
+  useConversationWorkspace,
+  type ConversationWorkspaceBinding,
+  type UseConversationWorkspaceOptions,
+} from "./conversation-workspace.js";

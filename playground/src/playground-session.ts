@@ -6,7 +6,14 @@ import type {
   Message,
   SendTextInput,
 } from "@turingfocus/chat-protocol";
-import { createChatClient, type ChatClient } from "@turingfocus/chat-runtime";
+import {
+  createChatClient,
+  createConversationWorkspaceController,
+  orderConversationsByUpdatedAt,
+  type ChatClient,
+  type ConversationWorkspaceController,
+  type ConversationWorkspaceSnapshot,
+} from "@turingfocus/chat-runtime";
 import {
   createMemoryChatGateway,
   type MemoryGatewayController,
@@ -15,22 +22,7 @@ import type { ChatContentState } from "@turingfocus/chat-ui-antd";
 
 const requestOptions = () => ({ deadlineAt: Date.now() + 5_000 });
 
-export const orderConversationsByUpdatedAt = (
-  conversations: readonly Conversation[],
-): readonly Conversation[] =>
-  conversations
-    .map((conversation, index) => ({ conversation, index }))
-    .sort((left, right) => {
-      const leftUpdatedAt = left.conversation.updatedAt;
-      const rightUpdatedAt = right.conversation.updatedAt;
-      if (leftUpdatedAt === undefined && rightUpdatedAt === undefined) {
-        return left.index - right.index;
-      }
-      if (leftUpdatedAt === undefined) return 1;
-      if (rightUpdatedAt === undefined) return -1;
-      return rightUpdatedAt - leftUpdatedAt || left.index - right.index;
-    })
-    .map(({ conversation }) => conversation);
+export { orderConversationsByUpdatedAt } from "@turingfocus/chat-runtime";
 
 export interface PlaygroundState {
   readonly connected: boolean;
@@ -93,6 +85,8 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
   #state: PlaygroundState = initialState;
   readonly #timers = new Set<Timer>();
   readonly #unsubscribeClient: () => void;
+  readonly #unsubscribeWorkspace: () => void;
+  readonly #workspace: ConversationWorkspaceController;
 
   constructor() {
     const memory = createMemoryChatGateway();
@@ -149,6 +143,15 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
     });
     const gateway = this.#withScenarioEvents(memory.gateway);
     this.client = createChatClient({ gateway });
+    this.#workspace = createConversationWorkspaceController({
+      client: this.client,
+      getDeadlineAt: () => requestOptions().deadlineAt,
+      orderConversations: orderConversationsByUpdatedAt,
+    });
+    const workspaceSubscription = this.#workspace.subscribe((snapshot) => {
+      this.#syncWorkspace(snapshot);
+    });
+    this.#unsubscribeWorkspace = () => workspaceSubscription.dispose();
     const subscription = this.client.subscribe(() => this.#emit());
     this.#unsubscribeClient = () => subscription.dispose();
   }
@@ -165,27 +168,27 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
   };
 
   async start(): Promise<void> {
-    await this.refresh();
-    const first = this.#state.conversations[0];
-    if (first !== undefined) await this.selectConversation(first.id);
+    await this.#workspace.start();
+    if (this.#disposed) return;
+    const selected = this.client.getSnapshot()?.conversation.title;
+    this.#setState({
+      status:
+        selected === undefined
+          ? `已加载 ${this.#state.conversations.length} 个会话。`
+          : `正在查看「${selected}」。`,
+    });
   }
 
   async refresh(): Promise<void> {
     if (this.#disposed) return;
-    this.#setState({ listLoading: true, listError: undefined });
-    const result = await this.client.listConversations(requestOptions());
+    this.#setState({ status: "正在刷新会话列表…" });
+    const result = await this.#workspace.refresh();
     if (this.#disposed) return;
     if (!result.ok) {
-      this.#setState({
-        listError: result.error.message,
-        listLoading: false,
-        status: "会话列表加载失败。",
-      });
+      this.#setState({ status: "会话列表加载失败。" });
       return;
     }
     this.#setState({
-      conversations: orderConversationsByUpdatedAt(result.value.conversations),
-      listLoading: false,
       status: `已加载 ${result.value.conversations.length} 个会话。`,
     });
   }
@@ -196,47 +199,27 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
 
   async createConversation(title: string): Promise<boolean> {
     if (this.#disposed) return false;
-    const result = await this.client.createConversation({
-      title,
-      ...requestOptions(),
-    });
+    this.#setState({ status: "正在创建会话…" });
+    const result = await this.#workspace.createConversation({ title });
     if (!result.ok) {
       this.#setState({ status: result.error.message });
       return false;
     }
-    await this.refresh();
-    await this.selectConversation(result.value.id);
+    this.#setState({ status: `正在查看「${result.value.title}」。` });
     return true;
   }
 
   async selectConversation(conversationId: string): Promise<void> {
     if (this.#disposed) return;
     this.#clearTimers();
-    this.#setState({
-      contentState: { kind: "loading" },
-      pendingConversationId: conversationId,
-      status: "正在切换会话…",
-    });
-    const result = await this.client.loadConversation({
-      conversationId,
-      ...requestOptions(),
-    });
+    this.#setState({ status: "正在切换会话…" });
+    const result = await this.#workspace.selectConversation(conversationId);
     if (this.#disposed) return;
     if (!result.ok) {
-      this.#setState({
-        contentState: {
-          kind: result.error.code === "network" ? "disconnected" : "error",
-          description: result.error.message,
-        },
-        pendingConversationId: undefined,
-        status: "会话加载失败。",
-      });
+      this.#setState({ status: "会话加载失败。" });
       return;
     }
     this.#setState({
-      contentState: { kind: "ready" },
-      pendingConversationId: undefined,
-      selectedConversationId: conversationId,
       status: `正在查看「${result.value.conversation.title}」。`,
     });
   }
@@ -356,6 +339,8 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
     if (this.#disposed) return;
     this.#disposed = true;
     this.#clearTimers();
+    this.#unsubscribeWorkspace();
+    this.#workspace.dispose();
     this.#unsubscribeClient();
     this.#listeners.clear();
     await this.client.dispose({ deadlineAt: Date.now() + 5_000 });
@@ -386,6 +371,43 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
         return result;
       },
     };
+  }
+
+  #syncWorkspace(snapshot: ConversationWorkspaceSnapshot): void {
+    if (this.#disposed) return;
+    let contentState = this.#state.contentState;
+    switch (snapshot.selectionStatus) {
+      case "ready":
+        contentState = { kind: "ready" };
+        break;
+      case "loading":
+        contentState = { kind: "loading" };
+        break;
+      case "empty":
+        contentState = { kind: "empty" };
+        break;
+      case "error":
+        contentState = {
+          kind:
+            snapshot.selectionError?.code === "network"
+              ? "disconnected"
+              : "error",
+          description: snapshot.selectionError?.message,
+        };
+        break;
+      case "idle":
+        break;
+    }
+    this.#setState({
+      contentState,
+      conversations: snapshot.conversations,
+      listError: snapshot.listError?.message,
+      listLoading:
+        snapshot.listStatus === "loading" ||
+        snapshot.listStatus === "loading-more",
+      pendingConversationId: snapshot.pendingConversationId,
+      selectedConversationId: snapshot.selectedConversationId,
+    });
   }
 
   #handleSend(input: SendTextInput, runId: string): void {

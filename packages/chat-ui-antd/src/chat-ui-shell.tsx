@@ -28,6 +28,7 @@ export interface ChatUiShellProps {
   readonly onConversationSelect: (conversationId: string) => void;
   readonly pendingConversationId?: string | undefined;
   readonly selectedConversationId?: string | undefined;
+  readonly sidebarFooter?: ReactNode | undefined;
   readonly sidebarTitle?: ReactNode;
   readonly sidebarWidth?: CSSProperties["width"] | undefined;
   readonly styles?: ChatUiSlotStyles | undefined;
@@ -46,6 +47,7 @@ export const ChatUiShell = ({
   onConversationSelect,
   pendingConversationId,
   selectedConversationId,
+  sidebarFooter,
   sidebarTitle,
   sidebarWidth = 280,
   styles,
@@ -105,6 +107,16 @@ export const ChatUiShell = ({
             style={styles?.conversationList}
           />
         </div>
+        {sidebarFooter === undefined ? null : (
+          <footer
+            style={{
+              borderBlockStart: `${token.lineWidth}px ${token.lineType} ${token.colorBorderSecondary}`,
+              padding: token.paddingSM,
+            }}
+          >
+            {sidebarFooter}
+          </footer>
+        )}
       </aside>
       <main
         style={{
