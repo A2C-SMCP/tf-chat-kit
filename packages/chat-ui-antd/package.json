@@ -1,6 +1,6 @@
 {
   "name": "@turingfocus/chat-ui-antd",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Composable Ant Design chat UI and default renderers",
   "license": "MIT",
   "repository": {

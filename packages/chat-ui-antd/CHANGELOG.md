@@ -1,5 +1,14 @@
 # @turingfocus/chat-ui-antd
 
+## 0.4.2
+
+### Patch Changes
+
+- 6ad3504: Add an instance-scoped conversation workspace controller, an effect-owned React binding, and a managed Ant Design ChatWorkspace that owns conversation listing, creation, pagination, selection, retries, and async race handling while keeping Robot, endpoint, identity, and authentication policy host-owned.
+- Updated dependencies [6ad3504]
+  - @turingfocus/chat-react@0.4.2
+  - @turingfocus/chat-protocol@0.4.2
+
 ## 0.4.1
 
 ### Patch Changes
