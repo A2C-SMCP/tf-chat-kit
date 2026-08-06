@@ -120,6 +120,7 @@ export const ChatConversationList = ({
           data={items}
           increaseViewportBy={200}
           initialItemCount={Math.min(items.length, 20)}
+          key={items.length === 0 ? "empty" : "populated"}
           itemContent={(_index, item) => {
             const selected = item.id === selectedConversationId;
             const pending = item.id === pendingConversationId;

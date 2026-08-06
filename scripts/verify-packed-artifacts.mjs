@@ -474,7 +474,9 @@ try {
       sourceFiles: {
         "index.ts": [
           'import { createElement } from "react";',
-          'import { ChatProvider, useChatSelector, type ChatClient, type ChatSnapshot } from "@turingfocus/chat-kit/react";',
+          'import { ChatProvider, useConversationWorkspace, useChatSelector, type ChatClient, type ChatSnapshot } from "@turingfocus/chat-kit/react";',
+          "",
+          'if (typeof useConversationWorkspace !== "function") throw new Error("React facade workspace hook is unavailable");',
           "",
           "const ConversationTitle = () =>",
           '  createElement("span", null, useChatSelector((snapshot: ChatSnapshot | null) => snapshot?.conversation.title ?? ""));',
@@ -520,7 +522,9 @@ try {
       packageNames: ["@turingfocus/chat-kit"],
       sourceFiles: {
         "index.ts": [
-          'import { createTFRobotChatClient, type SessionProvider, type TFRobotSession } from "@turingfocus/chat-kit/headless";',
+          'import { createConversationWorkspaceController, createTFRobotChatClient, type SessionProvider, type TFRobotSession } from "@turingfocus/chat-kit/headless";',
+          "",
+          'if (typeof createConversationWorkspaceController !== "function") throw new Error("Headless facade workspace controller is unavailable");',
           "",
           "let sessionReads = 0;",
           "const sessionProvider: SessionProvider<TFRobotSession> = {",
@@ -650,11 +654,8 @@ try {
   );
 
   const tauriStylePackageNames = [
-    "@turingfocus/chat-protocol",
-    "@turingfocus/chat-react",
-    "@turingfocus/chat-runtime",
+    ...facadeProductionPackageNames,
     "@turingfocus/chat-testing",
-    "@turingfocus/chat-ui-antd",
   ];
   const tauriStylePackageFiles = Object.fromEntries(
     tauriStylePackageNames.map((name) => [name, packageFiles[name]]),
@@ -666,7 +667,8 @@ try {
     type: "module",
     packageManager: "pnpm@10.34.5",
     dependencies: {
-      ...tauriStylePackageFiles,
+      "@turingfocus/chat-kit": packageFiles["@turingfocus/chat-kit"],
+      "@turingfocus/chat-testing": packageFiles["@turingfocus/chat-testing"],
       antd: "5.23.4",
       jsdom: "29.1.1",
       react: "18.3.1",
@@ -690,17 +692,25 @@ try {
     ),
     "utf8",
   );
+  for (const forbiddenLeafImport of [
+    "@turingfocus/chat-gateway-tfrobot",
+    "@turingfocus/chat-protocol",
+    "@turingfocus/chat-react",
+    "@turingfocus/chat-runtime",
+    "@turingfocus/chat-ui-antd",
+  ]) {
+    if (tauriConsumerSource.includes(`from "${forbiddenLeafImport}"`)) {
+      throw new Error(
+        `Tauri-style default consumer must import production APIs from @turingfocus/chat-kit; found ${forbiddenLeafImport}`,
+      );
+    }
+  }
   await verifyConsumerProject(
     {
       directory: tauriStyleConsumerDirectory,
-      forbiddenPackageMarkers: [
-        "@tauri-apps+",
-        "@turingfocus+chat-gateway-tfrobot@",
-        "next@",
-        "office-js@",
-      ],
+      forbiddenPackageMarkers: ["@tauri-apps+", "next@", "office-js@"],
       manifest: tauriStyleConsumerManifest,
-      packageNames: tauriStylePackageNames,
+      packageNames: ["@turingfocus/chat-kit", "@turingfocus/chat-testing"],
       sourceFiles: {
         "consumer.ts": tauriConsumerSource,
         "index.ts": [

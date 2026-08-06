@@ -15,6 +15,7 @@ export {
   ChatTimeline,
   ChatTimelineItem,
   ChatUiShell,
+  ChatWorkspace,
   createChatRendererRegistry,
   defaultChatRendererRegistry,
   defaultChatUiLabels,
@@ -52,6 +53,7 @@ export {
   type ChatUiLabels,
   type ChatUiShellProps,
   type ChatUiSlotStyles,
+  type ChatWorkspaceProps,
   type ConversationListError,
   type ResolvedChatEventDetailMode,
 } from "@turingfocus/chat-ui-antd";

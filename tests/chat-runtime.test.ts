@@ -1405,6 +1405,134 @@ describe("ChatClient lifecycle and merge behavior", () => {
     await client.dispose({ deadlineAt: deadlineAt() });
   });
 
+  it("retires a pending conversation load without committing its snapshot", async () => {
+    const memory = createMemoryChatGateway();
+    const client = createChatClient({ gateway: memory.gateway });
+    const hold = memory.controller.holdNext("subscribe");
+    const pending = client.loadConversation({
+      conversationId: memory.fixtures.conversation.id,
+      deadlineAt: deadlineAt(),
+    });
+    await hold.started;
+
+    client.cancelPendingConversationLoad();
+    hold.release();
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(hold.resourceDisposeCount).toBe(1);
+    expect(client.getSnapshot()).toBeNull();
+
+    await client.dispose({ deadlineAt: deadlineAt() });
+    expect(() => client.cancelPendingConversationLoad()).not.toThrow();
+  });
+
+  it("releases an established subscription when a retired snapshot disables live updates", async () => {
+    const memory = createMemoryChatGateway();
+    const client = createChatClient({ gateway: memory.gateway });
+    const subscribeHold = memory.controller.holdNext("subscribe");
+    const loadHold = memory.controller.holdNext("loadConversation");
+    const pending = client.loadConversation({
+      conversationId: memory.fixtures.conversation.id,
+      deadlineAt: deadlineAt(),
+    });
+    await subscribeHold.started;
+    subscribeHold.release();
+    await loadHold.started;
+    memory.controller.setSnapshot({
+      ...memory.fixtures.initialSnapshot,
+      capabilities: {
+        ...memory.fixtures.initialSnapshot.capabilities,
+        liveUpdates: false,
+      },
+    });
+
+    client.cancelPendingConversationLoad();
+    loadHold.release();
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(subscribeHold.resourceDisposeCount).toBe(1);
+    expect(
+      memory.controller.emitUpdateToAll(memory.fixtures.realtimeMessageUpdate),
+    ).toBe(0);
+    expect(client.getSnapshot()).toBeNull();
+
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("disposes a non-live temporary subscription only once when cleanup is superseded", async () => {
+    const memory = createMemoryChatGateway();
+    memory.controller.setSnapshot({
+      ...memory.fixtures.initialSnapshot,
+      capabilities: {
+        ...memory.fixtures.initialSnapshot.capabilities,
+        liveUpdates: false,
+      },
+    });
+    let releaseCleanup: (() => void) | undefined;
+    let markCleanupStarted: (() => void) | undefined;
+    const cleanupStarted = new Promise<void>((resolve) => {
+      markCleanupStarted = resolve;
+    });
+    const cleanupReleased = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    const dispose = vi.fn(async () => {
+      markCleanupStarted!();
+      await cleanupReleased;
+    });
+    const client = createChatClient({
+      gateway: wrapGateway(memory.gateway, {
+        subscribe: async () => ({
+          ok: true,
+          value: { dispose },
+        }),
+      }),
+    });
+    const pending = client.loadConversation({
+      conversationId: memory.fixtures.conversation.id,
+      deadlineAt: deadlineAt(),
+    });
+    await cleanupStarted;
+
+    client.cancelPendingConversationLoad();
+    releaseCleanup!();
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(client.getSnapshot()).toBeNull();
+
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("returns its committed snapshot when a subscriber disposes the Client", async () => {
+    const memory = createMemoryChatGateway();
+    const client = createChatClient({ gateway: memory.gateway });
+    let disposing: Promise<void> | undefined;
+    client.subscribe(() => {
+      disposing = client.dispose({ deadlineAt: deadlineAt() });
+    });
+
+    await expect(
+      client.loadConversation({
+        conversationId: memory.fixtures.conversation.id,
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { conversation: { id: memory.fixtures.conversation.id } },
+    });
+    expect(disposing).toBeDefined();
+    await disposing;
+    expect(client.disposed).toBe(true);
+    expect(client.getSnapshot()).toBeNull();
+  });
+
   it("returns conflict when a subscription-establishing load is superseded", async () => {
     const memory = createMemoryChatGateway();
     const client = createChatClient({ gateway: memory.gateway });

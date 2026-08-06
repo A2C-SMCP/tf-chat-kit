@@ -43,12 +43,21 @@ export type {
 
 export {
   ChatClient,
+  ConversationWorkspaceController,
   createChatClient,
+  createConversationWorkspaceController,
+  orderConversationsByUpdatedAt,
   type ChatClientOptions,
   type ChatClientSubscription,
   type ChatClientUnhandledError,
   type ChatClientUnhandledErrorSource,
   type ChatSnapshotListener,
+  type ConversationWorkspaceControllerOptions,
+  type ConversationWorkspaceListStatus,
+  type ConversationWorkspaceSelectionStatus,
+  type ConversationWorkspaceSnapshot,
+  type ConversationWorkspaceSubscription,
+  type CreateWorkspaceConversationInput,
 } from "@turingfocus/chat-runtime";
 
 export {

@@ -156,6 +156,7 @@ export class ChatClient {
   readonly #supersededInteractionAnswers = new Set<string>();
   #historyRequestId = 0;
   #loadRequestId = 0;
+  #pendingLoadRequestId: number | undefined;
   #pendingHandoff: PendingHandoff | undefined;
 
   constructor(options: ChatClientOptions) {
@@ -178,6 +179,18 @@ export class ChatClient {
 
   subscribe(listener: ChatSnapshotListener): ChatClientSubscription {
     return this.#snapshotStore.subscribe(listener);
+  }
+
+  /**
+   * Retires the current top-level conversation load without changing an
+   * already committed snapshot. Once a snapshot commits, this is a no-op and
+   * that load completes successfully while transport cleanup settles.
+   */
+  cancelPendingConversationLoad(): void {
+    if (this.#disposed || this.#pendingLoadRequestId === undefined) return;
+    this.#loadRequestId += 1;
+    this.#pendingLoadRequestId = undefined;
+    this.#pendingHandoff = undefined;
   }
 
   async listConversations(
@@ -249,6 +262,7 @@ export class ChatClient {
         input.conversationId,
       );
     }
+    this.#pendingLoadRequestId = requestId;
 
     const notificationQueue = createGatewayNotificationQueue(
       (notification, generation) => {
@@ -273,7 +287,7 @@ export class ChatClient {
     // occur at the snapshot boundary are buffered instead of being lost.
     const subscribed = await this.#subscribeGateway(input, notificationQueue);
     if (this.#disposed || requestId !== this.#loadRequestId) {
-      this.#clearPendingHandoff(requestId);
+      this.#clearPendingLoad(requestId);
       await this.#discardGatewaySubscription(subscribed, input);
       return runtimeFailure(
         "conflict",
@@ -284,7 +298,7 @@ export class ChatClient {
 
     const loaded = await this.#gateway.loadConversation(input);
     if (!loaded.ok) {
-      this.#clearPendingHandoff(requestId);
+      this.#clearPendingLoad(requestId);
       await this.#discardGatewaySubscription(subscribed, input);
       if (this.#disposed || requestId !== this.#loadRequestId) {
         return runtimeFailure(
@@ -296,10 +310,8 @@ export class ChatClient {
       return loaded;
     }
     if (this.#disposed || requestId !== this.#loadRequestId) {
-      this.#clearPendingHandoff(requestId);
-      if (loaded.value.capabilities.liveUpdates) {
-        await this.#discardGatewaySubscription(subscribed, input);
-      }
+      this.#clearPendingLoad(requestId);
+      await this.#discardGatewaySubscription(subscribed, input);
       return runtimeFailure(
         "conflict",
         "Conversation load was superseded",
@@ -307,7 +319,7 @@ export class ChatClient {
       );
     }
     if (loaded.value.conversation.id !== input.conversationId) {
-      this.#clearPendingHandoff(requestId);
+      this.#clearPendingLoad(requestId);
       await this.#discardGatewaySubscription(subscribed, input);
       return runtimeFailure(
         "validation",
@@ -316,7 +328,7 @@ export class ChatClient {
       );
     }
     if (loaded.value.capabilities.liveUpdates && !subscribed.ok) {
-      this.#clearPendingHandoff(requestId);
+      this.#clearPendingLoad(requestId);
       if (this.#disposed || requestId !== this.#loadRequestId) {
         return runtimeFailure(
           "conflict",
@@ -326,12 +338,16 @@ export class ChatClient {
       }
       return subscribed;
     }
+    let subscriptionDiscarded = false;
     if (!loaded.value.capabilities.liveUpdates) {
       await this.#discardGatewaySubscription(subscribed, input);
+      subscriptionDiscarded = true;
     }
     if (this.#disposed || requestId !== this.#loadRequestId) {
-      this.#clearPendingHandoff(requestId);
-      await this.#discardGatewaySubscription(subscribed, input);
+      this.#clearPendingLoad(requestId);
+      if (!subscriptionDiscarded) {
+        await this.#discardGatewaySubscription(subscribed, input);
+      }
       return runtimeFailure(
         "conflict",
         "Conversation load was superseded",
@@ -362,28 +378,16 @@ export class ChatClient {
     } else if (currentState !== null) {
       nextState = this.#guardInteractionTransition(currentState, nextState);
     }
+    this.#clearPendingLoad(requestId);
     this.#snapshotStore.commit(nextState);
     if (!this.#disposed) notificationQueue.activate(generation);
-    this.#clearPendingHandoff(requestId);
+    const committedSnapshot =
+      this.#snapshotStore.state?.snapshot ?? nextState.snapshot;
     await this.#runSubscriptionCleanup(
       () => previousSubscription?.dispose(input),
       input.conversationId,
     );
-
-    if (
-      this.#disposed ||
-      requestId !== this.#loadRequestId ||
-      generation !== this.#generation ||
-      this.#snapshotStore.state?.snapshot.conversation.id !==
-        input.conversationId
-    ) {
-      return runtimeFailure(
-        "conflict",
-        "Conversation load was superseded",
-        input.conversationId,
-      );
-    }
-    return { ok: true, value: this.#snapshotStore.state!.snapshot };
+    return { ok: true, value: committedSnapshot };
   }
 
   async sendText(
@@ -590,6 +594,7 @@ export class ChatClient {
     this.#retiredInteractionIdentities.clear();
     this.#supersededInteractionAnswers.clear();
     this.#loadRequestId += 1;
+    this.#pendingLoadRequestId = undefined;
     this.#pendingHandoff = undefined;
     this.#snapshotStore.close();
     const subscription = this.#gatewaySubscription;
@@ -761,7 +766,10 @@ export class ChatClient {
     );
   }
 
-  #clearPendingHandoff(requestId: number): void {
+  #clearPendingLoad(requestId: number): void {
+    if (this.#pendingLoadRequestId === requestId) {
+      this.#pendingLoadRequestId = undefined;
+    }
     if (this.#pendingHandoff?.requestId === requestId) {
       this.#pendingHandoff = undefined;
     }
