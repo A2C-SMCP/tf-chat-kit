@@ -51,6 +51,10 @@ export const defaultChatUiLabels: ChatUiLabels = Object.freeze({
   sending: "Sending",
   textSendingUnavailable: "Text sending is unavailable.",
   timelineLabel: "Conversation timeline",
+  newConversation: "New conversation",
+  historyConversations: "History",
+  noHistoryConversations: "No conversations",
+  loadingHistoryConversations: "Loading conversations…",
 });
 
 export const resolveChatUiLabels = (

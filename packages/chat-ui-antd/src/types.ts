@@ -1,5 +1,24 @@
 import type { CSSProperties, ReactNode } from "react";
 
+export type ChatNavigationMode = "compact" | "sidebar";
+
+export interface ChatCompactNavigationConfig {
+  /** 当前会话标题 */
+  readonly conversationTitle: string;
+  /** 历史会话 dropdown 是否打开 */
+  readonly conversationHistoryOpen: boolean;
+  /** 历史会话列表项（非加载/错误态） */
+  readonly conversationHistoryItems: readonly ChatConversationListItem[];
+  /** 历史会话列表是否加载中 */
+  readonly conversationHistoryLoading?: boolean | undefined;
+  /** 历史会话列表错误信息 */
+  readonly conversationHistoryError?: string | undefined;
+  /** 历史会话 dropdown 开关回调 */
+  readonly onConversationHistoryOpenChange: (open: boolean) => void;
+  /** 新建会话回调 */
+  readonly onNewConversation: () => void;
+}
+
 export interface ChatConversationListItem {
   readonly description?: string | undefined;
   readonly disabled?: boolean | undefined;
@@ -94,6 +113,10 @@ export interface ChatUiLabels {
   readonly sending: ReactNode;
   readonly textSendingUnavailable: string;
   readonly timelineLabel: string;
+  readonly newConversation: ReactNode;
+  readonly historyConversations: ReactNode;
+  readonly noHistoryConversations: ReactNode;
+  readonly loadingHistoryConversations: ReactNode;
 }
 
 export type ChatUiLabelOverrides = Partial<ChatUiLabels>;

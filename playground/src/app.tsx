@@ -1,15 +1,12 @@
 import {
   Button,
   ConfigProvider,
-  Dropdown,
   Input,
   Modal,
   Space,
   Spin,
   Tag,
-  Tooltip,
   Typography,
-  type MenuProps,
 } from "antd";
 import {
   useCallback,
@@ -21,7 +18,11 @@ import {
 
 import type { ChatSnapshot } from "@turingfocus/chat-protocol";
 import { ChatProvider, useChatSelector } from "@turingfocus/chat-react";
-import { ChatConversationView, ChatUiShell } from "@turingfocus/chat-ui-antd";
+import {
+  ChatConversationView,
+  ChatUiShell,
+  type ChatCompactNavigationConfig,
+} from "@turingfocus/chat-ui-antd";
 
 import {
   createMockPlaygroundSession,
@@ -52,34 +53,6 @@ export interface PlaygroundAppProps {
 const deadlineAt = (): number => Date.now() + 5_000;
 const selectActiveRun = (snapshot: ChatSnapshot | null) =>
   snapshot?.run ?? null;
-
-const NewConversationIcon = () => (
-  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" width="16">
-    <path
-      d="M8 2.5v11M2.5 8h11"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeWidth="1.5"
-    />
-  </svg>
-);
-
-const ConversationHistoryIcon = () => (
-  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" width="16">
-    <path
-      d="M5.25 4h7.5M5.25 8h7.5M5.25 12h7.5"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeWidth="1.4"
-    />
-    <path
-      d="M2.5 3.25a.75.75 0 1 1 0 1.5.75.75 0 0 1 0-1.5Zm0 4a.75.75 0 1 1 0 1.5.75.75 0 0 1 0-1.5Zm0 4a.75.75 0 1 1 0 1.5.75.75 0 0 1 0-1.5Z"
-      fill="currentColor"
-    />
-  </svg>
-);
 
 const PlaygroundConversation = ({
   eventDetailSplitRatio,
@@ -177,35 +150,25 @@ const PlaygroundWorkspace = ({
     }
   };
 
-  const conversationItems: MenuProps["items"] = state.listLoading
-    ? [{ disabled: true, key: "loading", label: "正在加载历史会话…" }]
-    : state.listError !== undefined
-      ? [{ disabled: true, key: "error", label: state.listError }]
-      : state.conversations.length === 0
-        ? [{ disabled: true, key: "empty", label: "暂无历史会话" }]
-        : state.conversations.map((conversation) => ({
-            key: conversation.id,
-            label: (
-              <Typography.Text
-                ellipsis={{ tooltip: conversation.title }}
-                style={{ display: "block", maxWidth: 280 }}
-              >
-                {conversation.title}
-              </Typography.Text>
-            ),
-          }));
+  const conversationTitle =
+    session.client.getSnapshot()?.conversation.title ?? "请选择会话";
 
-  const changeConversation: MenuProps["onClick"] = ({ key }) => {
-    if (!state.conversations.some(({ id }) => id === key)) return;
-    setConversationHistoryOpen(false);
-    void session.selectConversation(key);
-  };
-
-  const changeConversationHistoryOpen = (open: boolean) => {
-    setConversationHistoryOpen(open);
-    if (open) {
-      void session.loadConversations();
-    }
+  const compactNavigation: ChatCompactNavigationConfig = {
+    conversationTitle,
+    conversationHistoryOpen,
+    conversationHistoryError: state.listError,
+    conversationHistoryItems: state.conversations.map((c) => ({
+      id: c.id,
+      title: c.title,
+    })),
+    conversationHistoryLoading: state.listLoading,
+    onConversationHistoryOpenChange: (open) => {
+      setConversationHistoryOpen(open);
+      if (open) {
+        void session.loadConversations();
+      }
+    },
+    onNewConversation: () => setCreateConversationOpen(true),
   };
 
   return (
@@ -313,69 +276,18 @@ const PlaygroundWorkspace = ({
 
           <section className="chat-stage">
             <ChatUiShell
+              compactNavigation={compactNavigation}
               contentState={state.contentState}
               conversationListLoading={false}
               conversations={[]}
               labels={playgroundChatLabels}
-              header={
-                <div className="conversation-header">
-                  <Typography.Text ellipsis strong>
-                    {session.client.getSnapshot()?.conversation.title ??
-                      "请选择会话"}
-                  </Typography.Text>
-                  <Space size={4}>
-                    <Tooltip title="新建会话">
-                      <Button
-                        aria-label="新建会话"
-                        icon={<NewConversationIcon />}
-                        onClick={() => setCreateConversationOpen(true)}
-                        shape="circle"
-                        type="text"
-                      />
-                    </Tooltip>
-                    <Dropdown
-                      menu={{
-                        items: conversationItems,
-                        onClick: changeConversation,
-                        selectable: true,
-                        selectedKeys:
-                          state.selectedConversationId === undefined
-                            ? []
-                            : [state.selectedConversationId],
-                      }}
-                      onOpenChange={changeConversationHistoryOpen}
-                      open={conversationHistoryOpen}
-                      placement="bottomRight"
-                      trigger={["click"]}
-                    >
-                      <Tooltip title="历史会话">
-                        <Button
-                          aria-expanded={conversationHistoryOpen}
-                          aria-label="历史会话"
-                          icon={<ConversationHistoryIcon />}
-                          loading={conversationHistoryOpen && state.listLoading}
-                          shape="circle"
-                          type="text"
-                        />
-                      </Tooltip>
-                    </Dropdown>
-                  </Space>
-                </div>
-              }
+              navigationMode="compact"
               onConversationSelect={(conversationId) =>
                 void session.selectConversation(conversationId)
               }
               pendingConversationId={state.pendingConversationId}
               selectedConversationId={state.selectedConversationId}
               sidebarTitle="会话列表"
-              styles={{
-                root: {
-                  gridTemplateColumns: "minmax(0, 1fr)",
-                },
-                sidebar: {
-                  display: "none",
-                },
-              }}
             >
               <PlaygroundConversation
                 eventDetailSplitRatio={eventDetailSplitRatio}

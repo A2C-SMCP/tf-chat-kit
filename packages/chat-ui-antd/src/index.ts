@@ -57,8 +57,10 @@ export {
   type ChatMarkdownContentProps,
 } from "./markdown-content.js";
 export type {
+  ChatCompactNavigationConfig,
   ChatContentState,
   ChatConversationListItem,
+  ChatNavigationMode,
   ChatUiLabelOverrides,
   ChatUiLabels,
   ChatUiSlotStyles,

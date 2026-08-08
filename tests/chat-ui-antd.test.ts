@@ -11,6 +11,7 @@ import {
   ChatStateView,
   ChatUiShell,
   defaultChatUiLabels,
+  type ChatCompactNavigationConfig,
   type ChatContentState,
 } from "../packages/chat-ui-antd/src/index.js";
 import { ChatProvider } from "../packages/chat-react/src/index.js";
@@ -319,5 +320,174 @@ describe("@turingfocus/chat-ui-antd shell", () => {
     expect(stateMarkup).toContain('role="status"');
     expect(listMarkup).toContain(defaultChatUiLabels.noConversations as string);
     expect(listMarkup).toContain('role="list"');
+  });
+
+  it("renders compact navigation header by default", async () => {
+    const compactNav: ChatCompactNavigationConfig = {
+      conversationTitle: "Current Chat",
+      conversationHistoryOpen: false,
+      conversationHistoryItems: [],
+      onConversationHistoryOpenChange: vi.fn(),
+      onNewConversation: vi.fn(),
+    };
+    const rendered = await renderInDom(
+      createElement(ChatUiShell, {
+        compactNavigation: compactNav,
+        contentState: { kind: "ready" },
+        conversations: [],
+        navigationMode: "compact",
+        onConversationSelect: vi.fn(),
+      }),
+    );
+
+    try {
+      expect(rendered.container.textContent).toContain("Current Chat");
+      expect(
+        rendered.container.querySelector(
+          'button[aria-label="New conversation"]',
+        ),
+      ).not.toBeNull();
+      expect(
+        rendered.container.querySelector('button[aria-label="History"]'),
+      ).not.toBeNull();
+      expect(
+        rendered.container.querySelector('aside[aria-label="Conversations"]'),
+      ).toBeNull();
+    } finally {
+      await rendered.unmount();
+    }
+  });
+
+  it("renders sidebar when navigationMode is sidebar", async () => {
+    const rendered = await renderInDom(
+      createElement(ChatUiShell, {
+        contentState: { kind: "ready" },
+        conversations: [],
+        navigationMode: "sidebar",
+        onConversationSelect: vi.fn(),
+      }),
+    );
+
+    try {
+      expect(
+        rendered.container.querySelector('aside[aria-label="Conversations"]'),
+      ).not.toBeNull();
+      expect(
+        rendered.container.querySelector(
+          'button[aria-label="New conversation"]',
+        ),
+      ).toBeNull();
+    } finally {
+      await rendered.unmount();
+    }
+  });
+
+  it("shows empty state when dropdown has no items", async () => {
+    const config: ChatCompactNavigationConfig = {
+      conversationTitle: "Empty",
+      conversationHistoryOpen: true,
+      conversationHistoryItems: [],
+      onConversationHistoryOpenChange: vi.fn(),
+      onNewConversation: vi.fn(),
+    };
+    const rendered = await renderInDom(
+      createElement(ChatUiShell, {
+        compactNavigation: config,
+        navigationMode: "compact",
+        contentState: { kind: "ready" },
+        conversations: [],
+        onConversationSelect: vi.fn(),
+      }),
+    );
+
+    try {
+      expect(document.body.textContent).toContain(
+        String(defaultChatUiLabels.noHistoryConversations),
+      );
+    } finally {
+      await rendered.unmount();
+    }
+  });
+
+  it("shows conversation items in dropdown", async () => {
+    const items = createConversationItems(2);
+    const config: ChatCompactNavigationConfig = {
+      conversationTitle: "With Items",
+      conversationHistoryOpen: true,
+      conversationHistoryItems: items,
+      onConversationHistoryOpenChange: vi.fn(),
+      onNewConversation: vi.fn(),
+    };
+    const rendered = await renderInDom(
+      createElement(ChatUiShell, {
+        compactNavigation: config,
+        navigationMode: "compact",
+        contentState: { kind: "ready" },
+        conversations: [],
+        onConversationSelect: vi.fn(),
+        selectedConversationId: items[0]!.id,
+      }),
+    );
+
+    try {
+      expect(document.body.textContent).toContain("Conversation 1");
+      expect(document.body.textContent).toContain("Conversation 2");
+    } finally {
+      await rendered.unmount();
+    }
+  });
+
+  it("shows error state in dropdown", async () => {
+    const config: ChatCompactNavigationConfig = {
+      conversationTitle: "Error",
+      conversationHistoryOpen: true,
+      conversationHistoryError: "Failed to load",
+      conversationHistoryItems: [],
+      onConversationHistoryOpenChange: vi.fn(),
+      onNewConversation: vi.fn(),
+    };
+    const rendered = await renderInDom(
+      createElement(ChatUiShell, {
+        compactNavigation: config,
+        navigationMode: "compact",
+        contentState: { kind: "ready" },
+        conversations: [],
+        onConversationSelect: vi.fn(),
+      }),
+    );
+
+    try {
+      expect(document.body.textContent).toContain("Failed to load");
+    } finally {
+      await rendered.unmount();
+    }
+  });
+
+  it("shows loading state in dropdown", async () => {
+    const config: ChatCompactNavigationConfig = {
+      conversationTitle: "Loading",
+      conversationHistoryOpen: true,
+      conversationHistoryLoading: true,
+      conversationHistoryItems: [],
+      onConversationHistoryOpenChange: vi.fn(),
+      onNewConversation: vi.fn(),
+    };
+    const rendered = await renderInDom(
+      createElement(ChatUiShell, {
+        compactNavigation: config,
+        navigationMode: "compact",
+        contentState: { kind: "ready" },
+        conversations: [],
+        onConversationSelect: vi.fn(),
+      }),
+    );
+
+    try {
+      expect(document.body.textContent).toContain(
+        String(defaultChatUiLabels.loadingHistoryConversations),
+      );
+    } finally {
+      await rendered.unmount();
+    }
   });
 });
