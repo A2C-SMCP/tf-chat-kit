@@ -288,7 +288,15 @@ export class TFRobotChatGateway implements ChatGateway {
     const requestDeadline = this.#deadlineResult<SendTextSuccess>(input);
     if (requestDeadline !== undefined) return requestDeadline;
     return result.ok
-      ? { ok: true, value: { runId: String(result.value.taskId) } }
+      ? {
+          ok: true,
+          value: {
+            runId:
+              result.value.taskId != null
+                ? String(result.value.taskId)
+                : syntheticRunId(input.conversationId),
+          },
+        }
       : result;
   }
 

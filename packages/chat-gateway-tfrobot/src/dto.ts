@@ -111,7 +111,7 @@ export const statusDtoSchema = z.looseObject({
 });
 
 export const sendTextDtoSchema = z.looseObject({
-  taskId: identifierSchema,
+  taskId: identifierSchema.optional(),
 });
 
 export const interruptDtoSchema = z.looseObject({

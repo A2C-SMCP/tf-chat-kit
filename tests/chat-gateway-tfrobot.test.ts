@@ -11,6 +11,7 @@ import {
 import {
   mapEvent,
   mapEventUpdate,
+  syntheticRunId,
 } from "../packages/chat-gateway-tfrobot/src/mapper.js";
 import type {
   ChatError,
@@ -2906,6 +2907,111 @@ describe("TFRobotChatGateway Socket boundary", () => {
     expect(errors.at(-1)).toMatchObject({
       code: "authentication",
       retryable: false,
+    });
+  });
+
+  it("succeeds when sendText response data omits taskId", async () => {
+    const fetch = vi.fn(
+      async (
+        input: Parameters<typeof globalThis.fetch>[0],
+        init?: Parameters<typeof globalThis.fetch>[1],
+      ) => {
+        const request = new Request(input, init);
+        const path = new URL(request.url).pathname;
+        if (request.method === "POST" && path.endsWith("/messages")) {
+          return envelope({});
+        }
+        throw new Error(`Unexpected request: ${request.method} ${path}`);
+      },
+    );
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch,
+      socketFactory: createSocketFixture().factory,
+    });
+
+    const result = await gateway.sendText({
+      conversationId: "c-1",
+      text: "Hello",
+      deadlineAt: deadline(),
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      value: { runId: syntheticRunId("c-1") },
+    });
+  });
+
+  it("preserves taskId when sendText response data includes it", async () => {
+    const fetch = vi.fn(
+      async (
+        input: Parameters<typeof globalThis.fetch>[0],
+        init?: Parameters<typeof globalThis.fetch>[1],
+      ) => {
+        const request = new Request(input, init);
+        const path = new URL(request.url).pathname;
+        if (request.method === "POST" && path.endsWith("/messages")) {
+          return envelope({ taskId: "real-task-99" });
+        }
+        throw new Error(`Unexpected request: ${request.method} ${path}`);
+      },
+    );
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch,
+      socketFactory: createSocketFixture().factory,
+    });
+
+    const result = await gateway.sendText({
+      conversationId: "c-1",
+      text: "Hello",
+      deadlineAt: deadline(),
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      value: { runId: "real-task-99" },
+    });
+  });
+
+  it("still propagates a failed sendText response when taskId is missing", async () => {
+    const fetch = vi.fn(
+      async (
+        input: Parameters<typeof globalThis.fetch>[0],
+        init?: Parameters<typeof globalThis.fetch>[1],
+      ) => {
+        const request = new Request(input, init);
+        const path = new URL(request.url).pathname;
+        if (request.method === "POST" && path.endsWith("/messages")) {
+          return new Response(
+            JSON.stringify({ code: 500, message: "server down", data: null }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        throw new Error(`Unexpected request: ${request.method} ${path}`);
+      },
+    );
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch,
+      socketFactory: createSocketFixture().factory,
+    });
+
+    const result = await gateway.sendText({
+      conversationId: "c-1",
+      text: "Hello",
+      deadlineAt: deadline(),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "validation", message: "server down" },
     });
   });
 });
