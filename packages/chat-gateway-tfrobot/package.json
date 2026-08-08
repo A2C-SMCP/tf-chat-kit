@@ -1,6 +1,6 @@
 {
   "name": "@turingfocus/chat-gateway-tfrobot",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "TFRobotServer REST and realtime gateway adapter",
   "license": "MIT",
   "repository": {

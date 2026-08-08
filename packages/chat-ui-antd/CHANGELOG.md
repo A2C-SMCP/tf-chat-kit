@@ -1,5 +1,16 @@
 # @turingfocus/chat-ui-antd
 
+## 0.5.0
+
+### Minor Changes
+
+- c22f4c9: Add compact navigation mode to `ChatUiShell` (inline conversation title, new-conversation trigger, and history dropdown that reuses the workspace's loading/paging/error/selection handling) and make `sendTextDtoSchema.taskId` optional so accepted TFRobot responses without a `taskId` no longer report a false validation error.
+
+### Patch Changes
+
+- @turingfocus/chat-protocol@0.5.0
+- @turingfocus/chat-react@0.5.0
+
 ## 0.4.2
 
 ### Patch Changes
