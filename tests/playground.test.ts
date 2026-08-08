@@ -420,7 +420,9 @@ describe("private Chat Kit playground", () => {
 
       await act(async () => {
         container
-          .querySelector<HTMLButtonElement>('button[aria-label="New conversation"]')!
+          .querySelector<HTMLButtonElement>(
+            'button[aria-label="New conversation"]',
+          )!
           .click();
         await Promise.resolve();
       });
@@ -449,7 +451,9 @@ describe("private Chat Kit playground", () => {
 
       await act(async () => {
         container
-          .querySelector<HTMLButtonElement>('button[aria-label="New conversation"]')!
+          .querySelector<HTMLButtonElement>(
+            'button[aria-label="New conversation"]',
+          )!
           .click();
         await Promise.resolve();
       });

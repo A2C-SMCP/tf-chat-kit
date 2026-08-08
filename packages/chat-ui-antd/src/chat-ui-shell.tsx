@@ -34,8 +34,7 @@ export interface ChatUiShellProps {
   readonly conversationListLoading?: boolean | undefined;
   readonly conversations: readonly ChatConversationListItem[];
   readonly formatConversationUpdatedAt?:
-    | ((updatedAt: number, item: ChatConversationListItem) => string)
-    | undefined;
+    ((updatedAt: number, item: ChatConversationListItem) => string) | undefined;
   readonly header?: ReactNode;
   readonly labels?: ChatUiLabelOverrides | undefined;
   readonly navigationMode?: ChatNavigationMode | undefined;
