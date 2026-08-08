@@ -287,10 +287,10 @@ describe("private Chat Kit playground", () => {
       );
       expect(conversationList).toBeNull();
       const newConversation = container.querySelector<HTMLButtonElement>(
-        'button[aria-label="New conversation"]',
+        'button[aria-label="新建会话"]',
       );
       const conversationHistory = container.querySelector<HTMLButtonElement>(
-        'button[aria-label="History"]',
+        'button[aria-label="历史会话"]',
       );
       expect(newConversation).not.toBeNull();
       expect(conversationHistory).not.toBeNull();
@@ -420,9 +420,7 @@ describe("private Chat Kit playground", () => {
 
       await act(async () => {
         container
-          .querySelector<HTMLButtonElement>(
-            'button[aria-label="New conversation"]',
-          )!
+          .querySelector<HTMLButtonElement>('button[aria-label="新建会话"]')!
           .click();
         await Promise.resolve();
       });
@@ -451,9 +449,7 @@ describe("private Chat Kit playground", () => {
 
       await act(async () => {
         container
-          .querySelector<HTMLButtonElement>(
-            'button[aria-label="New conversation"]',
-          )!
+          .querySelector<HTMLButtonElement>('button[aria-label="新建会话"]')!
           .click();
         await Promise.resolve();
       });
