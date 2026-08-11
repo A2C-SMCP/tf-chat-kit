@@ -1,5 +1,6 @@
 import type {
   ChatError,
+  ChatLifecycleStatus,
   MaybePromise,
   SessionProvider,
 } from "@turingfocus/chat-protocol";
@@ -65,11 +66,24 @@ export interface TFRobotSocket {
   readonly connected: boolean;
   connect(): void;
   disconnect(): void;
-  emit(eventName: string, payload?: unknown): unknown;
+  emit(eventName: string, ...arguments_: unknown[]): unknown;
   off(eventName: string, listener: TFRobotSocketListener): unknown;
   offAny?(listener: TFRobotSocketAnyListener): unknown;
   on(eventName: string, listener: TFRobotSocketListener): unknown;
   onAny?(listener: TFRobotSocketAnyListener): unknown;
+}
+
+export interface TFRobotLifecycleDiagnostic {
+  readonly kind: "socket.lifecycle";
+  readonly conversationId: string;
+  readonly subscriptionId: string;
+  readonly generation: number;
+  readonly status: ChatLifecycleStatus;
+  readonly reconnectAttempt: number;
+  readonly joinLatencyMs?: number | undefined;
+  readonly recoveryComplete?: boolean | undefined;
+  readonly recoveryCursor?: string | undefined;
+  readonly recoveryReason?: string | undefined;
 }
 
 export interface TFRobotSocketFactoryInput {
@@ -103,4 +117,8 @@ export interface TFRobotGatewayOptions {
    */
   readonly onDiagnostic?:
     ((error: ChatError) => MaybePromise<void>) | undefined;
+  /** Sanitized lifecycle telemetry; credentials and raw payloads are excluded. */
+  readonly onLifecycleDiagnostic?:
+    | ((diagnostic: TFRobotLifecycleDiagnostic) => MaybePromise<void>)
+    | undefined;
 }

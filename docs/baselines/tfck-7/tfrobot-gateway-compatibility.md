@@ -22,11 +22,21 @@ the normalized `ChatGateway` port:
 - HTTP/Socket DTO validation, structured errors and credential redaction.
 
 The adapter deliberately does not emit the unsupported `leave_conversation`
-event. Replacing a subscription disconnects the old instance-owned connection
-before connecting and joining the new conversation. Reconnect rejoins first,
-then performs a deadline-bounded REST status read and publishes a `run.replace`
-only when the remembered run state has changed. A reconnect generation and
-realtime revision prevent older REST responses from overwriting newer state.
+event. Established subscriptions remain independently owned until their
+Runtime subscription is disposed; establishing a candidate subscription does
+not disconnect the committed conversation. Only one candidate establishment is
+allowed at a time. `join_conversation` uses a Socket.IO acknowledgement and the
+subscription is not committed before that acknowledgement succeeds.
+
+Reconnect rejoins first, then performs a deadline-bounded REST status read and
+publishes a `run.replace` only when the remembered run state has changed. A
+reconnect generation and realtime revision prevent older REST responses from
+overwriting newer state. The normalized lifecycle remains `recovering` unless
+the join acknowledgement explicitly confirms durable replay completion; a
+legacy acknowledgement is never treated as proof that missed events were
+recovered. Server-forced disconnects invalidate the host session before one
+manual reconnect attempt. The Runtime and Ant Design UI gate commands while the
+lifecycle is not `active`.
 The production Socket.IO factory pins `transports: ["websocket"]`; polling and
 transport fallback are disabled.
 
@@ -56,6 +66,10 @@ direction; message history uses backward `count=-limit` pagination.
   cross their establishment deadline.
 - `tests/chat-gateway-tfrobot-socket-factory.test.ts` guards the production
   websocket-only transport configuration.
+- `tests/chat-gateway-tfrobot-lifecycle.integration.test.ts` uses a real local
+  Socket.IO server and client to verify join acknowledgement, server-forced
+  disconnect session invalidation, manual reconnect, cursor-bearing recovery
+  acknowledgement and return to `active`.
 - `tests/chat-gateway-tfrobot-contract.test.ts` runs all framework-neutral
   Gateway contract cases from `@turingfocus/chat-testing` against the real
   adapter through fake REST and Socket.IO transports. The matrix covers
@@ -83,3 +97,24 @@ Before TFCK-7 can be represented as runtime-verified:
    history, command, reconnect, error and disposal scenarios.
 4. The report must be updated with the environment, execution command and
    result; credentials and raw headers must never be recorded.
+
+TFRS-336 is the P0 upstream dependency for access-validated join
+acknowledgements and durable cursor/replay/outbox semantics. Until it is
+delivered, the frozen legacy Server is below the minimum compatible baseline:
+it does not acknowledge the initial `join_conversation`, so a new live
+subscription fails closed at its join deadline and no realtime session is
+established. An already-established subscription connected through a
+transitional Server that acknowledges the initial join but omits reconnect ACK
+payloads remains in `recovering` after REST run reconciliation.
+
+TFRS-336 is therefore a minimum Server compatibility and production-cutover
+gate, not only a reconnect-quality improvement. The minimum compatible Server
+must return an access-validated initial join ACK and must provide a verified
+durable cursor/replay/outbox contract before Kit may publish `active` after
+reconnect.
+
+Per ADR-009, this external deployment gate does not block publishing the Kit
+packages: package release permission continues to derive only from repository
+owned compatibility evidence. Until a deployed Server satisfies TFRS-336,
+hosts must not enable the affected production TFRobot Socket integration and
+the parent feature cannot be considered production-complete.

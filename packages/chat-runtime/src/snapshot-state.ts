@@ -5,6 +5,7 @@ import {
   type AgentEventTransitionUpdate,
   type AskUserInteractionRequest,
   type ChatError,
+  type ChatErrorOccurrence,
   type ChatSnapshot,
   type ChatUpdate,
 } from "@turingfocus/chat-protocol";
@@ -19,6 +20,7 @@ import {
 } from "./timeline.js";
 
 export interface SnapshotState {
+  readonly errorSequence: number;
   readonly snapshot: ChatSnapshot;
   readonly timeline: TimelineState;
 }
@@ -28,7 +30,14 @@ const freezeSnapshot = (snapshot: ChatSnapshot): ChatSnapshot =>
 
 export const createSnapshotState = (snapshot: ChatSnapshot): SnapshotState => {
   const timeline = createTimelineState(snapshot.timeline);
+  const activeErrors =
+    snapshot.activeErrors === undefined
+      ? undefined
+      : cloneImmutable(snapshot.activeErrors);
+  const projectedError =
+    activeErrors === undefined ? snapshot.error : activeErrors.at(-1)?.error;
   return {
+    errorSequence: 0,
     timeline,
     snapshot: freezeSnapshot({
       conversation: cloneImmutable(snapshot.conversation),
@@ -39,9 +48,13 @@ export const createSnapshotState = (snapshot: ChatSnapshot): SnapshotState => {
       ...(snapshot.pendingInteraction === undefined
         ? {}
         : { pendingInteraction: cloneImmutable(snapshot.pendingInteraction) }),
-      ...(snapshot.error === undefined
+      ...(snapshot.lifecycle === undefined
         ? {}
-        : { error: cloneImmutable(snapshot.error) }),
+        : { lifecycle: cloneImmutable(snapshot.lifecycle) }),
+      ...(activeErrors === undefined ? {} : { activeErrors }),
+      ...(projectedError === undefined
+        ? {}
+        : { error: cloneImmutable(projectedError) }),
     }),
   };
 };
@@ -58,7 +71,7 @@ export const updateSnapshotState = (
     ...changes,
     timeline: timeline.items,
   });
-  return { timeline, snapshot };
+  return { errorSequence: state.errorSequence, timeline, snapshot };
 };
 
 const rebaseValue = <T>(baseline: T, loaded: T, current: T): T =>
@@ -108,6 +121,35 @@ export const rebaseSnapshotState = (
     loaded.snapshot.error,
     current.snapshot.error,
   );
+  const currentErrorIds = new Set(
+    current.snapshot.activeErrors?.map(({ id }) => id) ?? [],
+  );
+  const resolvedBaselineErrorIds = new Set(
+    (baseline.snapshot.activeErrors ?? [])
+      .filter(({ id }) => !currentErrorIds.has(id))
+      .map(({ id }) => id),
+  );
+  const mergedErrors = new Map<string, ChatErrorOccurrence>();
+  for (const occurrence of loaded.snapshot.activeErrors ?? []) {
+    if (
+      occurrence.scope.kind !== "subscription" &&
+      !resolvedBaselineErrorIds.has(occurrence.id)
+    ) {
+      mergedErrors.set(occurrence.id, occurrence);
+    }
+  }
+  for (const occurrence of current.snapshot.activeErrors ?? []) {
+    if (occurrence.scope.kind !== "subscription") {
+      mergedErrors.set(occurrence.id, occurrence);
+    }
+  }
+  const activeErrors =
+    loaded.snapshot.activeErrors === undefined &&
+    current.snapshot.activeErrors === undefined
+      ? undefined
+      : Object.freeze([...mergedErrors.values()]);
+  const retainedError =
+    activeErrors !== undefined ? activeErrors.at(-1)?.error : rebasedError;
   const pendingWasUnchanged = deepEqual(
     current.snapshot.pendingInteraction,
     baseline.snapshot.pendingInteraction,
@@ -125,10 +167,12 @@ export const rebaseSnapshotState = (
         loaded.snapshot.pendingInteraction,
         current.snapshot.pendingInteraction,
       );
-  const error = hasLoadedInteractionConflict
-    ? interactionMetadataError(current.snapshot.conversation.id)
-    : rebasedError;
   const rebased: SnapshotState = {
+    errorSequence: Math.max(
+      baseline.errorSequence,
+      loaded.errorSequence,
+      current.errorSequence,
+    ),
     timeline,
     snapshot: freezeSnapshot({
       conversation: rebaseValue(
@@ -152,14 +196,35 @@ export const rebaseSnapshotState = (
         loaded.snapshot.pageInfo,
         current.snapshot.pageInfo,
       ),
+      ...(loaded.snapshot.lifecycle === undefined
+        ? {}
+        : { lifecycle: loaded.snapshot.lifecycle }),
+      ...(activeErrors === undefined ? {} : { activeErrors }),
       ...(pendingInteraction === undefined ? {} : { pendingInteraction }),
-      ...(error === undefined ? {} : { error }),
+      ...(retainedError === undefined ? {} : { error: retainedError }),
     }),
   };
+  const result = hasLoadedInteractionConflict
+    ? applyRuntimeSnapshotError(
+        rebased,
+        interactionMetadataError(current.snapshot.conversation.id),
+        `runtime:interaction:${current.snapshot.pendingInteraction?.requestId ?? "unknown"}:${current.snapshot.pendingInteraction?.revision ?? 0}`,
+      )
+    : rebased;
 
-  if (deepEqual(rebased.snapshot, current.snapshot)) return current;
-  if (deepEqual(rebased.snapshot, loaded.snapshot)) return loaded;
-  return rebased;
+  if (
+    result.errorSequence === current.errorSequence &&
+    deepEqual(result.snapshot, current.snapshot)
+  ) {
+    return current;
+  }
+  if (
+    result.errorSequence === loaded.errorSequence &&
+    deepEqual(result.snapshot, loaded.snapshot)
+  ) {
+    return loaded;
+  }
+  return result;
 };
 
 const eventMetadataError = (conversationId: string): ChatError =>
@@ -260,10 +325,11 @@ const applyTransition = (
     (existing.kind !== "agent-event" ||
       !hasCompatibleAgentEventMetadata(existing, update))
   ) {
-    const error = eventMetadataError(update.conversationId);
-    return deepEqual(state.snapshot.error, error)
-      ? state
-      : updateSnapshotState(state, { error });
+    return applyRuntimeSnapshotError(
+      state,
+      eventMetadataError(update.conversationId),
+      `runtime:event-metadata:${update.event.id}`,
+    );
   }
 
   const event = buildAgentEvent(update, existing);
@@ -281,8 +347,13 @@ export const updateConversationId = (
   }
   if (update.kind === "conversation.upsert") return update.conversation.id;
   if (update.kind === "error.reported") {
-    return update.conversationId ?? update.error.conversationId;
+    return (
+      update.conversationId ??
+      update.error.conversationId ??
+      (update.scope?.kind === "conversation" ? update.scope.id : undefined)
+    );
   }
+  if (update.kind === "error.resolved") return update.conversationId;
   return update.conversationId;
 };
 
@@ -301,17 +372,25 @@ export const applySnapshotUpdate = (
 
   switch (update.kind) {
     case "snapshot.replace": {
-      const replacement = createSnapshotState(update.snapshot);
+      const loadedReplacement = createSnapshotState(update.snapshot);
+      const replacement = {
+        ...loadedReplacement,
+        errorSequence: state.errorSequence,
+      };
       if (
         hasConflictingInteractionMetadata(
           state.snapshot.pendingInteraction,
           replacement.snapshot.pendingInteraction,
         )
       ) {
-        return updateSnapshotState(replacement, {
+        const guarded = updateSnapshotState(replacement, {
           pendingInteraction: state.snapshot.pendingInteraction,
-          error: interactionMetadataError(activeConversationId),
         });
+        return applyRuntimeInteractionError(
+          guarded,
+          interactionMetadataError(activeConversationId),
+          state.snapshot.pendingInteraction,
+        );
       }
       return deepEqual(replacement.snapshot, state.snapshot)
         ? state
@@ -353,26 +432,164 @@ export const applySnapshotUpdate = (
           pendingInteraction,
         )
       ) {
-        return applySnapshotError(
+        return applyRuntimeInteractionError(
           state,
           interactionMetadataError(activeConversationId),
+          state.snapshot.pendingInteraction,
         );
       }
       return deepEqual(pendingInteraction, state.snapshot.pendingInteraction)
         ? state
         : updateSnapshotState(state, { pendingInteraction });
     }
+    case "lifecycle.changed": {
+      const lifecycle = cloneImmutable(update.lifecycle);
+      return deepEqual(lifecycle, state.snapshot.lifecycle)
+        ? state
+        : updateSnapshotState(state, { lifecycle });
+    }
     case "error.reported":
-      return applySnapshotError(state, update.error);
+      return applySnapshotReportedError(state, update);
+    case "error.resolved":
+      return resolveSnapshotError(state, update.errorId);
   }
+};
+
+const occurrenceOf = (
+  update: Extract<ChatUpdate, { readonly kind: "error.reported" }>,
+): ChatErrorOccurrence | undefined => {
+  if (
+    update.errorId === undefined ||
+    update.source === undefined ||
+    update.scope === undefined ||
+    update.generation === undefined
+  ) {
+    return undefined;
+  }
+  return cloneImmutable({
+    id: update.errorId,
+    error: update.error,
+    source: update.source,
+    scope: update.scope,
+    generation: update.generation,
+  });
+};
+
+const existingErrorOccurrences = (
+  state: SnapshotState,
+): readonly ChatErrorOccurrence[] => {
+  if (state.snapshot.activeErrors !== undefined) {
+    return state.snapshot.activeErrors;
+  }
+  if (state.snapshot.error === undefined) return [];
+  return [
+    cloneImmutable({
+      id: "runtime:legacy-snapshot",
+      error: state.snapshot.error,
+      source: "runtime" as const,
+      scope: {
+        kind: "conversation" as const,
+        id: state.snapshot.conversation.id,
+      },
+      generation: state.snapshot.lifecycle?.generation ?? 0,
+    }),
+  ];
+};
+
+export const applyRuntimeSnapshotError = (
+  state: SnapshotState,
+  error: ChatError,
+  errorId: string,
+): SnapshotState => {
+  const occurrence = cloneImmutable({
+    id: errorId,
+    error,
+    source: "runtime" as const,
+    scope: {
+      kind: "conversation" as const,
+      id: state.snapshot.conversation.id,
+    },
+    generation: state.snapshot.lifecycle?.generation ?? 0,
+  });
+  const activeErrors = Object.freeze([
+    ...existingErrorOccurrences(state).filter(({ id }) => id !== occurrence.id),
+    occurrence,
+  ]);
+  return updateSnapshotState(state, {
+    activeErrors,
+    error: occurrence.error,
+  });
+};
+
+const applyRuntimeInteractionError = (
+  state: SnapshotState,
+  error: ChatError,
+  interaction: AskUserInteractionRequest | undefined,
+): SnapshotState =>
+  applyRuntimeSnapshotError(
+    state,
+    error,
+    `runtime:interaction:${interaction?.requestId ?? "unknown"}:${interaction?.revision ?? 0}`,
+  );
+
+const applySnapshotReportedError = (
+  state: SnapshotState,
+  update: Extract<ChatUpdate, { readonly kind: "error.reported" }>,
+): SnapshotState => {
+  const occurrence = occurrenceOf(update);
+  if (occurrence === undefined) {
+    const errorSequence = state.errorSequence + 1;
+    const next = applyRuntimeSnapshotError(
+      state,
+      update.error,
+      `runtime:legacy:${state.snapshot.lifecycle?.generation ?? 0}:${errorSequence}`,
+    );
+    return { ...next, errorSequence };
+  }
+  const activeErrors = Object.freeze([
+    ...existingErrorOccurrences(state).filter(
+      (active) => active.id !== occurrence.id,
+    ),
+    occurrence,
+  ]);
+  if (
+    deepEqual(activeErrors, state.snapshot.activeErrors) &&
+    deepEqual(occurrence.error, state.snapshot.error)
+  ) {
+    return state;
+  }
+  return updateSnapshotState(state, {
+    activeErrors,
+    error: occurrence.error,
+  });
+};
+
+const resolveSnapshotError = (
+  state: SnapshotState,
+  errorId: string,
+): SnapshotState => {
+  const current = state.snapshot.activeErrors;
+  if (current === undefined || !current.some((error) => error.id === errorId)) {
+    return state;
+  }
+  const activeErrors = Object.freeze(
+    current.filter((error) => error.id !== errorId),
+  );
+  return updateSnapshotState(state, {
+    activeErrors,
+    error: activeErrors.at(-1)?.error,
+  });
 };
 
 export const applySnapshotError = (
   state: SnapshotState,
   error: ChatError,
 ): SnapshotState => {
-  const immutableError = cloneImmutable(error);
-  return deepEqual(immutableError, state.snapshot.error)
-    ? state
-    : updateSnapshotState(state, { error: immutableError });
+  const errorSequence = state.errorSequence + 1;
+  const next = applyRuntimeSnapshotError(
+    state,
+    error,
+    `runtime:legacy-observer:${state.snapshot.lifecycle?.generation ?? 0}:${errorSequence}`,
+  );
+  return { ...next, errorSequence };
 };

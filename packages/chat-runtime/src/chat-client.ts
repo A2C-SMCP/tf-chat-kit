@@ -9,6 +9,7 @@ import {
   type AnswerInteractionInput,
   type AnswerInteractionSuccess,
   type ChatError,
+  type ChatErrorSource,
   type ChatGateway,
   type ChatSnapshot,
   type ChatUpdate,
@@ -33,8 +34,8 @@ import {
 } from "./gateway-notification-queue.js";
 import { cloneImmutable, deepEqual } from "./immutable.js";
 import {
-  applySnapshotError,
   applySnapshotUpdate,
+  applyRuntimeSnapshotError,
   createSnapshotState,
   rebaseSnapshotState,
   type SnapshotState,
@@ -74,6 +75,11 @@ interface PendingHandoff {
   readonly enqueue: GatewayNotificationQueue["enqueue"];
   readonly requestId: number;
   readonly sourceGeneration: number;
+}
+
+interface StructuredGatewayErrorMarker {
+  readonly error: ChatError;
+  readonly generation: number;
 }
 
 const runtimeFailure = <T>(
@@ -148,6 +154,7 @@ export class ChatClient {
   readonly #snapshotStore: SnapshotStore;
   #disposed = false;
   #disposePromise: Promise<void> | undefined;
+  #errorSequence = 0;
   #conversationEpoch = 0;
   #generation = 0;
   #gatewaySubscription: GatewaySubscription | undefined;
@@ -156,6 +163,7 @@ export class ChatClient {
   readonly #supersededInteractionAnswers = new Set<string>();
   #historyRequestId = 0;
   #loadRequestId = 0;
+  #structuredGatewayErrorMarker: StructuredGatewayErrorMarker | undefined;
   #pendingLoadRequestId: number | undefined;
   #pendingHandoff: PendingHandoff | undefined;
 
@@ -405,7 +413,7 @@ export class ChatClient {
 
     const generation = this.#generation;
     const result = await this.#gateway.sendText(input);
-    if (!result.ok) this.#reportError(result.error, generation);
+    if (!result.ok) this.#reportError(result.error, generation, "command");
     return result;
   }
 
@@ -508,7 +516,7 @@ export class ChatClient {
       }
       if (!result.ok) {
         if (hasSameInteractionIdentity(currentPending, pending)) {
-          this.#reportError(result.error, this.#generation);
+          this.#reportError(result.error, this.#generation, "command");
         }
         return result;
       }
@@ -578,7 +586,7 @@ export class ChatClient {
       this.#snapshotStore.state.snapshot.conversation.id ===
         input.conversationId
     ) {
-      this.#reportError(result.error, generation);
+      this.#reportError(result.error, generation, "command");
     }
     return result;
   }
@@ -659,7 +667,7 @@ export class ChatClient {
           input.conversationId,
         );
       }
-      this.#reportError(loaded.error, generation);
+      this.#reportError(loaded.error, generation, "command");
       return loaded;
     }
     if (
@@ -733,6 +741,24 @@ export class ChatClient {
         conversationId,
       );
     }
+    const lifecycle = this.#snapshotStore.state.snapshot.lifecycle;
+    if (
+      lifecycle !== undefined &&
+      (lifecycle.status !== "active" ||
+        lifecycle.recovery?.complete === false ||
+        ((lifecycle.reconnectAttempt ?? 0) > 0 &&
+          lifecycle.recovery?.complete !== true))
+    ) {
+      return runtimeFailure(
+        lifecycle.status === "auth-required"
+          ? "authentication"
+          : lifecycle.status === "subscription-failed"
+            ? "network"
+            : "conflict",
+        `Conversation is not operable while lifecycle is ${lifecycle.status}`,
+        conversationId,
+      );
+    }
     return { ok: true, value: this.#snapshotStore.state.snapshot };
   }
 
@@ -777,15 +803,29 @@ export class ChatClient {
 
   #captureHandoff(notification: GatewayNotification, generation: number): void {
     const handoff = this.#pendingHandoff;
+    const state = this.#snapshotStore.state;
     if (
       handoff === undefined ||
       handoff.sourceGeneration !== generation ||
-      this.#snapshotStore.state?.snapshot.conversation.id !==
-        handoff.conversationId
+      state?.snapshot.conversation.id !== handoff.conversationId
     ) {
       return;
     }
     if (notification.kind === "update") {
+      if (
+        notification.update.kind === "lifecycle.changed" ||
+        (notification.update.kind === "error.reported" &&
+          notification.update.scope?.kind === "subscription")
+      ) {
+        return;
+      }
+      if (notification.update.kind === "error.resolved") {
+        const errorId = notification.update.errorId;
+        const occurrence = state.snapshot.activeErrors?.find(
+          ({ id }) => id === errorId,
+        );
+        if (occurrence?.scope.kind === "subscription") return;
+      }
       const targetConversationId = updateConversationId(notification.update);
       if (
         targetConversationId !== undefined &&
@@ -796,8 +836,7 @@ export class ChatClient {
     }
     if (
       notification.kind === "error" &&
-      notification.error.conversationId !== undefined &&
-      notification.error.conversationId !== handoff.conversationId
+      notification.error.conversationId !== undefined
     ) {
       return;
     }
@@ -805,6 +844,23 @@ export class ChatClient {
   }
 
   #applyGatewayUpdate(update: ChatUpdate, generation: number): void {
+    if (
+      update.kind === "error.reported" &&
+      update.errorId !== undefined &&
+      update.source !== undefined &&
+      update.scope !== undefined &&
+      update.generation !== undefined
+    ) {
+      const marker = { error: update.error, generation };
+      this.#structuredGatewayErrorMarker = marker;
+      void Promise.resolve().then(() => {
+        if (this.#structuredGatewayErrorMarker === marker) {
+          this.#structuredGatewayErrorMarker = undefined;
+        }
+      });
+    } else {
+      this.#structuredGatewayErrorMarker = undefined;
+    }
     this.#captureHandoff({ kind: "update", update }, generation);
     if (
       this.#disposed ||
@@ -835,10 +891,14 @@ export class ChatClient {
         interactionIdentityKey(candidateInteraction),
       )
     ) {
-      return updateSnapshotState(candidate, {
+      const guarded = updateSnapshotState(candidate, {
         pendingInteraction: currentInteraction,
-        error: retiredInteractionError(current.snapshot.conversation.id),
       });
+      return applyRuntimeSnapshotError(
+        guarded,
+        retiredInteractionError(current.snapshot.conversation.id),
+        `runtime:retired-interaction:${candidateInteraction.requestId}:${candidateInteraction.revision}`,
+      );
     }
     if (
       currentInteraction !== undefined &&
@@ -874,11 +934,20 @@ export class ChatClient {
   }
 
   #applyGatewayError(error: ChatError, generation: number): void {
+    const marker = this.#structuredGatewayErrorMarker;
+    this.#structuredGatewayErrorMarker = undefined;
+    if (marker?.generation === generation && deepEqual(marker.error, error)) {
+      return;
+    }
     this.#captureHandoff({ kind: "error", error }, generation);
     this.#reportError(error, generation);
   }
 
-  #reportError(error: ChatError, generation: number): void {
+  #reportError(
+    error: ChatError,
+    generation: number,
+    source: ChatErrorSource = "runtime",
+  ): void {
     if (
       this.#disposed ||
       generation !== this.#generation ||
@@ -890,7 +959,45 @@ export class ChatClient {
       return;
     }
     const state = this.#snapshotStore.latestState()!;
-    this.#snapshotStore.commit(applySnapshotError(state, error));
+    const immutableError = cloneImmutable(error);
+    const errorId = `runtime:${generation}:error:${++this.#errorSequence}`;
+    const existingOccurrences =
+      state.snapshot.activeErrors ??
+      (state.snapshot.error === undefined
+        ? []
+        : [
+            cloneImmutable({
+              id: "runtime:legacy-snapshot",
+              error: state.snapshot.error,
+              source: "runtime" as const,
+              scope: {
+                kind: "conversation" as const,
+                id: state.snapshot.conversation.id,
+              },
+              generation: state.snapshot.lifecycle?.generation ?? 0,
+            }),
+          ]);
+    const occurrence = cloneImmutable({
+      id: errorId,
+      error: immutableError,
+      source,
+      scope:
+        source === "command"
+          ? { kind: "command" as const, id: errorId }
+          : immutableError.conversationId === undefined
+            ? { kind: "global" as const }
+            : {
+                kind: "conversation" as const,
+                id: immutableError.conversationId,
+              },
+      generation,
+    });
+    this.#snapshotStore.commit(
+      updateSnapshotState(state, {
+        activeErrors: Object.freeze([...existingOccurrences, occurrence]),
+        error: occurrence.error,
+      }),
+    );
   }
 
   #reportUnhandledError(failure: ChatClientUnhandledError): void {

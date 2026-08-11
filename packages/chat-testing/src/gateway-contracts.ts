@@ -27,6 +27,15 @@ import {
   type ChatContractFixtures,
 } from "./fixtures.js";
 
+/** Lifecycle/error control updates may accompany, but never replace, data. */
+const dataUpdates = (updates: readonly ChatUpdate[]): readonly ChatUpdate[] =>
+  updates.filter(
+    (update) =>
+      update.kind !== "lifecycle.changed" &&
+      update.kind !== "error.reported" &&
+      update.kind !== "error.resolved",
+  );
+
 export type GatewayContractOperation =
   | "answerInteraction"
   | "createConversation"
@@ -215,12 +224,12 @@ const gatewayIsolationCase = (
 
         await first.controller.emitUpdate(firstFixtures.realtimeMessageUpdate);
         assertEqual(
-          firstUpdates,
+          dataUpdates(firstUpdates),
           [firstFixtures.realtimeMessageUpdate],
           "the first instance must receive its own update",
         );
         assertEqual(
-          secondUpdates,
+          dataUpdates(secondUpdates),
           [],
           "the second instance must not receive the first instance update",
         );
@@ -243,7 +252,7 @@ const gatewayIsolationCase = (
           secondFixtures.realtimeMessageUpdate,
         );
         assertEqual(
-          secondUpdates,
+          dataUpdates(secondUpdates),
           [secondFixtures.realtimeMessageUpdate],
           "disposing one instance must not silence another",
         );
@@ -599,7 +608,7 @@ export const createGatewayContractCases = (
           await controller.emitUpdate(update);
         }
         assertEqual(
-          received,
+          dataUpdates(received),
           [
             ...fixtures.duplicateMessageUpdates,
             ...fixtures.outOfOrderEventUpdates,
@@ -613,7 +622,7 @@ export const createGatewayContractCases = (
         });
         await controller.emitUpdate(fixtures.realtimeMessageUpdate);
         assert(
-          received.length === 5,
+          dataUpdates(received).length === 5,
           "disposed subscriptions must stay silent",
         );
       },
@@ -730,7 +739,7 @@ export const createGatewayContractCases = (
         );
         await controller.emitUpdate(fixtures.realtimeMessageUpdate);
         assert(
-          updates.length === 0,
+          dataUpdates(updates).length === 0,
           "live subscriptions must stay silent while disconnected",
         );
 
@@ -753,7 +762,7 @@ export const createGatewayContractCases = (
           "the original live subscription must resume after reconnect",
         );
         assert(
-          updates.every(
+          dataUpdates(updates).every(
             (update) =>
               update.kind === "timeline.upsert" ||
               (update.kind === "run.replace" &&
@@ -996,11 +1005,15 @@ export const createGatewayContractCases = (
           { next: (update) => received.push(update) },
         );
         assert(subscribed.ok, "subscribe must succeed before Gateway disposal");
+        const receivedBeforeDisposal = received.length;
 
         await gateway.dispose({ deadlineAt: deadlineFrom(controller.now()) });
         await gateway.dispose({ deadlineAt: deadlineFrom(controller.now()) });
         await controller.emitUpdate(fixtures.realtimeMessageUpdate);
-        assert(received.length === 0, "disposed Gateways must stay silent");
+        assert(
+          received.length === receivedBeforeDisposal,
+          "disposed Gateways must stay silent",
+        );
       },
     ),
   ]);

@@ -293,6 +293,25 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
           ({ operation }) => operation === "answerInteraction",
         ),
       ).toHaveLength(0);
+      await act(async () => {
+        memory.controller.emitUpdateToAll({
+          kind: "lifecycle.changed",
+          conversationId: memory.fixtures.conversation.id,
+          lifecycle: {
+            status: "recovering",
+            generation: 2,
+            subscriptionId: "subscription-2",
+            recovery: { complete: false },
+          },
+        });
+        await flushMicrotasks();
+      });
+      expect(discussionButtons.every((button) => button.disabled)).toBe(true);
+      await act(async () => {
+        discussionButtons[0]!.click();
+        await flushMicrotasks();
+      });
+      expect(discussions).toHaveLength(1);
       expect(client.getSnapshot()?.pendingInteraction?.requestId).toBe(
         memory.fixtures.askUserRequest.requestId,
       );

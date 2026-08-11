@@ -222,6 +222,43 @@ describe("normalized protocol schemas", () => {
         },
       }).success,
     ).toBe(false);
+    expect(
+      chatSnapshotSchema.safeParse({
+        ...snapshot,
+        activeErrors: [],
+        error: {
+          code: "network",
+          message: "Stale legacy projection",
+          retryable: true,
+          conversationId: conversation.id,
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      chatSnapshotSchema.safeParse({
+        ...snapshot,
+        activeErrors: [
+          {
+            id: "current-error",
+            error: {
+              code: "network",
+              message: "Current error",
+              retryable: true,
+              conversationId: conversation.id,
+            },
+            source: "connection",
+            scope: { kind: "subscription", id: "subscription-3" },
+            generation: 3,
+          },
+        ],
+        error: {
+          code: "network",
+          message: "Different projection",
+          retryable: true,
+          conversationId: conversation.id,
+        },
+      }).success,
+    ).toBe(false);
   });
 
   it("validates request defaults while tolerating historical result values", () => {
@@ -899,6 +936,158 @@ describe("normalized protocol schemas", () => {
     expect(invalidEventError.success).toBe(false);
     expect(invalidReportedError.success).toBe(false);
     expect(invalidTransitionError.success).toBe(false);
+  });
+
+  it("validates lifecycle state and independently resolvable errors", () => {
+    const lifecycle = {
+      status: "recovering" as const,
+      generation: 3,
+      reconnectAttempt: 1,
+      subscriptionId: "subscription-3",
+      recovery: { complete: false, cursor: "cursor-7" },
+    };
+    expect(
+      chatSnapshotSchema.safeParse({
+        ...snapshot,
+        lifecycle,
+        activeErrors: [
+          {
+            id: "subscription-3:error:1",
+            error: {
+              code: "network",
+              message: "Recovering",
+              retryable: true,
+              conversationId: conversation.id,
+            },
+            source: "connection",
+            scope: { kind: "subscription", id: "subscription-3" },
+            generation: 3,
+          },
+        ],
+        error: {
+          code: "network",
+          message: "Recovering",
+          retryable: true,
+          conversationId: conversation.id,
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      chatSnapshotSchema.safeParse({
+        ...snapshot,
+        lifecycle,
+        activeErrors: [
+          {
+            id: "missing-error-projection",
+            error: {
+              code: "network",
+              message: "Projection is required",
+              retryable: true,
+              conversationId: conversation.id,
+            },
+            source: "connection",
+            scope: { kind: "subscription", id: "subscription-3" },
+            generation: 3,
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      chatUpdateSchema.safeParse({
+        kind: "lifecycle.changed",
+        conversationId: conversation.id,
+        lifecycle,
+      }).success,
+    ).toBe(true);
+    expect(
+      chatUpdateSchema.safeParse({
+        kind: "error.resolved",
+        conversationId: conversation.id,
+        errorId: "subscription-3:error:1",
+      }).success,
+    ).toBe(true);
+    expect(
+      chatUpdateSchema.safeParse({
+        kind: "error.reported",
+        conversationId: conversation.id,
+        error: {
+          code: "network",
+          message: "Incomplete occurrence",
+          retryable: true,
+        },
+        errorId: "missing-source-and-scope",
+      }).success,
+    ).toBe(false);
+    expect(
+      chatUpdateSchema.safeParse({
+        kind: "error.reported",
+        error: {
+          code: "server",
+          message: "Conflicting target",
+          retryable: false,
+          conversationId: conversation.id,
+        },
+        errorId: "conflicting-target",
+        source: "domain",
+        scope: { kind: "conversation", id: "conversation-other" },
+        generation: 3,
+      }).success,
+    ).toBe(false);
+    expect(
+      chatUpdateSchema.safeParse({
+        kind: "lifecycle.changed",
+        conversationId: conversation.id,
+        lifecycle: {
+          status: "active",
+          reconnectAttempt: 1,
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      chatUpdateSchema.safeParse({
+        kind: "lifecycle.changed",
+        conversationId: conversation.id,
+        lifecycle: {
+          status: "active",
+          recovery: { complete: false },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      chatUpdateSchema.safeParse({
+        kind: "error.reported",
+        conversationId: conversation.id,
+        error: {
+          code: "network",
+          message: "Missing generation",
+          retryable: true,
+        },
+        errorId: "error-without-generation",
+        source: "connection",
+        scope: { kind: "subscription", id: "subscription-3" },
+      }).success,
+    ).toBe(false);
+    expect(
+      chatSnapshotSchema.safeParse({
+        ...snapshot,
+        activeErrors: [
+          {
+            id: "duplicate-error",
+            error: { code: "network", message: "First", retryable: true },
+            source: "connection",
+            scope: { kind: "subscription", id: "subscription-3" },
+            generation: 3,
+          },
+          {
+            id: "duplicate-error",
+            error: { code: "server", message: "Second", retryable: false },
+            source: "recovery",
+            scope: { kind: "subscription", id: "subscription-3" },
+            generation: 3,
+          },
+        ],
+      }).success,
+    ).toBe(false);
   });
 });
 

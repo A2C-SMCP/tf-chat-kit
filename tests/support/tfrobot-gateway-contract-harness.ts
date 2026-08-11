@@ -319,9 +319,11 @@ class ContractSocket implements TFRobotSocket {
     this.connected = false;
   }
 
-  emit(...arguments_: [eventName: string, payload?: unknown]): void {
-    void arguments_;
-    // The harness only observes server-to-client behavior.
+  emit(eventName: string, ...arguments_: unknown[]): void {
+    if (eventName === "join_conversation") {
+      const acknowledgement = arguments_[1];
+      if (typeof acknowledgement === "function") acknowledgement(true);
+    }
   }
 
   off(eventName: string, listener: TFRobotSocketListener): void {

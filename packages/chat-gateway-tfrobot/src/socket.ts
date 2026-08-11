@@ -6,6 +6,9 @@ import {
   createGatewayDeadlineExceededError,
   isGatewayDeadlineExceeded,
   type ChatError,
+  type ChatErrorSource,
+  type ChatLifecycle,
+  type ChatUpdate,
   type GatewayObserver,
   type GatewayRequestOptions,
   type GatewayResult,
@@ -58,6 +61,165 @@ const KNOWN_EVENTS = new Set([
 ]);
 const MAX_TIMER_DELAY = 2_147_483_647;
 const RECONNECT_AUTH_TIMEOUT_MS = 10_000;
+const RECONNECT_JOIN_TIMEOUT_MS = 10_000;
+
+interface JoinAcknowledgement {
+  readonly accepted: boolean;
+  readonly rejectionCode?:
+    "authentication" | "authorization" | "validation" | undefined;
+  readonly recoveryComplete: boolean;
+  readonly cursor?: string | undefined;
+  readonly message?: string | undefined;
+}
+
+const parseJoinAcknowledgement = (
+  value: unknown,
+  reconnect: boolean,
+): JoinAcknowledgement => {
+  if (value === undefined) {
+    return {
+      accepted: reconnect,
+      recoveryComplete: false,
+      ...(reconnect ? {} : { rejectionCode: "validation" as const }),
+    };
+  }
+  if (value === null) {
+    return {
+      accepted: false,
+      recoveryComplete: false,
+      rejectionCode: "validation",
+    };
+  }
+  if (value === false) {
+    return {
+      accepted: false,
+      recoveryComplete: false,
+      rejectionCode: "validation",
+    };
+  }
+  if (value === true) {
+    return { accepted: true, recoveryComplete: !reconnect };
+  }
+  if (typeof value !== "object") {
+    return {
+      accepted: false,
+      recoveryComplete: false,
+      rejectionCode: "validation",
+    };
+  }
+  const record = value as Record<string, unknown>;
+  const booleanAliases = ["ok", "accepted", "success"] as const;
+  const hasInvalidBooleanAlias = booleanAliases.some(
+    (alias) =>
+      Object.hasOwn(record, alias) && typeof record[alias] !== "boolean",
+  );
+  const statusAliases = ["status", "statusCode", "code"] as const;
+  const hasInvalidStatusAlias = statusAliases.some(
+    (alias) => Object.hasOwn(record, alias) && record[alias] === undefined,
+  );
+  const statuses = [record["status"], record["statusCode"], record["code"]]
+    .filter((status) => status !== undefined)
+    .map((status) => {
+      const numeric =
+        typeof status === "number"
+          ? status
+          : typeof status === "string" && /^\d{3}$/u.test(status)
+            ? Number(status)
+            : undefined;
+      const normalized =
+        typeof status === "string" ? status.trim().toLowerCase() : undefined;
+      const accepted =
+        (numeric !== undefined && numeric >= 200 && numeric < 300) ||
+        normalized === "ok" ||
+        normalized === "success" ||
+        normalized === "accepted" ||
+        normalized === "joined";
+      const rejected =
+        (numeric !== undefined && numeric >= 400) ||
+        normalized === "error" ||
+        normalized === "failed" ||
+        normalized === "forbidden" ||
+        normalized === "unauthorized" ||
+        normalized === "rejected";
+      return { accepted, normalized, numeric, rejected };
+    });
+  const hasUnknownStatus = statuses.some(
+    (status) => !status.accepted && !status.rejected,
+  );
+  const explicitlyAccepted =
+    record["ok"] === true ||
+    record["accepted"] === true ||
+    record["success"] === true ||
+    statuses.some((status) => status.accepted);
+  const cursorAliases = ["cursor", "recoveryCursor"] as const;
+  const cursorValues = cursorAliases
+    .filter((alias) => Object.hasOwn(record, alias))
+    .map((alias) => record[alias]);
+  const cursorInvalid = cursorValues.some(
+    (cursorValue) => typeof cursorValue !== "string",
+  );
+  const cursorConflict =
+    cursorValues.length > 1 &&
+    cursorValues.some((cursorValue) => cursorValue !== cursorValues[0]);
+  const recoveryAliases = ["recovered", "recoveryComplete"] as const;
+  const recoveryDeclarations = recoveryAliases
+    .filter((alias) => Object.hasOwn(record, alias))
+    .map((alias) => record[alias]);
+  const recoveryInvalid = recoveryDeclarations.some(
+    (declaration) => typeof declaration !== "boolean",
+  );
+  const recoveryConflict =
+    recoveryDeclarations.includes(true) && recoveryDeclarations.includes(false);
+  const normalizedError =
+    typeof record["error"] === "string"
+      ? record["error"].trim().toLowerCase()
+      : undefined;
+  const explicitlyRejected =
+    hasInvalidBooleanAlias ||
+    hasInvalidStatusAlias ||
+    record["ok"] === false ||
+    record["accepted"] === false ||
+    record["success"] === false ||
+    record["error"] !== undefined ||
+    cursorInvalid ||
+    cursorConflict ||
+    recoveryInvalid ||
+    recoveryConflict ||
+    (!reconnect && recoveryDeclarations.includes(false)) ||
+    hasUnknownStatus ||
+    statuses.some((status) => status.rejected);
+  const accepted = explicitlyAccepted && !explicitlyRejected;
+  const cursor = cursorValues[0];
+  const recoveryComplete =
+    !reconnect ||
+    (recoveryDeclarations.length > 0 &&
+      recoveryDeclarations.every((declaration) => declaration === true));
+  const authenticationRejected =
+    statuses.some(
+      ({ normalized, numeric }) =>
+        numeric === 401 || normalized === "unauthorized",
+    ) || normalizedError === "unauthorized";
+  const authorizationRejected =
+    statuses.some(
+      ({ normalized, numeric }) =>
+        numeric === 403 || normalized === "forbidden",
+    ) || normalizedError === "forbidden";
+  return {
+    accepted,
+    ...(authenticationRejected
+      ? { rejectionCode: "authentication" as const }
+      : authorizationRejected
+        ? { rejectionCode: "authorization" as const }
+        : accepted
+          ? {}
+          : { rejectionCode: "validation" as const }),
+    recoveryComplete,
+    ...(typeof cursor === "string" ? { cursor } : {}),
+    ...(typeof record["message"] === "string"
+      ? { message: record["message"] }
+      : {}),
+  };
+};
 
 const sameRun = (first: Run | null | undefined, second: Run | null): boolean =>
   first === second ||
@@ -162,23 +324,34 @@ export const createSocketIoFactoryWith =
 export const createSocketIoFactory = createSocketIoFactoryWith(io);
 
 interface ActiveSubscription {
+  acceptingEvents: boolean;
   active: boolean;
+  authRequired: boolean;
   readonly cancelEstablishment: () => void;
   readonly cleanup: () => void;
   readonly conversationId: string;
+  readonly generation: number;
+  manualReconnectAttempted: boolean;
+  manualReconnectPending: boolean;
   readonly observer: GatewayObserver;
+  reconnectAttempt: number;
   recoveryRevision: number;
+  runRevision: number;
   readonly socket: TFRobotSocket;
+  readonly subscriptionId: string;
+  terminal: boolean;
 }
 
 type ReconnectStatusLoader = (
   conversationId: string,
 ) => Promise<GatewayResult<StatusDto>>;
+type RecoveryOutcome =
+  "success" | "superseded-by-realtime" | "failure" | "auth-required";
 
 export class TFRobotSocketClient {
-  #active: ActiveSubscription | undefined;
   #disposed = false;
   #establishmentAbort: AbortController | undefined;
+  #establishing: ActiveSubscription | undefined;
   readonly #factory: TFRobotSocketFactory;
   readonly #namespaceUrl: string;
   readonly #now: () => number;
@@ -186,6 +359,8 @@ export class TFRobotSocketClient {
   readonly #path: string;
   readonly #reconnectStatusLoader: ReconnectStatusLoader;
   readonly #runs = new Map<string, Run | null>();
+  readonly #subscriptions = new Set<ActiveSubscription>();
+  #subscriptionGeneration = 0;
 
   constructor(
     options: TFRobotGatewayOptions,
@@ -222,7 +397,9 @@ export class TFRobotSocketClient {
         error: createGatewayDeadlineExceededError(),
       };
     }
-    this.#deactivateCurrent();
+    const generation = ++this.#subscriptionGeneration;
+    const subscriptionId = `tfrobot-subscription-${generation}`;
+    this.#cancelEstablishment();
     const establishmentAbort = new AbortController();
     this.#establishmentAbort = establishmentAbort;
     const authOutcome = await awaitBounded(
@@ -233,9 +410,6 @@ export class TFRobotSocketClient {
         signal: establishmentAbort.signal,
       },
     );
-    if (this.#establishmentAbort === establishmentAbort) {
-      this.#establishmentAbort = undefined;
-    }
     switch (authOutcome.kind) {
       case "aborted": {
         return {
@@ -342,6 +516,23 @@ export class TFRobotSocketClient {
       };
     }
     const listeners = new Map<string, TFRobotSocketListener>();
+    let joinTimeout: ReturnType<typeof setTimeout> | undefined;
+    const activeErrorIds = new Map<ChatErrorSource, string>();
+    const replaceableErrorSources = new Set<ChatErrorSource>([
+      "authentication",
+      "connection",
+      "recovery",
+      "subscription",
+    ]);
+    let errorSequence = 0;
+    let publishUpdate: GatewayObserver["next"] = () => undefined;
+    const pendingNotifications: Array<
+      | { readonly kind: "update"; readonly update: ChatUpdate }
+      | { readonly kind: "error"; readonly error: ChatError }
+    > = [];
+    const pendingRealtimeActions: Array<() => void> = [];
+    let joinPending = false;
+    let subscriptionEstablished = false;
     let setupFailure: { readonly reason: unknown } | undefined;
     const add = (eventName: string, listener: TFRobotSocketListener): void => {
       if (setupFailure !== undefined) return;
@@ -361,13 +552,55 @@ export class TFRobotSocketClient {
         // Diagnostics are observational and cannot break the chat stream.
       }
     };
-    const report = (error: ChatError): void => {
-      if (!active.active) return;
+    const notifyError = (error: ChatError): void => {
       try {
         observer.error?.(error);
       } catch {
         // Host observers are isolated from the transport listener.
       }
+    };
+    const resolveError = (source: ChatErrorSource): void => {
+      const errorId = activeErrorIds.get(source);
+      if (errorId === undefined || !active.active) return;
+      activeErrorIds.delete(source);
+      publishUpdate(
+        chatUpdateSchema.parse({
+          kind: "error.resolved",
+          conversationId: errorConversationId(),
+          errorId,
+        }),
+      );
+    };
+    const report = (
+      error: ChatError,
+      source: ChatErrorSource = "protocol",
+    ): void => {
+      if (!active.active) return;
+      if (replaceableErrorSources.has(source)) resolveError(source);
+      const errorId = `${subscriptionId}:error:${++errorSequence}`;
+      if (replaceableErrorSources.has(source)) {
+        activeErrorIds.set(source, errorId);
+      }
+      const occurrenceError =
+        error.conversationId === undefined
+          ? error
+          : { ...error, conversationId: errorConversationId() };
+      publishUpdate(
+        chatUpdateSchema.parse({
+          kind: "error.reported",
+          conversationId: errorConversationId(),
+          error: occurrenceError,
+          errorId,
+          source,
+          scope:
+            source === "domain"
+              ? { kind: "conversation", id: errorConversationId() }
+              : { kind: "subscription", id: subscriptionId },
+          generation,
+        }),
+      );
+      if (subscriptionEstablished) notifyError(error);
+      else pendingNotifications.push({ kind: "error", error });
       diagnose(error);
     };
     const sanitizePayload = (payload: unknown): unknown => {
@@ -392,6 +625,10 @@ export class TFRobotSocketClient {
       ) {
         return;
       }
+      if (!subscriptionEstablished) {
+        pendingNotifications.push({ kind: "update", update });
+        return;
+      }
       try {
         observer.next(update);
       } catch {
@@ -403,6 +640,74 @@ export class TFRobotSocketClient {
             errorConversationId(),
           ),
         );
+      }
+    };
+    publishUpdate = next;
+    const dispatchRealtime = (action: () => void): void => {
+      if (active.acceptingEvents) action();
+      else if (joinPending) pendingRealtimeActions.push(action);
+    };
+    const flushRealtime = (): void => {
+      for (const action of pendingRealtimeActions.splice(0)) action();
+    };
+    const lifecycle = (
+      status: ChatLifecycle["status"],
+      recovery?: ChatLifecycle["recovery"],
+      joinLatencyMs?: number,
+    ): void => {
+      if (!active.active) return;
+      const value: ChatLifecycle = {
+        status,
+        generation,
+        reconnectAttempt: active.reconnectAttempt,
+        subscriptionId,
+        ...(recovery === undefined ? {} : { recovery }),
+      };
+      const update = chatUpdateSchema.parse({
+        kind: "lifecycle.changed",
+        conversationId: errorConversationId(),
+        lifecycle: value,
+      });
+      next(update);
+      try {
+        void Promise.resolve(
+          this.#options.onLifecycleDiagnostic?.({
+            kind: "socket.lifecycle",
+            conversationId: errorConversationId(),
+            subscriptionId,
+            generation,
+            status,
+            reconnectAttempt: active.reconnectAttempt,
+            ...(joinLatencyMs === undefined ? {} : { joinLatencyMs }),
+            ...(recovery === undefined
+              ? {}
+              : {
+                  recoveryComplete: recovery.complete,
+                  ...(recovery.cursor === undefined
+                    ? {}
+                    : { recoveryCursor: recovery.cursor }),
+                  ...(recovery.reason === undefined
+                    ? {}
+                    : { recoveryReason: recovery.reason }),
+                }),
+          }),
+        ).catch(() => undefined);
+      } catch {
+        // Lifecycle diagnostics are observational.
+      }
+    };
+    const enterAuthRequired = (): void => {
+      active.acceptingEvents = false;
+      active.authRequired = true;
+      active.terminal = true;
+      joinPending = false;
+      pendingRealtimeActions.length = 0;
+      active.recoveryRevision += 1;
+      lifecycle("auth-required");
+      try {
+        active.socket.disconnect();
+      } catch {
+        // Authentication is already terminal for this subscription episode.
       }
     };
     const mapAndNext = (
@@ -427,40 +732,13 @@ export class TFRobotSocketClient {
     };
     let settleEstablishment:
       ((result: GatewayResult<GatewaySubscription>) => void) | undefined;
-    let connectedOnce = false;
     add("connect", () => {
       if (!active.active) return;
-      if (
-        settleEstablishment !== undefined &&
-        isGatewayDeadlineExceeded(options, this.#now())
-      ) {
-        settleEstablishment({
-          ok: false,
-          error: createGatewayDeadlineExceededError(errorConversationId()),
-        });
-        return;
-      }
-      const reconnect = connectedOnce;
-      connectedOnce = true;
-      const recoveryRevision = ++active.recoveryRevision;
-      try {
-        socket.emit("join_conversation", {
-          conversation_id: conversationId,
-        });
-      } catch (reason) {
-        const error = this.#transportError(
-          reason,
-          "Unable to join the TFRobot conversation",
-          conversationId,
-          credentialValues,
-        );
-        if (settleEstablishment !== undefined) {
-          settleEstablishment({ ok: false, error });
-        } else {
-          report(error);
-          active.active = false;
-          active.cleanup();
-          if (this.#active === active) this.#active = undefined;
+      if (active.terminal) {
+        try {
+          active.socket.disconnect();
+        } catch {
+          // Terminal subscriptions never rejoin.
         }
         return;
       }
@@ -474,162 +752,410 @@ export class TFRobotSocketClient {
         });
         return;
       }
-      settleEstablishment?.({
-        ok: true,
-        value: {
-          dispose: () => {
-            if (!active.active) return;
-            active.active = false;
-            active.cleanup();
-            if (this.#active === active) this.#active = undefined;
+      if (joinTimeout !== undefined) {
+        clearTimeout(joinTimeout);
+        joinTimeout = undefined;
+      }
+      const reconnect = subscriptionEstablished;
+      if (reconnect) active.reconnectAttempt += 1;
+      const recoveryRevision = ++active.recoveryRevision;
+      const runRevision = active.runRevision;
+      const joinStartedAt = this.#now();
+      active.acceptingEvents = false;
+      joinPending = true;
+      pendingRealtimeActions.length = 0;
+      lifecycle("joining");
+      let acknowledgementSettled = false;
+      const settleJoin = (...acknowledgementArguments: unknown[]): void => {
+        if (
+          !active.active ||
+          !this.#subscriptions.has(active) ||
+          active.recoveryRevision !== recoveryRevision
+        ) {
+          return;
+        }
+        if (acknowledgementSettled) return;
+        acknowledgementSettled = true;
+        if (joinTimeout !== undefined) {
+          clearTimeout(joinTimeout);
+          joinTimeout = undefined;
+        }
+        let acknowledgement: JoinAcknowledgement;
+        try {
+          const rawAcknowledgement = acknowledgementArguments[0];
+          acknowledgement = parseJoinAcknowledgement(
+            rawAcknowledgement === undefined || rawAcknowledgement === true
+              ? rawAcknowledgement
+              : sanitizeCredentialRaw(rawAcknowledgement, credentialValues),
+            reconnect,
+          );
+        } catch {
+          acknowledgement = {
+            accepted: false,
+            recoveryComplete: false,
+            rejectionCode: "validation",
+            message:
+              "Invalid TFRobot conversation subscription acknowledgement",
+          };
+        }
+        if (!acknowledgement.accepted) {
+          joinPending = false;
+          pendingRealtimeActions.length = 0;
+          const rejectionCode = acknowledgement.rejectionCode ?? "validation";
+          const error = this.#error(
+            rejectionCode,
+            acknowledgement.message ??
+              "TFRobot conversation subscription was rejected",
+            false,
+            errorConversationId(),
+          );
+          if (settleEstablishment !== undefined) {
+            lifecycle("subscription-failed");
+            if (
+              rejectionCode === "authentication" ||
+              rejectionCode === "authorization"
+            ) {
+              void this.#invalidateSession(error, "rejected");
+            }
+            settleEstablishment({ ok: false, error });
+          } else {
+            const authenticationRejected =
+              rejectionCode === "authentication" ||
+              rejectionCode === "authorization";
+            if (authenticationRejected) {
+              enterAuthRequired();
+            } else {
+              active.acceptingEvents = false;
+              active.terminal = true;
+              active.recoveryRevision += 1;
+              try {
+                active.socket.disconnect();
+              } catch {
+                // Subscription failure is already terminal for this episode.
+              }
+              lifecycle("subscription-failed");
+            }
+            report(
+              error,
+              authenticationRejected ? "authentication" : "subscription",
+            );
+            if (authenticationRejected) {
+              void this.#invalidateSession(error, "rejected");
+            }
+          }
+          return;
+        }
+        if (!reconnect) {
+          joinPending = false;
+          subscriptionEstablished = true;
+          for (const notification of pendingNotifications.splice(0)) {
+            if (notification.kind === "update") next(notification.update);
+            else notifyError(notification.error);
+          }
+          settleEstablishment?.({
+            ok: true,
+            value: {
+              dispose: () => {
+                if (!active.active) return;
+                active.active = false;
+                active.cleanup();
+                this.#subscriptions.delete(active);
+              },
+            },
+          });
+          resolveError("connection");
+          resolveError("authentication");
+          lifecycle(
+            "active",
+            {
+              complete: true,
+              ...(acknowledgement.cursor === undefined
+                ? {}
+                : { cursor: acknowledgement.cursor }),
+            },
+            this.#now() - joinStartedAt,
+          );
+          active.acceptingEvents = true;
+          flushRealtime();
+          return;
+        }
+
+        joinPending = false;
+        const joinLatencyMs = this.#now() - joinStartedAt;
+        lifecycle(
+          "recovering",
+          {
+            complete: false,
+            ...(acknowledgement.cursor === undefined
+              ? {}
+              : { cursor: acknowledgement.cursor }),
+            ...(acknowledgement.recoveryComplete
+              ? {}
+              : { reason: "server-replay-contract-unavailable" }),
           },
-        },
-      });
-      if (reconnect) {
+          joinLatencyMs,
+        );
+        active.acceptingEvents = true;
+        flushRealtime();
         void this.#reconcileRunAfterReconnect(
           active,
           conversationId,
           credentialValues,
           recoveryRevision,
+          runRevision,
           next,
           report,
-        ).catch(() => {
-          report(
-            this.#error(
-              "unknown",
-              "TFRobot reconnect reconciliation failed",
-              true,
-              errorConversationId(),
-            ),
+        )
+          .then((outcome) => {
+            if (outcome === "auth-required") {
+              enterAuthRequired();
+              return;
+            }
+            if (
+              (outcome !== "success" && outcome !== "superseded-by-realtime") ||
+              !acknowledgement.recoveryComplete
+            ) {
+              return;
+            }
+            resolveError("connection");
+            resolveError("recovery");
+            resolveError("authentication");
+            active.manualReconnectAttempted = false;
+            active.manualReconnectPending = false;
+            active.authRequired = false;
+            active.terminal = false;
+            lifecycle(
+              "active",
+              {
+                complete: true,
+                ...(acknowledgement.cursor === undefined
+                  ? {}
+                  : { cursor: acknowledgement.cursor }),
+              },
+              joinLatencyMs,
+            );
+          })
+          .catch(() => {
+            active.acceptingEvents = false;
+            active.terminal = true;
+            try {
+              active.socket.disconnect();
+            } catch {
+              // Offline is already terminal for this subscription episode.
+            }
+            lifecycle("offline");
+            report(
+              this.#error(
+                "unknown",
+                "TFRobot reconnect reconciliation failed",
+                true,
+                errorConversationId(),
+              ),
+              "recovery",
+            );
+          });
+      };
+      const joinDeadlineAt = reconnect
+        ? this.#now() + RECONNECT_JOIN_TIMEOUT_MS
+        : options.deadlineAt;
+      joinTimeout = setTimeout(
+        () => {
+          joinTimeout = undefined;
+          if (!active.active || active.recoveryRevision !== recoveryRevision) {
+            return;
+          }
+          active.recoveryRevision += 1;
+          joinPending = false;
+          pendingRealtimeActions.length = 0;
+          const error = createGatewayDeadlineExceededError(
+            errorConversationId(),
           );
-        });
+          if (settleEstablishment !== undefined) {
+            lifecycle("subscription-failed");
+            settleEstablishment({ ok: false, error });
+          } else {
+            if (active.manualReconnectPending) enterAuthRequired();
+            else {
+              active.acceptingEvents = false;
+              active.terminal = true;
+              lifecycle("subscription-failed");
+            }
+            report(
+              error,
+              active.manualReconnectPending ? "connection" : "subscription",
+            );
+            try {
+              active.socket.disconnect();
+            } catch {
+              // The failed join attempt is already invalidated.
+            }
+          }
+        },
+        Math.min(MAX_TIMER_DELAY, Math.max(0, joinDeadlineAt - this.#now())),
+      );
+      try {
+        socket.emit(
+          "join_conversation",
+          { conversation_id: conversationId },
+          settleJoin,
+        );
+      } catch (reason) {
+        const error = this.#transportError(
+          reason,
+          "Unable to join the TFRobot conversation",
+          conversationId,
+          credentialValues,
+        );
+        if (settleEstablishment !== undefined) {
+          settleEstablishment({ ok: false, error });
+        } else {
+          report(error, "subscription");
+          active.active = false;
+          active.cleanup();
+          this.#subscriptions.delete(active);
+        }
+        return;
       }
     });
     add("chat_message", (payload) => {
-      if (belongsToForeignConversation(payload, conversationId)) return;
-      const parsed = messageDtoSchema.safeParse(sanitizePayload(payload));
-      if (!parsed.success) {
-        report(
-          this.#error(
-            "validation",
-            "Invalid TFRobot chat_message payload",
-            false,
-            errorConversationId(),
-          ),
+      dispatchRealtime(() => {
+        if (belongsToForeignConversation(payload, conversationId)) return;
+        const parsed = messageDtoSchema.safeParse(sanitizePayload(payload));
+        if (!parsed.success) {
+          report(
+            this.#error(
+              "validation",
+              "Invalid TFRobot chat_message payload",
+              false,
+              errorConversationId(),
+            ),
+          );
+          return;
+        }
+        mapAndNext("TFRobot chat_message could not be normalized", () =>
+          mapMessageUpdate(parsed.data),
         );
-        return;
-      }
-      mapAndNext("TFRobot chat_message could not be normalized", () =>
-        mapMessageUpdate(parsed.data),
-      );
+      });
     });
     add("chat_event", (payload) => {
-      if (belongsToForeignConversation(payload, conversationId)) return;
-      const parsed = eventDtoSchema.safeParse(sanitizePayload(payload));
-      if (!parsed.success) {
-        report(
-          this.#error(
-            "validation",
-            "Invalid TFRobot chat_event payload",
-            false,
-            errorConversationId(),
-          ),
+      dispatchRealtime(() => {
+        if (belongsToForeignConversation(payload, conversationId)) return;
+        const parsed = eventDtoSchema.safeParse(sanitizePayload(payload));
+        if (!parsed.success) {
+          report(
+            this.#error(
+              "validation",
+              "Invalid TFRobot chat_event payload",
+              false,
+              errorConversationId(),
+            ),
+          );
+          return;
+        }
+        mapAndNext("TFRobot chat_event could not be normalized", () =>
+          mapEventUpdate(parsed.data),
         );
-        return;
-      }
-      mapAndNext("TFRobot chat_event could not be normalized", () =>
-        mapEventUpdate(parsed.data),
-      );
+      });
     });
     add("conversation_state_changed", (payload) => {
-      if (belongsToForeignConversation(payload, conversationId)) return;
-      const parsed = stateChangedDtoSchema.safeParse(sanitizePayload(payload));
-      if (!parsed.success) {
-        report(
-          this.#error(
-            "validation",
-            "Invalid TFRobot conversation_state_changed payload",
-            false,
-            errorConversationId(),
-          ),
+      dispatchRealtime(() => {
+        if (belongsToForeignConversation(payload, conversationId)) return;
+        const parsed = stateChangedDtoSchema.safeParse(
+          sanitizePayload(payload),
         );
-        return;
-      }
-      const targetConversationId = String(parsed.data.conversationId);
-      if (
-        targetConversationId !== conversationId &&
-        targetConversationId !== errorConversationId()
-      ) {
-        return;
-      }
-      active.recoveryRevision += 1;
-      mapAndNext("TFRobot run state could not be normalized", () => {
-        const run = mapRun(targetConversationId, {
-          working: parsed.data.state === "working",
-          taskId: parsed.data.taskId,
-        });
-        this.#runs.set(targetConversationId, run);
-        return chatUpdateSchema.parse({
-          kind: "run.replace",
-          conversationId: targetConversationId,
-          run,
+        if (!parsed.success) {
+          report(
+            this.#error(
+              "validation",
+              "Invalid TFRobot conversation_state_changed payload",
+              false,
+              errorConversationId(),
+            ),
+          );
+          return;
+        }
+        const targetConversationId = String(parsed.data.conversationId);
+        if (
+          targetConversationId !== conversationId &&
+          targetConversationId !== errorConversationId()
+        ) {
+          return;
+        }
+        active.runRevision += 1;
+        mapAndNext("TFRobot run state could not be normalized", () => {
+          const run = mapRun(targetConversationId, {
+            working: parsed.data.state === "working",
+            taskId: parsed.data.taskId,
+          });
+          this.#runs.set(targetConversationId, run);
+          return chatUpdateSchema.parse({
+            kind: "run.replace",
+            conversationId: targetConversationId,
+            run,
+          });
         });
       });
     });
     add("chat_error", (payload) => {
-      if (belongsToForeignConversation(payload, conversationId)) return;
-      const parsed = chatErrorEventDtoSchema.safeParse(
-        sanitizePayload(payload),
-      );
-      if (!parsed.success) {
+      dispatchRealtime(() => {
+        if (belongsToForeignConversation(payload, conversationId)) return;
+        const parsed = chatErrorEventDtoSchema.safeParse(
+          sanitizePayload(payload),
+        );
+        if (!parsed.success) {
+          report(
+            this.#error(
+              "validation",
+              "Invalid TFRobot chat_error payload",
+              false,
+              errorConversationId(),
+            ),
+          );
+          return;
+        }
+        const targetConversationId = String(parsed.data.conversationId);
+        if (
+          targetConversationId !== conversationId &&
+          targetConversationId !== errorConversationId()
+        ) {
+          return;
+        }
+        report(
+          this.#error(
+            "server",
+            typeof parsed.data.error === "string"
+              ? parsed.data.error
+              : "TFRobot run failed",
+            false,
+            targetConversationId,
+            parsed.data,
+            credentialValues,
+          ),
+          "domain",
+        );
+      });
+    });
+    add("error", (payload) => {
+      dispatchRealtime(() => {
+        const parsed = socketProtocolErrorDtoSchema.safeParse(
+          sanitizePayload(payload),
+        );
         report(
           this.#error(
             "validation",
-            "Invalid TFRobot chat_error payload",
+            parsed.success && typeof parsed.data.message === "string"
+              ? parsed.data.message
+              : "TFRobot Socket protocol error",
             false,
-            errorConversationId(),
+            conversationId,
+            undefined,
+            credentialValues,
           ),
         );
-        return;
-      }
-      const targetConversationId = String(parsed.data.conversationId);
-      if (
-        targetConversationId !== conversationId &&
-        targetConversationId !== errorConversationId()
-      ) {
-        return;
-      }
-      report(
-        this.#error(
-          "server",
-          typeof parsed.data.error === "string"
-            ? parsed.data.error
-            : "TFRobot run failed",
-          false,
-          targetConversationId,
-          parsed.data,
-          credentialValues,
-        ),
-      );
-    });
-    add("error", (payload) => {
-      const parsed = socketProtocolErrorDtoSchema.safeParse(
-        sanitizePayload(payload),
-      );
-      report(
-        this.#error(
-          "validation",
-          parsed.success && typeof parsed.data.message === "string"
-            ? parsed.data.message
-            : "TFRobot Socket protocol error",
-          false,
-          conversationId,
-          undefined,
-          credentialValues,
-        ),
-      );
+      });
     });
     add("connect_error", (reason) => {
+      if (!active.active || active.terminal) return;
       const injectedError = chatErrorSchema.safeParse(reason);
       const rejectionCode = socketAuthRejectionCode(reason);
       const error =
@@ -676,11 +1202,38 @@ export class TFRobotSocketClient {
         settleEstablishment({ ok: false, error });
         return;
       }
-      report(error);
+      if (active.manualReconnectPending) {
+        enterAuthRequired();
+        report(
+          error,
+          error.code === "authentication" || error.code === "authorization"
+            ? "authentication"
+            : "connection",
+        );
+        return;
+      }
+      if (error.code === "authentication" || error.code === "authorization") {
+        enterAuthRequired();
+      }
+      report(
+        error,
+        error.code === "authentication" || error.code === "authorization"
+          ? "authentication"
+          : "connection",
+      );
     });
     add("disconnect", (reason) => {
       if (reason === "io client disconnect") return;
+      if (active.terminal) return;
+      active.acceptingEvents = false;
+      joinPending = false;
+      pendingRealtimeActions.length = 0;
+      if (joinTimeout !== undefined) {
+        clearTimeout(joinTimeout);
+        joinTimeout = undefined;
+      }
       active.recoveryRevision += 1;
+      lifecycle("reconnecting");
       const injectedError = chatErrorSchema.safeParse(reason);
       report(
         injectedError.success
@@ -693,22 +1246,84 @@ export class TFRobotSocketClient {
               undefined,
               credentialValues,
             ),
+        "connection",
       );
+      if (reason !== "io server disconnect") return;
+      if (active.manualReconnectAttempted) {
+        enterAuthRequired();
+        return;
+      }
+      active.manualReconnectAttempted = true;
+      active.manualReconnectPending = true;
+      const invalidationRevision = active.recoveryRevision;
+      const invalidationError = this.#error(
+        "authentication",
+        "TFRobot Socket session was invalidated by the server",
+        true,
+        errorConversationId(),
+      );
+      void awaitBounded(
+        () => this.#invalidateSession(invalidationError, "unknown"),
+        {
+          deadlineAt: this.#now() + RECONNECT_AUTH_TIMEOUT_MS,
+          now: this.#now,
+          signal: connectionAbort.signal,
+        },
+      ).then((outcome) => {
+        if (
+          !active.active ||
+          active.socket.connected ||
+          active.authRequired ||
+          !active.manualReconnectPending ||
+          active.recoveryRevision !== invalidationRevision
+        ) {
+          return;
+        }
+        if (outcome.kind !== "value" || !outcome.value) {
+          report(
+            this.#error(
+              "authentication",
+              "Unable to invalidate the TFRobot Socket session",
+              false,
+              errorConversationId(),
+            ),
+            "authentication",
+          );
+          enterAuthRequired();
+          return;
+        }
+        try {
+          active.socket.connect();
+        } catch (reconnectError) {
+          report(
+            this.#transportError(
+              reconnectError,
+              "Unable to reconnect the TFRobot Socket transport",
+              conversationId,
+              credentialValues,
+            ),
+            "authentication",
+          );
+          enterAuthRequired();
+        }
+      });
     });
     const anyListener: TFRobotSocketAnyListener = (
       eventName,
       payload,
     ): void => {
-      if (KNOWN_EVENTS.has(eventName)) return;
-      if (belongsToForeignConversation(payload, conversationId)) return;
-      mapAndNext("Unknown TFRobot Socket event could not be normalized", () =>
-        mapUnknownSocketEvent(
-          sanitizeCredentialText(eventName, credentialValues),
-          sanitizePayload(payload),
-          errorConversationId(),
-          this.#now(),
-        ),
-      );
+      dispatchRealtime(() => {
+        if (KNOWN_EVENTS.has(eventName)) return;
+        if (belongsToForeignConversation(payload, conversationId)) return;
+        mapAndNext("Unknown TFRobot Socket event could not be normalized", () =>
+          mapUnknownSocketEvent(
+            sanitizeCredentialText(eventName, credentialValues),
+            sanitizePayload(payload),
+            errorConversationId(),
+            this.#now(),
+          ),
+        );
+      });
     };
     if (setupFailure === undefined) {
       try {
@@ -719,6 +1334,10 @@ export class TFRobotSocketClient {
     }
     const cleanup = (): void => {
       connectionAbort.abort();
+      if (joinTimeout !== undefined) {
+        clearTimeout(joinTimeout);
+        joinTimeout = undefined;
+      }
       for (const [eventName, listener] of listeners) {
         try {
           socket.off(eventName, listener);
@@ -738,6 +1357,8 @@ export class TFRobotSocketClient {
       }
       firstAuth = undefined;
       credentialValues.clear();
+      pendingNotifications.length = 0;
+      pendingRealtimeActions.length = 0;
     };
     if (setupFailure !== undefined) {
       const error = this.#transportError(
@@ -753,7 +1374,9 @@ export class TFRobotSocketClient {
       };
     }
     const active: ActiveSubscription = {
+      acceptingEvents: true,
       active: true,
+      authRequired: false,
       cancelEstablishment: () => {
         settleEstablishment?.({
           ok: false,
@@ -767,22 +1390,34 @@ export class TFRobotSocketClient {
       },
       cleanup,
       conversationId,
+      generation,
+      manualReconnectAttempted: false,
+      manualReconnectPending: false,
       observer,
+      reconnectAttempt: 0,
       recoveryRevision: 0,
+      runRevision: 0,
       socket,
+      subscriptionId,
+      terminal: false,
     };
-    this.#active = active;
+    this.#subscriptions.add(active);
+    this.#establishing = active;
     return new Promise((resolve) => {
       let settled = false;
       const settle = (result: GatewayResult<GatewaySubscription>): void => {
         if (settled) return;
         settled = true;
         settleEstablishment = undefined;
+        if (this.#establishmentAbort === establishmentAbort) {
+          this.#establishmentAbort = undefined;
+        }
+        if (this.#establishing === active) this.#establishing = undefined;
         clearTimeout(timeout);
         if (!result.ok) {
           active.active = false;
           active.cleanup();
-          if (this.#active === active) this.#active = undefined;
+          this.#subscriptions.delete(active);
         }
         resolve(result);
       };
@@ -807,6 +1442,7 @@ export class TFRobotSocketClient {
         return;
       }
       try {
+        lifecycle("connecting");
         socket.connect();
       } catch (reason) {
         settle({
@@ -832,7 +1468,12 @@ export class TFRobotSocketClient {
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
-    this.#deactivateCurrent();
+    this.#cancelEstablishment();
+    for (const subscription of this.#subscriptions) {
+      subscription.active = false;
+      subscription.cleanup();
+    }
+    this.#subscriptions.clear();
     this.#runs.clear();
   }
 
@@ -841,15 +1482,11 @@ export class TFRobotSocketClient {
     this.#runs.set(conversationId, run);
   }
 
-  #deactivateCurrent(): void {
+  #cancelEstablishment(): void {
     this.#establishmentAbort?.abort();
     this.#establishmentAbort = undefined;
-    const current = this.#active;
-    if (current === undefined) return;
-    current.cancelEstablishment();
-    current.active = false;
-    current.cleanup();
-    this.#active = undefined;
+    this.#establishing?.cancelEstablishment();
+    this.#establishing = undefined;
   }
 
   #defaultNamespaceUrl(baseUrl: string): string {
@@ -882,21 +1519,33 @@ export class TFRobotSocketClient {
     conversationId: string,
     credentialValues: Iterable<string>,
     recoveryRevision: number,
+    runRevision: number,
     next: GatewayObserver["next"],
-    report: (error: ChatError) => void,
-  ): Promise<void> {
+    report: (error: ChatError, source: ChatErrorSource) => void,
+  ): Promise<RecoveryOutcome> {
     const result = await this.#reconnectStatusLoader(conversationId);
     if (
       !active.active ||
-      this.#active !== active ||
+      !this.#subscriptions.has(active) ||
       !active.socket.connected ||
       active.recoveryRevision !== recoveryRevision
     ) {
-      return;
+      return "failure";
     }
     if (!result.ok) {
-      report(sanitizeCredentialError(result.error, credentialValues));
-      return;
+      const error = sanitizeCredentialError(result.error, credentialValues);
+      if (error.code === "authentication" || error.code === "authorization") {
+        report(error, "authentication");
+        return "auth-required";
+      }
+      if (active.runRevision !== runRevision) {
+        return "superseded-by-realtime";
+      }
+      report(error, "recovery");
+      return "failure";
+    }
+    if (active.runRevision !== runRevision) {
+      return "superseded-by-realtime";
     }
     try {
       const updateConversationId = sanitizeCredentialText(
@@ -909,14 +1558,16 @@ export class TFRobotSocketClient {
       const run = mapRun(updateConversationId, safeStatus);
       const previous = this.#runs.get(conversationId);
       this.#runs.set(conversationId, run);
-      if (sameRun(previous, run)) return;
-      next(
-        chatUpdateSchema.parse({
-          kind: "run.replace",
-          conversationId: updateConversationId,
-          run,
-        }),
-      );
+      if (!sameRun(previous, run)) {
+        next(
+          chatUpdateSchema.parse({
+            kind: "run.replace",
+            conversationId: updateConversationId,
+            run,
+          }),
+        );
+      }
+      return "success";
     } catch {
       report(
         this.#error(
@@ -927,22 +1578,25 @@ export class TFRobotSocketClient {
           undefined,
           credentialValues,
         ),
+        "recovery",
       );
+      return "failure";
     }
   }
 
   async #invalidateSession(
     error: ChatError,
     reason?: SessionInvalidationReason,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       await this.#options.sessionProvider.onSessionInvalid?.({
         reason:
           reason ?? (error.code === "authorization" ? "forbidden" : "expired"),
         error,
       });
+      return true;
     } catch {
-      // Host refresh/login failures must not replace the Socket error.
+      return false;
     }
   }
 

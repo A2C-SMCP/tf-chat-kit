@@ -530,6 +530,101 @@ export const capabilitiesParser: z.ZodType<Capabilities> = z.object({
   sendText: z.boolean(),
 });
 
+const chatLifecycleParser = z
+  .object({
+    status: z.enum([
+      "connecting",
+      "joining",
+      "active",
+      "reconnecting",
+      "recovering",
+      "auth-required",
+      "offline",
+      "subscription-failed",
+    ]),
+    generation: z.number().int().nonnegative().optional(),
+    reconnectAttempt: z.number().int().nonnegative().optional(),
+    subscriptionId: z.string().min(1).optional(),
+    recovery: z
+      .object({
+        complete: z.boolean(),
+        cursor: z.string().optional(),
+        reason: z.string().optional(),
+      })
+      .optional(),
+  })
+  .superRefine((lifecycle, context) => {
+    if (
+      lifecycle.status === "active" &&
+      (lifecycle.recovery?.complete === false ||
+        ((lifecycle.reconnectAttempt ?? 0) > 0 &&
+          lifecycle.recovery?.complete !== true))
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["recovery", "complete"],
+        message:
+          "an active lifecycle cannot have incomplete or unverified reconnect recovery",
+      });
+    }
+  });
+
+const chatErrorScopeParser = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("global") }),
+  z.object({ kind: z.literal("conversation"), id: idParser }),
+  z.object({ kind: z.literal("subscription"), id: z.string().min(1) }),
+  z.object({ kind: z.literal("command"), id: z.string().min(1) }),
+]);
+
+const chatErrorOccurrenceParser = z.object({
+  id: z.string().min(1),
+  error: chatErrorParser,
+  source: z.enum([
+    "authentication",
+    "command",
+    "connection",
+    "domain",
+    "protocol",
+    "recovery",
+    "runtime",
+    "subscription",
+  ]),
+  scope: chatErrorScopeParser,
+  generation: z.number().int().nonnegative(),
+});
+
+const structurallyEqual = (left: unknown, right: unknown): boolean => {
+  if (Object.is(left, right)) return true;
+  if (
+    left === null ||
+    right === null ||
+    typeof left !== "object" ||
+    typeof right !== "object"
+  ) {
+    return false;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => structurallyEqual(value, right[index]))
+    );
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord);
+  const rightKeys = Object.keys(rightRecord);
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key) =>
+        Object.hasOwn(rightRecord, key) &&
+        structurallyEqual(leftRecord[key], rightRecord[key]),
+    )
+  );
+};
+
 const timelinePageInfoParser: z.ZodType<TimelinePageInfo> = z.object({
   previousCursor: z.string().optional(),
   hasPreviousPage: z.boolean(),
@@ -543,6 +638,8 @@ export const chatSnapshotParser: z.ZodType<ChatSnapshot> = z
     capabilities: capabilitiesParser,
     pageInfo: timelinePageInfoParser,
     pendingInteraction: askUserInteractionRequestParser.optional(),
+    lifecycle: chatLifecycleParser.optional(),
+    activeErrors: z.array(chatErrorOccurrenceParser).optional(),
     error: chatErrorParser.optional(),
   })
   .superRefine((snapshot, context) => {
@@ -571,6 +668,48 @@ export const chatSnapshotParser: z.ZodType<ChatSnapshot> = z
       ["error"],
       context,
     );
+    snapshot.activeErrors?.forEach((occurrence, index) => {
+      validateErrorConversation(
+        occurrence.error,
+        snapshot.conversation.id,
+        ["activeErrors", index, "error"],
+        context,
+      );
+      if (
+        occurrence.scope.kind === "conversation" &&
+        occurrence.scope.id !== snapshot.conversation.id
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["activeErrors", index, "scope", "id"],
+          message:
+            "conversation error scope must belong to the snapshot conversation",
+        });
+      }
+    });
+    if (snapshot.activeErrors !== undefined) {
+      const ids = new Set<string>();
+      snapshot.activeErrors.forEach((occurrence, index) => {
+        if (ids.has(occurrence.id)) {
+          context.addIssue({
+            code: "custom",
+            path: ["activeErrors", index, "id"],
+            message: "active error IDs must be unique",
+          });
+        }
+        ids.add(occurrence.id);
+      });
+      if (
+        !structurallyEqual(snapshot.error, snapshot.activeErrors.at(-1)?.error)
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["error"],
+          message:
+            "error must equal the latest active error when activeErrors is present",
+        });
+      }
+    }
     if (
       snapshot.pendingInteraction !== undefined &&
       snapshot.pendingInteraction.conversationId !== snapshot.conversation.id
@@ -619,9 +758,34 @@ export const chatUpdateParser: z.ZodType<ChatUpdate> = z
       interaction: askUserInteractionRequestParser.nullable(),
     }),
     z.object({
+      kind: z.literal("lifecycle.changed"),
+      conversationId: idParser,
+      lifecycle: chatLifecycleParser,
+    }),
+    z.object({
       kind: z.literal("error.reported"),
       conversationId: idParser.optional(),
       error: chatErrorParser,
+      errorId: z.string().min(1).optional(),
+      source: z
+        .enum([
+          "authentication",
+          "command",
+          "connection",
+          "domain",
+          "protocol",
+          "recovery",
+          "runtime",
+          "subscription",
+        ])
+        .optional(),
+      scope: chatErrorScopeParser.optional(),
+      generation: z.number().int().nonnegative().optional(),
+    }),
+    z.object({
+      kind: z.literal("error.resolved"),
+      conversationId: idParser.optional(),
+      errorId: z.string().min(1),
     }),
   ])
   .superRefine((update, context) => {
@@ -667,6 +831,40 @@ export const chatUpdateParser: z.ZodType<ChatUpdate> = z
         ["error"],
         context,
       );
+    }
+    if (update.kind === "error.reported") {
+      const conversationTargets = [
+        update.conversationId,
+        update.error.conversationId,
+        update.scope?.kind === "conversation" ? update.scope.id : undefined,
+      ].filter((target): target is string => target !== undefined);
+      if (new Set(conversationTargets).size > 1) {
+        context.addIssue({
+          code: "custom",
+          path: ["scope", "id"],
+          message:
+            "error conversationId and conversation scope must target the same conversation",
+        });
+      }
+      const hasOccurrenceMetadata =
+        update.errorId !== undefined ||
+        update.source !== undefined ||
+        update.scope !== undefined ||
+        update.generation !== undefined;
+      if (
+        hasOccurrenceMetadata &&
+        (update.errorId === undefined ||
+          update.source === undefined ||
+          update.scope === undefined ||
+          update.generation === undefined)
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["errorId"],
+          message:
+            "structured errors require errorId, source, scope and generation",
+        });
+      }
     }
     if (update.kind === "event.transition.upsert") {
       validateErrorConversation(

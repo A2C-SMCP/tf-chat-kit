@@ -83,6 +83,7 @@ interface ChatConversationViewSnapshot {
   readonly capabilities: ChatSnapshot["capabilities"];
   readonly conversationId: string;
   readonly error: ChatError | undefined;
+  readonly lifecycle: ChatSnapshot["lifecycle"];
   readonly pendingInteraction: ChatSnapshot["pendingInteraction"];
   readonly run: ChatSnapshot["run"];
   readonly timeline: ChatSnapshot["timeline"];
@@ -97,6 +98,7 @@ const selectChatConversationViewSnapshot = (
         capabilities: snapshot.capabilities,
         conversationId: snapshot.conversation.id,
         error: snapshot.error,
+        lifecycle: snapshot.lifecycle,
         pendingInteraction: snapshot.pendingInteraction,
         run: snapshot.run,
         timeline: snapshot.timeline,
@@ -112,6 +114,7 @@ const equalChatConversationViewSnapshot = (
     left.capabilities === right.capabilities &&
     left.conversationId === right.conversationId &&
     left.error === right.error &&
+    left.lifecycle === right.lifecycle &&
     left.pendingInteraction === right.pendingInteraction &&
     left.run === right.run &&
     left.timeline === right.timeline);
@@ -144,6 +147,17 @@ export const ChatConversationView = ({
     selectChatConversationViewSnapshot,
     equalChatConversationViewSnapshot,
   );
+  const activeRecoveryUnverified =
+    snapshot?.lifecycle?.status === "active" &&
+    (snapshot.lifecycle.recovery?.complete === false ||
+      ((snapshot.lifecycle.reconnectAttempt ?? 0) > 0 &&
+        snapshot.lifecycle.recovery?.complete !== true));
+  const lifecycleOperable =
+    snapshot?.lifecycle === undefined ||
+    (snapshot.lifecycle.status === "active" && !activeRecoveryUnverified);
+  const lifecycleDisplayStatus = activeRecoveryUnverified
+    ? "recovering"
+    : snapshot?.lifecycle?.status;
   const {
     answerInteraction,
     dismissFailure,
@@ -153,8 +167,10 @@ export const ChatConversationView = ({
     visibleCommandFailures,
     visibleSnapshotError,
   } = useChatCommandCoordinator({
-    canAnswerInteraction: snapshot?.capabilities.answerInteraction === true,
-    canInterrupt: snapshot?.capabilities.interrupt ?? false,
+    canAnswerInteraction:
+      lifecycleOperable && snapshot?.capabilities.answerInteraction === true,
+    canInterrupt:
+      lifecycleOperable && (snapshot?.capabilities.interrupt ?? false),
     client,
     conversationId: snapshot?.conversationId ?? null,
     getDeadlineAt,
@@ -408,12 +424,30 @@ export const ChatConversationView = ({
     >
       <ChatRunStatus
         key={`${viewResetKey}:${snapshot.run?.id ?? "no-run"}`}
-        canInterrupt={snapshot.capabilities.interrupt}
+        canInterrupt={lifecycleOperable && snapshot.capabilities.interrupt}
         labels={labels}
         onInterrupt={interrupt}
         run={snapshot.run}
         showInterruptButton={false}
       />
+      {snapshot.lifecycle === undefined || lifecycleOperable ? null : (
+        <Alert
+          message={
+            lifecycleDisplayStatus === undefined
+              ? undefined
+              : labels.lifecycleStatus?.[lifecycleDisplayStatus]
+          }
+          showIcon
+          style={{ margin: token.marginXS }}
+          type={
+            snapshot.lifecycle.status === "auth-required" ||
+            snapshot.lifecycle.status === "subscription-failed" ||
+            snapshot.lifecycle.status === "offline"
+              ? "warning"
+              : "info"
+          }
+        />
+      )}
       {visibleSnapshotError === undefined ? null : (
         <Alert
           message={visibleSnapshotError.message}
@@ -483,7 +517,10 @@ export const ChatConversationView = ({
               snapshot.pendingInteraction.requestId,
               snapshot.pendingInteraction.revision,
             ])}
-            answerDisabled={snapshot.capabilities.answerInteraction !== true}
+            answerDisabled={
+              !lifecycleOperable ||
+              snapshot.capabilities.answerInteraction !== true
+            }
             labels={labels}
             onAnswer={answerInteraction}
             onChatAboutThis={onChatAboutThis}
@@ -493,17 +530,22 @@ export const ChatConversationView = ({
       )}
       <ChatComposer
         key={viewResetKey}
-        disabled={!snapshot.capabilities.sendText}
+        disabled={!lifecycleOperable || !snapshot.capabilities.sendText}
         disabledReason={
-          snapshot.capabilities.sendText
+          lifecycleOperable && snapshot.capabilities.sendText
             ? undefined
-            : labels.textSendingUnavailable
+            : snapshot.lifecycle !== undefined && !lifecycleOperable
+              ? lifecycleDisplayStatus === undefined
+                ? undefined
+                : labels.lifecycleStatus?.[lifecycleDisplayStatus]
+              : labels.textSendingUnavailable
         }
         interruptAction={
           snapshot.run?.status === "running"
             ? {
                 disabled:
                   !snapshot.capabilities.interrupt ||
+                  !lifecycleOperable ||
                   !snapshot.run.canInterrupt,
                 onInterrupt: interrupt,
                 resetKey: snapshot.run.id,
