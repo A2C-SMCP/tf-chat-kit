@@ -135,6 +135,83 @@ describe("@turingfocus/chat-ui-antd shell", () => {
     }
   });
 
+  it("keeps the timeline visible and gates commands during recovery", async () => {
+    const memory = createMemoryChatGateway();
+    const client = createChatClient({ gateway: memory.gateway });
+    const rendered = await renderInDom(
+      createElement(
+        ChatProvider,
+        { client },
+        createElement(ChatWorkspace, {
+          getDeadlineAt: deadlineAt,
+          labels: { lifecycleStatus: { recovering: "Custom recovering…" } },
+        }),
+      ),
+    );
+
+    try {
+      await act(async () => {
+        await flushMicrotasks();
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      });
+      const conversationId = memory.fixtures.conversation.id;
+      await act(async () => {
+        memory.controller.emitUpdateToAll({
+          kind: "lifecycle.changed",
+          conversationId,
+          lifecycle: {
+            status: "recovering",
+            generation: 2,
+            subscriptionId: "subscription-2",
+            recovery: { complete: false },
+          },
+        });
+        await flushMicrotasks();
+      });
+
+      expect(rendered.container.textContent).toContain("Custom recovering…");
+      expect(rendered.container.textContent).toContain("Contract conversation");
+      const composer = rendered.container.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="Message"]',
+      );
+      expect(composer?.disabled).toBe(true);
+
+      await act(async () => {
+        memory.controller.emitUpdateToAll({
+          kind: "lifecycle.changed",
+          conversationId,
+          lifecycle: {
+            status: "auth-required",
+            generation: 2,
+            subscriptionId: "subscription-2",
+          },
+        });
+        await flushMicrotasks();
+      });
+      expect(rendered.container.textContent).toContain(
+        "Sign in again to continue.",
+      );
+
+      await act(async () => {
+        memory.controller.emitUpdateToAll({
+          kind: "lifecycle.changed",
+          conversationId,
+          lifecycle: {
+            status: "active",
+            generation: 2,
+            subscriptionId: "subscription-2",
+            recovery: { complete: true },
+          },
+        });
+        await flushMicrotasks();
+      });
+      expect(composer?.disabled).toBe(false);
+    } finally {
+      await rendered.unmount();
+      await client.dispose({ deadlineAt: deadlineAt() });
+    }
+  });
+
   it("keeps conversation selection controlled and renders ready content", async () => {
     const onConversationSelect = vi.fn();
     const items = createConversationItems(3);

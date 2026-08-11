@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { chatSnapshotSchema } from "../packages/chat-protocol/src/index.js";
+
 import type {
   AgentEvent,
   ChatError,
@@ -10,6 +12,7 @@ import type {
   ConversationPage,
   GatewayRequestOptions,
   GatewayResult,
+  GatewayObserver,
   GatewaySubscription,
   LoadConversationInput,
   Message,
@@ -879,6 +882,9 @@ describe("ChatClient Ask User interactions", () => {
       code: "conflict",
       retryable: false,
     });
+    expect(chatSnapshotSchema.safeParse(client.getSnapshot()).success).toBe(
+      true,
+    );
     await client.dispose({ deadlineAt: deadlineAt() });
   });
 
@@ -1668,6 +1674,9 @@ describe("ChatClient lifecycle and merge behavior", () => {
       code: "validation",
       retryable: false,
     });
+    expect(chatSnapshotSchema.safeParse(client.getSnapshot()).success).toBe(
+      true,
+    );
 
     await client.dispose({ deadlineAt: deadlineAt() });
   });
@@ -1827,6 +1836,413 @@ describe("ChatClient lifecycle and merge behavior", () => {
       await client.dispose({ deadlineAt: deadlineAt() });
     },
   );
+
+  it("does not carry retiring subscription lifecycle or errors into a same-conversation reload", async () => {
+    const memory = createMemoryChatGateway();
+    const observers: GatewayObserver[] = [];
+    const gateway = wrapGateway(memory.gateway, {
+      subscribe: async (input, observer) => {
+        observers.push(observer);
+        return memory.gateway.subscribe(input, observer);
+      },
+    });
+    const client = createChatClient({ gateway });
+    const conversationId = memory.fixtures.conversation.id;
+    await loadInitialSnapshot(client, conversationId);
+    expect(observers).toHaveLength(1);
+
+    const hold = memory.controller.holdNext("loadConversation");
+    const reloading = client.loadConversation({
+      conversationId,
+      deadlineAt: deadlineAt(),
+    });
+    await hold.started;
+    expect(observers).toHaveLength(2);
+
+    observers[1]!.next({
+      kind: "lifecycle.changed",
+      conversationId,
+      lifecycle: {
+        status: "active",
+        generation: 2,
+        subscriptionId: "subscription-new",
+        recovery: { complete: true },
+      },
+    });
+    const retiringError: ChatError = {
+      code: "network",
+      message: "Retiring subscription failed",
+      retryable: true,
+      conversationId,
+    };
+    observers[0]!.next({
+      kind: "lifecycle.changed",
+      conversationId,
+      lifecycle: {
+        status: "reconnecting",
+        generation: 1,
+        subscriptionId: "subscription-old",
+      },
+    });
+    observers[0]!.next({
+      kind: "error.reported",
+      conversationId,
+      error: retiringError,
+      errorId: "old-subscription-error",
+      source: "connection",
+      scope: { kind: "subscription", id: "subscription-old" },
+      generation: 1,
+    });
+    observers[0]!.error?.(retiringError);
+    const domainError: ChatError = {
+      code: "server",
+      message: "Business run failed during handoff",
+      retryable: false,
+      conversationId,
+    };
+    observers[0]!.next({
+      kind: "error.reported",
+      conversationId,
+      error: domainError,
+      errorId: "domain-error-during-handoff",
+      source: "domain",
+      scope: { kind: "conversation", id: conversationId },
+      generation: 1,
+    });
+    observers[0]!.error?.(domainError);
+
+    hold.release();
+    await expect(reloading).resolves.toMatchObject({ ok: true });
+    expect(client.getSnapshot()?.lifecycle).toMatchObject({
+      status: "active",
+      generation: 2,
+      subscriptionId: "subscription-new",
+    });
+    expect(client.getSnapshot()?.activeErrors).toEqual([
+      expect.objectContaining({
+        id: "domain-error-during-handoff",
+        source: "domain",
+        scope: { kind: "conversation", id: conversationId },
+      }),
+    ]);
+    expect(client.getSnapshot()?.error?.message).toBe(
+      "Business run failed during handoff",
+    );
+
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("preserves an existing conversation error across a same-conversation reload", async () => {
+    const memory = createMemoryChatGateway();
+    const client = createChatClient({ gateway: memory.gateway });
+    const conversationId = memory.fixtures.conversation.id;
+    await loadInitialSnapshot(client, conversationId);
+    memory.controller.emitUpdateToAll({
+      kind: "error.reported",
+      conversationId,
+      error: {
+        code: "server",
+        message: "Existing domain failure",
+        retryable: false,
+        conversationId,
+      },
+      errorId: "existing-domain-error",
+      source: "domain",
+      scope: { kind: "conversation", id: conversationId },
+      generation: 1,
+    });
+
+    await expect(
+      client.loadConversation({ conversationId, deadlineAt: deadlineAt() }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(client.getSnapshot()?.activeErrors).toEqual([
+      expect.objectContaining({ id: "existing-domain-error" }),
+    ]);
+    expect(client.getSnapshot()?.error?.message).toBe(
+      "Existing domain failure",
+    );
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("gates commands by lifecycle and resolves exact error occurrences", async () => {
+    const memory = createMemoryChatGateway();
+    const client = createChatClient({ gateway: memory.gateway });
+    const conversationId = memory.fixtures.conversation.id;
+    await loadInitialSnapshot(client, conversationId);
+
+    memory.controller.emitUpdateToAll({
+      kind: "lifecycle.changed",
+      conversationId,
+      lifecycle: {
+        status: "recovering",
+        generation: 2,
+        subscriptionId: "subscription-2",
+        recovery: { complete: false },
+      },
+    });
+    await expect(
+      client.sendText({
+        conversationId,
+        text: "blocked",
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "conflict" } });
+
+    for (const [errorId, source, message] of [
+      ["connection-1", "connection", "Disconnected"],
+      ["recovery-1", "recovery", "Replay incomplete"],
+    ] as const) {
+      memory.controller.emitUpdateToAll({
+        kind: "error.reported",
+        conversationId,
+        error: { code: "network", message, retryable: true, conversationId },
+        errorId,
+        source,
+        scope: { kind: "subscription", id: "subscription-2" },
+        generation: 2,
+      });
+    }
+    expect(client.getSnapshot()?.activeErrors?.map(({ id }) => id)).toEqual([
+      "connection-1",
+      "recovery-1",
+    ]);
+    expect(client.getSnapshot()?.error?.message).toBe("Replay incomplete");
+
+    memory.controller.emitUpdateToAll({
+      kind: "error.resolved",
+      conversationId,
+      errorId: "connection-1",
+    });
+    expect(client.getSnapshot()?.activeErrors?.map(({ id }) => id)).toEqual([
+      "recovery-1",
+    ]);
+    expect(client.getSnapshot()?.error?.message).toBe("Replay incomplete");
+    memory.controller.emitUpdateToAll({
+      kind: "error.resolved",
+      conversationId,
+      errorId: "recovery-1",
+    });
+    expect(client.getSnapshot()?.activeErrors).toEqual([]);
+    expect(client.getSnapshot()?.error).toBeUndefined();
+
+    memory.controller.emitUpdateToAll({
+      kind: "lifecycle.changed",
+      conversationId,
+      lifecycle: {
+        status: "active",
+        generation: 2,
+        subscriptionId: "subscription-2",
+        recovery: { complete: true },
+      },
+    });
+    await expect(
+      client.sendText({
+        conversationId,
+        text: "allowed",
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("projects activeErrors instead of an incompatible legacy error", async () => {
+    const memory = createMemoryChatGateway();
+    const conversationId = memory.fixtures.conversation.id;
+    const client = createChatClient({
+      gateway: wrapGateway(memory.gateway, {
+        loadConversation: async () => ({
+          ok: true,
+          value: {
+            ...memory.fixtures.initialSnapshot,
+            activeErrors: [],
+            error: {
+              code: "network",
+              message: "Stale legacy error",
+              retryable: true,
+              conversationId,
+            },
+          },
+        }),
+      }),
+    });
+
+    await expect(
+      client.loadConversation({ conversationId, deadlineAt: deadlineAt() }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(client.getSnapshot()?.activeErrors).toEqual([]);
+    expect(client.getSnapshot()?.error).toBeUndefined();
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("reports command failures as occurrences when structured errors are active", async () => {
+    const memory = createMemoryChatGateway();
+    const client = createChatClient({ gateway: memory.gateway });
+    const conversationId = memory.fixtures.conversation.id;
+    await loadInitialSnapshot(client, conversationId);
+    memory.controller.emitUpdateToAll({
+      kind: "error.reported",
+      conversationId,
+      error: {
+        code: "server",
+        message: "Domain failure",
+        retryable: false,
+        conversationId,
+      },
+      errorId: "domain-error",
+      source: "domain",
+      scope: { kind: "conversation", id: conversationId },
+      generation: 1,
+    });
+    memory.controller.failNext("sendText", {
+      code: "server",
+      message: "Domain failure",
+      retryable: false,
+      conversationId,
+    });
+
+    await expect(
+      client.sendText({
+        conversationId,
+        text: "Will fail",
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({ ok: false });
+    const snapshot = client.getSnapshot()!;
+    expect(snapshot.activeErrors).toEqual([
+      expect.objectContaining({ id: "domain-error", source: "domain" }),
+      expect.objectContaining({
+        source: "command",
+        scope: expect.objectContaining({ kind: "command" }),
+      }),
+    ]);
+    expect(snapshot.error?.message).toBe("Domain failure");
+    expect(chatSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("enables occurrence semantics for repeated command failures in a normal session", async () => {
+    const memory = createMemoryChatGateway();
+    const client = createChatClient({ gateway: memory.gateway });
+    const conversationId = memory.fixtures.conversation.id;
+    await loadInitialSnapshot(client, conversationId);
+    const failure: ChatError = {
+      code: "network",
+      message: "Repeated command failure",
+      retryable: true,
+      conversationId,
+    };
+    expect(client.getSnapshot()?.activeErrors).toBeUndefined();
+
+    for (const text of ["First", "Second"]) {
+      memory.controller.failNext("sendText", failure);
+      await expect(
+        client.sendText({ conversationId, text, deadlineAt: deadlineAt() }),
+      ).resolves.toMatchObject({ ok: false });
+    }
+
+    const activeErrors = client.getSnapshot()?.activeErrors ?? [];
+    expect(activeErrors).toHaveLength(2);
+    expect(activeErrors.map(({ source }) => source)).toEqual([
+      "command",
+      "command",
+    ]);
+    expect(new Set(activeErrors.map(({ id }) => id)).size).toBe(2);
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("keeps identical legacy error updates as independent occurrences", async () => {
+    const memory = createMemoryChatGateway();
+    const client = createChatClient({ gateway: memory.gateway });
+    const conversationId = memory.fixtures.conversation.id;
+    await loadInitialSnapshot(client, conversationId);
+    const update = {
+      kind: "error.reported" as const,
+      conversationId,
+      error: {
+        code: "server" as const,
+        message: "Repeated legacy gateway failure",
+        retryable: false,
+        conversationId,
+      },
+    };
+
+    memory.controller.emitUpdateToAll(update);
+    memory.controller.emitUpdateToAll(update);
+
+    const activeErrors = client.getSnapshot()?.activeErrors ?? [];
+    expect(activeErrors).toHaveLength(2);
+    expect(new Set(activeErrors.map(({ id }) => id)).size).toBe(2);
+    expect(activeErrors.map(({ source }) => source)).toEqual([
+      "runtime",
+      "runtime",
+    ]);
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("deduplicates only the immediate legacy mirror of a structured gateway error", async () => {
+    const memory = createMemoryChatGateway();
+    const client = createChatClient({ gateway: memory.gateway });
+    const conversationId = memory.fixtures.conversation.id;
+    await loadInitialSnapshot(client, conversationId);
+    const error: ChatError = {
+      code: "server",
+      message: "Mirrored gateway failure",
+      retryable: false,
+      conversationId,
+    };
+
+    memory.controller.emitUpdateToAll({
+      kind: "error.reported",
+      conversationId,
+      error,
+      errorId: "gateway-domain-error",
+      source: "domain",
+      scope: { kind: "conversation", id: conversationId },
+      generation: 1,
+    });
+    memory.controller.emitError(error);
+    expect(client.getSnapshot()?.activeErrors).toHaveLength(1);
+
+    await Promise.resolve();
+    memory.controller.emitError(error);
+    expect(client.getSnapshot()?.activeErrors).toEqual([
+      expect.objectContaining({ id: "gateway-domain-error", source: "domain" }),
+      expect.objectContaining({ source: "runtime" }),
+    ]);
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("converts a legacy error update into an occurrence in structured mode", async () => {
+    const memory = createMemoryChatGateway();
+    const conversationId = memory.fixtures.conversation.id;
+    memory.controller.setSnapshot({
+      ...memory.fixtures.initialSnapshot,
+      activeErrors: [],
+    });
+    const client = createChatClient({ gateway: memory.gateway });
+    await loadInitialSnapshot(client, conversationId);
+    memory.controller.emitUpdateToAll({
+      kind: "error.reported",
+      conversationId,
+      error: {
+        code: "network",
+        message: "Legacy gateway failure",
+        retryable: true,
+        conversationId,
+      },
+    });
+
+    const snapshot = client.getSnapshot()!;
+    expect(snapshot.activeErrors).toEqual([
+      expect.objectContaining({
+        id: "runtime:legacy:0:1",
+        source: "runtime",
+      }),
+    ]);
+    expect(snapshot.error?.message).toBe("Legacy gateway failure");
+    expect(chatSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
 
   it("drains prepared subscription notifications in FIFO order under listener reentry", async () => {
     const memory = createMemoryChatGateway();
@@ -2119,6 +2535,56 @@ describe("ChatClient lifecycle and merge behavior", () => {
     });
     expect(client.getSnapshot()?.error).toBeUndefined();
 
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("reports event metadata conflicts as a structured runtime occurrence", async () => {
+    const memory = createMemoryChatGateway();
+    const conversationId = memory.fixtures.conversation.id;
+    memory.controller.setSnapshot({
+      ...memory.fixtures.initialSnapshot,
+      activeErrors: [],
+    });
+    const client = createChatClient({ gateway: memory.gateway });
+    await loadInitialSnapshot(client, conversationId);
+    memory.controller.emitUpdateToAll({
+      kind: "event.transition.upsert",
+      conversationId,
+      event: {
+        eventCategory: "generic",
+        id: "event-metadata-conflict",
+        eventType: "chain",
+        transition: {
+          id: "transition-running",
+          status: "running",
+          occurredAt: 1_773_705_600_100,
+        },
+      },
+    });
+    memory.controller.emitUpdateToAll({
+      kind: "event.transition.upsert",
+      conversationId,
+      event: {
+        eventCategory: "generic",
+        id: "event-metadata-conflict",
+        eventType: "different-type",
+        transition: {
+          id: "transition-conflicting",
+          status: "failed",
+          occurredAt: 1_773_705_600_200,
+        },
+      },
+    });
+
+    const snapshot = client.getSnapshot()!;
+    expect(snapshot.activeErrors).toEqual([
+      expect.objectContaining({
+        id: "runtime:event-metadata:event-metadata-conflict",
+        source: "runtime",
+      }),
+    ]);
+    expect(snapshot.error?.code).toBe("validation");
+    expect(chatSnapshotSchema.safeParse(snapshot).success).toBe(true);
     await client.dispose({ deadlineAt: deadlineAt() });
   });
 

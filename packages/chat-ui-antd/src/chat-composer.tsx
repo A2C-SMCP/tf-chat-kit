@@ -5,6 +5,7 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 
 import { resolveChatUiLabels } from "./labels.js";
@@ -13,7 +14,7 @@ import type { ChatUiLabelOverrides } from "./types.js";
 export interface ChatComposerProps {
   readonly className?: string | undefined;
   readonly disabled?: boolean | undefined;
-  readonly disabledReason?: string | undefined;
+  readonly disabledReason?: ReactNode | undefined;
   readonly interruptAction?: ChatComposerInterruptAction | undefined;
   readonly labels?: ChatUiLabelOverrides | undefined;
   readonly onSend: (text: string) => boolean | PromiseLike<boolean>;
@@ -131,7 +132,9 @@ export const ChatComposer = ({
           onPressEnter={handlePressEnter}
           placeholder={
             disabled
-              ? (disabledReason ?? labels.textSendingUnavailable)
+              ? typeof disabledReason === "string"
+                ? disabledReason
+                : labels.textSendingUnavailable
               : labels.composerPlaceholder
           }
           value={draft}

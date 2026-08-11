@@ -55,8 +55,25 @@ export const defaultChatUiLabels: ChatUiLabels = Object.freeze({
   historyConversations: "History",
   noHistoryConversations: "No conversations",
   loadingHistoryConversations: "Loading conversations…",
+  lifecycleStatus: Object.freeze({
+    connecting: "Connecting…",
+    joining: "Joining conversation…",
+    active: "Connected",
+    reconnecting: "Connection lost. Reconnecting…",
+    recovering: "Reconnected. Recovering missed updates…",
+    "auth-required": "Sign in again to continue.",
+    offline: "Chat is offline.",
+    "subscription-failed": "Live updates could not be started.",
+  }),
 });
 
 export const resolveChatUiLabels = (
   overrides: ChatUiLabelOverrides | undefined,
-): ChatUiLabels => ({ ...defaultChatUiLabels, ...overrides });
+): ChatUiLabels => ({
+  ...defaultChatUiLabels,
+  ...overrides,
+  lifecycleStatus: {
+    ...defaultChatUiLabels.lifecycleStatus,
+    ...overrides?.lifecycleStatus,
+  },
+});

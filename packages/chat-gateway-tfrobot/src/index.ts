@@ -6,6 +6,7 @@ export {
 export { createSocketIoFactory } from "./socket.js";
 export type {
   TFRobotGatewayOptions,
+  TFRobotLifecycleDiagnostic,
   TFRobotMessageCreator,
   TFRobotMessageCreatorProvider,
   TFRobotMessageCreatorRequest,

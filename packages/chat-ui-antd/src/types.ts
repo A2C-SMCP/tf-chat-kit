@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
+import type { ChatLifecycleStatus } from "@turingfocus/chat-protocol";
 
 export type ChatNavigationMode = "compact" | "sidebar";
 
@@ -117,6 +118,9 @@ export interface ChatUiLabels {
   readonly historyConversations: ReactNode;
   readonly noHistoryConversations: ReactNode;
   readonly loadingHistoryConversations: ReactNode;
+  /** Optional lifecycle copy; omitted keys use the built-in English labels. */
+  readonly lifecycleStatus?:
+    Readonly<Partial<Record<ChatLifecycleStatus, ReactNode>>> | undefined;
 }
 
 export type ChatUiLabelOverrides = Partial<ChatUiLabels>;

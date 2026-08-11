@@ -188,7 +188,7 @@ export const AskUserInteractionCard = ({
             </Form.Item>
             {onChatAboutThis === undefined ? null : (
               <Button
-                disabled={submitting}
+                disabled={answerDisabled || submitting}
                 onClick={() => {
                   onChatAboutThis({
                     answers: normalizeAnswers(

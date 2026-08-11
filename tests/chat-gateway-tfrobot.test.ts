@@ -98,8 +98,12 @@ class FakeSocket implements TFRobotSocket {
     this.connected = false;
   }
 
-  emit(eventName: string, payload?: unknown): void {
-    this.emitted.push([eventName, payload]);
+  emit(eventName: string, ...arguments_: unknown[]): void {
+    this.emitted.push([eventName, arguments_[0]]);
+    if (eventName === "join_conversation") {
+      const acknowledgement = arguments_[1];
+      if (typeof acknowledgement === "function") acknowledgement(true);
+    }
   }
 
   off(eventName: string, listener: TFRobotSocketListener): void {
@@ -128,6 +132,34 @@ class FakeSocket implements TFRobotSocket {
     for (const listener of this.#anyListeners) {
       listener(eventName, payload);
     }
+  }
+}
+
+const HOLD_JOIN_ACK = Symbol("hold-join-ack");
+
+class PlannedAckSocket extends FakeSocket {
+  readonly acknowledgements: Array<(value?: unknown) => void> = [];
+  readonly plans: Array<unknown | typeof HOLD_JOIN_ACK>;
+
+  constructor(...plans: Array<unknown | typeof HOLD_JOIN_ACK>) {
+    super();
+    this.plans = plans;
+  }
+
+  override emit(eventName: string, ...arguments_: unknown[]): void {
+    if (eventName !== "join_conversation") {
+      super.emit(eventName, ...arguments_);
+      return;
+    }
+    this.emitted.push([eventName, arguments_[0]]);
+    const acknowledgement = arguments_[1];
+    if (typeof acknowledgement !== "function") return;
+    const plan = this.plans.length === 0 ? HOLD_JOIN_ACK : this.plans.shift()!;
+    if (plan === HOLD_JOIN_ACK) {
+      this.acknowledgements.push(acknowledgement as (value?: unknown) => void);
+      return;
+    }
+    (acknowledgement as (value?: unknown) => void)(plan);
   }
 }
 
@@ -1816,6 +1848,9 @@ describe("TFRobotChatGateway REST boundary", () => {
 });
 
 describe("TFRobotChatGateway Socket boundary", () => {
+  const cyclicJoinAcknowledgement: Record<string, unknown> = {};
+  cyclicJoinAcknowledgement["self"] = cyclicJoinAcknowledgement;
+
   it("does not expose an unavailable SessionProvider credential in Socket errors", async () => {
     const secret = "provider-only-credential";
     const gateway = createTFRobotChatGateway({
@@ -1844,6 +1879,817 @@ describe("TFRobotChatGateway Socket boundary", () => {
     });
     expect(result.ok ? undefined : result.error.conversationId).toBeUndefined();
     expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it("waits for join acknowledgement before publishing an active lifecycle", async () => {
+    class DeferredJoinSocket extends FakeSocket {
+      acknowledgement: ((value?: unknown) => void) | undefined;
+
+      override emit(eventName: string, ...arguments_: unknown[]): void {
+        if (eventName !== "join_conversation") {
+          super.emit(eventName, ...arguments_);
+          return;
+        }
+        this.emitted.push([eventName, arguments_[0]]);
+        const acknowledgement = arguments_[1];
+        if (typeof acknowledgement === "function") {
+          this.acknowledgement = acknowledgement as (value?: unknown) => void;
+        }
+      }
+    }
+
+    const socket = new DeferredJoinSocket();
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch: vi.fn(),
+      socketFactory: () => socket,
+    });
+    let settled = false;
+    const subscribing = Promise.resolve(
+      gateway.subscribe(
+        { conversationId: "42", deadlineAt: deadline() },
+        { next: (update) => updates.push(update) },
+      ),
+    ).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await vi.waitFor(() =>
+      expect(socket.acknowledgement).toBeTypeOf("function"),
+    );
+    expect(settled).toBe(false);
+    expect(
+      updates
+        .filter((update) => update.kind === "lifecycle.changed")
+        .map((update) => update.lifecycle.status),
+    ).toEqual([]);
+
+    socket.acknowledgement?.({ accepted: true });
+    const subscribed = await subscribing;
+    expect(subscribed.ok).toBe(true);
+    expect(
+      updates
+        .filter((update) => update.kind === "lifecycle.changed")
+        .map((update) => update.lifecycle.status),
+    ).toEqual(["connecting", "joining", "active"]);
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it.each([
+    [{ status: "error", message: "forbidden" }, "validation"],
+    [{ statusCode: "403" }, "authorization"],
+    [{ error: "forbidden" }, "authorization"],
+    [{ error: "unauthorized" }, "authentication"],
+    [{ ok: true, code: "unauthorized" }, "authentication"],
+    [{ accepted: true, success: false }, "validation"],
+    [{ accepted: true, ok: "false" }, "validation"],
+    [
+      { accepted: true, cursor: "cursor-1", recoveryCursor: "cursor-2" },
+      "validation",
+    ],
+    [{ accepted: true, recovered: false }, "validation"],
+    [{ status: "ok", code: "unauthorized" }, "authentication"],
+    [{ status: 200, statusCode: 403 }, "authorization"],
+    [undefined, "validation"],
+    [null, "validation"],
+    ["403", "validation"],
+    [403, "validation"],
+    [cyclicJoinAcknowledgement, "validation"],
+  ])(
+    "fails closed for a rejected or unknown structured join ack %#",
+    async (ack, expectedCode) => {
+      const socket = new PlannedAckSocket(ack);
+      const updates: ChatUpdate[] = [];
+      const errors: ChatError[] = [];
+      const provider = sessionProvider();
+      const gateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        sessionProvider: provider,
+        fetch: vi.fn(),
+        socketFactory: () => socket,
+      });
+
+      await expect(
+        gateway.subscribe(
+          { conversationId: "42", deadlineAt: deadline() },
+          {
+            next: (update) => updates.push(update),
+            error: (error) => errors.push(error),
+          },
+        ),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { code: expectedCode },
+      });
+      expect(updates).toEqual([]);
+      expect(errors).toEqual([]);
+      expect(socket.connected).toBe(false);
+      if (
+        expectedCode === "authentication" ||
+        expectedCode === "authorization"
+      ) {
+        await vi.waitFor(() =>
+          expect(provider.onSessionInvalid).toHaveBeenCalledOnce(),
+        );
+      } else {
+        expect(provider.onSessionInvalid).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it("consumes each join acknowledgement callback only once", async () => {
+    const socket = new PlannedAckSocket(HOLD_JOIN_ACK);
+    const updates: ChatUpdate[] = [];
+    const provider = sessionProvider();
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: provider,
+      fetch: vi.fn(),
+      socketFactory: () => socket,
+    });
+    const subscribing = gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    await vi.waitFor(() => expect(socket.acknowledgements).toHaveLength(1));
+    socket.acknowledgements[0]!({ accepted: true });
+    await expect(subscribing).resolves.toMatchObject({ ok: true });
+    const settledUpdates = updates.length;
+
+    socket.acknowledgements[0]!({ statusCode: 403 });
+    await Promise.resolve();
+    expect(updates).toHaveLength(settledUpdates);
+    expect(provider.onSessionInvalid).not.toHaveBeenCalled();
+    expect(socket.connected).toBe(true);
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("buffers realtime data until a reconnect join ack is accepted", async () => {
+    const socket = new PlannedAckSocket(true, HOLD_JOIN_ACK);
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch: vi.fn(async () => envelope({ working: false, taskId: null })),
+      socketFactory: () => socket,
+    });
+    const subscribed = await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    expect(subscribed.ok).toBe(true);
+    updates.length = 0;
+
+    socket.connected = false;
+    socket.trigger("disconnect", "transport close");
+    socket.connect();
+    await vi.waitFor(() => expect(socket.acknowledgements).toHaveLength(1));
+    socket.trigger("chat_message", messageDto);
+    expect(
+      updates.filter((update) => update.kind === "timeline.upsert"),
+    ).toEqual([]);
+
+    socket.acknowledgements[0]!({
+      accepted: true,
+      recovered: true,
+      cursor: "buffered-cursor",
+    });
+    await vi.waitFor(() =>
+      expect(
+        updates.filter((update) => update.kind === "timeline.upsert"),
+      ).toHaveLength(1),
+    );
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("discards buffered realtime data when a reconnect join is rejected", async () => {
+    const socket = new PlannedAckSocket(true, HOLD_JOIN_ACK);
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch: vi.fn(),
+      socketFactory: () => socket,
+    });
+    const subscribed = await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    expect(subscribed.ok).toBe(true);
+    updates.length = 0;
+
+    socket.connected = false;
+    socket.trigger("disconnect", "transport close");
+    socket.connect();
+    await vi.waitFor(() => expect(socket.acknowledgements).toHaveLength(1));
+    socket.trigger("chat_message", messageDto);
+    socket.acknowledgements[0]!({ statusCode: 403 });
+    await Promise.resolve();
+    expect(
+      updates.filter((update) => update.kind === "timeline.upsert"),
+    ).toEqual([]);
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("invalidates an interrupted join attempt and ignores its late ack", async () => {
+    const socket = new PlannedAckSocket(HOLD_JOIN_ACK, { accepted: true });
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch: vi.fn(),
+      socketFactory: () => socket,
+    });
+    const subscribing = Promise.resolve(
+      gateway.subscribe(
+        { conversationId: "42", deadlineAt: deadline() },
+        { next: (update) => updates.push(update) },
+      ),
+    );
+    await vi.waitFor(() => expect(socket.acknowledgements).toHaveLength(1));
+
+    socket.connected = false;
+    socket.trigger("disconnect", "transport close");
+    socket.connect();
+    await expect(subscribing).resolves.toMatchObject({ ok: true });
+    const statusCount = updates.filter(
+      (update) => update.kind === "lifecycle.changed",
+    ).length;
+    socket.acknowledgements[0]!({ accepted: true });
+    await Promise.resolve();
+    expect(
+      updates.filter((update) => update.kind === "lifecycle.changed"),
+    ).toHaveLength(statusCount);
+    expect(
+      updates.some(
+        (update) =>
+          update.kind === "lifecycle.changed" &&
+          update.lifecycle.status === "subscription-failed",
+      ),
+    ).toBe(false);
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("makes a reconnect join timeout terminal for late acknowledgements", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = new PlannedAckSocket(true, HOLD_JOIN_ACK);
+      const updates: ChatUpdate[] = [];
+      const fetch = vi.fn();
+      const gateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        sessionProvider: sessionProvider(),
+        fetch,
+        socketFactory: () => socket,
+      });
+      const subscribed = await gateway.subscribe(
+        { conversationId: "42", deadlineAt: deadline() },
+        { next: (update) => updates.push(update) },
+      );
+      expect(subscribed.ok).toBe(true);
+      updates.length = 0;
+
+      socket.connected = false;
+      socket.trigger("disconnect", "transport close");
+      socket.connect();
+      expect(socket.acknowledgements).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(
+        updates.filter((update) => update.kind === "lifecycle.changed").at(-1),
+      ).toMatchObject({ lifecycle: { status: "subscription-failed" } });
+      const updateCount = updates.length;
+      socket.acknowledgements[0]!({
+        accepted: true,
+        recovered: true,
+        cursor: "late-cursor",
+      });
+      await Promise.resolve();
+      expect(updates).toHaveLength(updateCount);
+      expect(fetch).not.toHaveBeenCalled();
+      await gateway.dispose({ deadlineAt: deadline() });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the disconnect occurrence while a legacy reconnect ack remains unverified", async () => {
+    const socket = new PlannedAckSocket(true, undefined);
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch: vi.fn(async () => envelope({ working: false, taskId: null })),
+      socketFactory: () => socket,
+    });
+    const subscribed = await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    expect(subscribed.ok).toBe(true);
+    updates.length = 0;
+
+    socket.connected = false;
+    socket.trigger("disconnect", "ping timeout");
+    const connectionError = updates.find(
+      (update) =>
+        update.kind === "error.reported" && update.source === "connection",
+    );
+    expect(connectionError?.kind).toBe("error.reported");
+    socket.connect();
+
+    await vi.waitFor(() =>
+      expect(
+        updates.filter((update) => update.kind === "lifecycle.changed").at(-1),
+      ).toMatchObject({
+        lifecycle: {
+          status: "recovering",
+          recovery: {
+            complete: false,
+            reason: "server-replay-contract-unavailable",
+          },
+        },
+      }),
+    );
+    if (connectionError?.kind !== "error.reported") return;
+    expect(
+      updates.some(
+        (update) =>
+          update.kind === "error.resolved" &&
+          update.errorId === connectionError.errorId,
+      ),
+    ).toBe(false);
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("fails closed when recovery acknowledgement aliases conflict", async () => {
+    const socket = new PlannedAckSocket(true, {
+      accepted: true,
+      recovered: true,
+      recoveryComplete: false,
+      cursor: "conflicting-recovery-cursor",
+    });
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch: vi.fn(async () => envelope({ working: false, taskId: null })),
+      socketFactory: () => socket,
+    });
+    const subscribed = await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    expect(subscribed.ok).toBe(true);
+    updates.length = 0;
+
+    socket.connected = false;
+    socket.trigger("disconnect", "ping timeout");
+    socket.connect();
+    await vi.waitFor(() =>
+      expect(
+        updates.filter((update) => update.kind === "lifecycle.changed").at(-1),
+      ).toMatchObject({
+        lifecycle: { status: "subscription-failed" },
+      }),
+    );
+    expect(
+      updates.some(
+        (update) =>
+          update.kind === "lifecycle.changed" &&
+          update.lifecycle.status === "active",
+      ),
+    ).toBe(false);
+    expect(socket.connected).toBe(false);
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("does not grant a second forced-disconnect reconnect before recovery completes", async () => {
+    const socket = new PlannedAckSocket(true, true);
+    const provider = sessionProvider();
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: provider,
+      fetch: vi.fn(async () => envelope({ working: false, taskId: null })),
+      socketFactory: () => socket,
+    });
+    const subscribed = await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    expect(subscribed.ok).toBe(true);
+
+    socket.connected = false;
+    socket.trigger("disconnect", "io server disconnect");
+    await vi.waitFor(() => expect(socket.emitted).toHaveLength(2));
+    socket.connected = false;
+    socket.trigger("disconnect", "io server disconnect");
+    await Promise.resolve();
+    expect(socket.emitted).toHaveLength(2);
+    expect(provider.onSessionInvalid).toHaveBeenCalledOnce();
+    expect(
+      updates.filter((update) => update.kind === "lifecycle.changed").at(-1),
+    ).toMatchObject({ lifecycle: { status: "auth-required" } });
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("does not let stale session invalidation reconnect past auth-required", async () => {
+    const invalidation = deferred<void>();
+    const socket = new PlannedAckSocket(true, true);
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: {
+        getSession: () => ({
+          kind: "bearer",
+          token: "header.payload.signature",
+        }),
+        onSessionInvalid: vi.fn(() => invalidation.promise),
+      },
+      fetch: vi.fn(),
+      socketFactory: () => socket,
+    });
+    const subscribed = await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    expect(subscribed.ok).toBe(true);
+
+    socket.connected = false;
+    socket.trigger("disconnect", "io server disconnect");
+    socket.trigger("disconnect", "io server disconnect");
+    expect(
+      updates.filter((update) => update.kind === "lifecycle.changed").at(-1),
+    ).toMatchObject({ lifecycle: { status: "auth-required" } });
+    invalidation.resolve(undefined);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(socket.emitted).toHaveLength(1);
+    expect(socket.connected).toBe(false);
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("stops a forced-disconnect episode when the manual reconnect fails asynchronously", async () => {
+    class AsyncReconnectFailureSocket extends PlannedAckSocket {
+      connectAttempts = 0;
+
+      override connect(): void {
+        this.connectAttempts += 1;
+        if (this.connectAttempts === 1) {
+          super.connect();
+          return;
+        }
+        this.connected = false;
+        queueMicrotask(() => {
+          this.trigger("connect_error", new Error("manual reconnect failed"));
+        });
+      }
+    }
+
+    const socket = new AsyncReconnectFailureSocket(true);
+    const provider = sessionProvider();
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: provider,
+      fetch: vi.fn(),
+      socketFactory: () => socket,
+    });
+    const subscribed = await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    expect(subscribed.ok).toBe(true);
+
+    socket.connected = false;
+    socket.trigger("disconnect", "io server disconnect");
+    await vi.waitFor(() =>
+      expect(
+        updates.filter((update) => update.kind === "lifecycle.changed").at(-1),
+      ).toMatchObject({ lifecycle: { status: "auth-required" } }),
+    );
+    expect(socket.connectAttempts).toBe(2);
+    expect(socket.connected).toBe(false);
+    expect(provider.onSessionInvalid).toHaveBeenCalledOnce();
+    await Promise.resolve();
+    expect(socket.connectAttempts).toBe(2);
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it.each([
+    [
+      "throws",
+      () => {
+        throw new Error("invalidation failed");
+      },
+    ],
+    ["rejects", () => Promise.reject(new Error("invalidation failed"))],
+  ])(
+    "does not reconnect when session invalidation %s",
+    async (_label, onSessionInvalid) => {
+      const socket = new PlannedAckSocket(true, true);
+      const updates: ChatUpdate[] = [];
+      const gateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        sessionProvider: {
+          getSession: () => ({
+            kind: "bearer",
+            token: "header.payload.signature",
+          }),
+          onSessionInvalid: vi.fn(onSessionInvalid),
+        },
+        fetch: vi.fn(),
+        socketFactory: () => socket,
+      });
+      const subscribed = await gateway.subscribe(
+        { conversationId: "42", deadlineAt: deadline() },
+        { next: (update) => updates.push(update) },
+      );
+      expect(subscribed.ok).toBe(true);
+
+      socket.connected = false;
+      socket.trigger("disconnect", "io server disconnect");
+      await vi.waitFor(() =>
+        expect(
+          updates
+            .filter((update) => update.kind === "lifecycle.changed")
+            .at(-1),
+        ).toMatchObject({ lifecycle: { status: "auth-required" } }),
+      );
+      expect(socket.emitted).toHaveLength(1);
+      expect(socket.connected).toBe(false);
+      await gateway.dispose({ deadlineAt: deadline() });
+    },
+  );
+
+  it("bounds a hanging session invalidation before requiring authentication", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = new PlannedAckSocket(true, true);
+      const updates: ChatUpdate[] = [];
+      const gateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        sessionProvider: {
+          getSession: () => ({
+            kind: "bearer",
+            token: "header.payload.signature",
+          }),
+          onSessionInvalid: vi.fn(() => new Promise<void>(() => undefined)),
+        },
+        fetch: vi.fn(),
+        socketFactory: () => socket,
+        now: () => Date.now(),
+      });
+      const subscribed = await gateway.subscribe(
+        { conversationId: "42", deadlineAt: deadline() },
+        { next: (update) => updates.push(update) },
+      );
+      expect(subscribed.ok).toBe(true);
+
+      socket.connected = false;
+      socket.trigger("disconnect", "io server disconnect");
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(socket.emitted).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(
+        updates.filter((update) => update.kind === "lifecycle.changed").at(-1),
+      ).toMatchObject({ lifecycle: { status: "auth-required" } });
+      expect(socket.emitted).toHaveLength(1);
+      expect(socket.connected).toBe(false);
+      await gateway.dispose({ deadlineAt: deadline() });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops realtime delivery after a reconnect join is rejected", async () => {
+    const socket = new PlannedAckSocket(true, { statusCode: 403 });
+    const updates: ChatUpdate[] = [];
+    const provider = sessionProvider();
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: provider,
+      fetch: vi.fn(),
+      socketFactory: () => socket,
+    });
+    const subscribed = await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    expect(subscribed.ok).toBe(true);
+    updates.length = 0;
+
+    socket.connected = false;
+    socket.trigger("disconnect", "transport close");
+    socket.connect();
+    await vi.waitFor(() =>
+      expect(
+        updates.filter((update) => update.kind === "lifecycle.changed").at(-1),
+      ).toMatchObject({ lifecycle: { status: "auth-required" } }),
+    );
+    expect(socket.connected).toBe(false);
+    const timelineCount = updates.filter(
+      (update) => update.kind === "timeline.upsert",
+    ).length;
+    socket.trigger("chat_message", messageDto);
+    expect(
+      updates.filter((update) => update.kind === "timeline.upsert"),
+    ).toHaveLength(timelineCount);
+    expect(provider.onSessionInvalid).toHaveBeenCalledOnce();
+    const terminalUpdateCount = updates.length;
+    socket.trigger("connect_error", new Error("late connect failure"));
+    await Promise.resolve();
+    expect(updates).toHaveLength(terminalUpdateCount);
+    expect(provider.onSessionInvalid).toHaveBeenCalledOnce();
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("keeps domain errors as independent conversation occurrences", async () => {
+    const socket = new PlannedAckSocket(true);
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch: vi.fn(),
+      socketFactory: () => socket,
+    });
+    const subscribed = await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    expect(subscribed.ok).toBe(true);
+    updates.length = 0;
+
+    socket.trigger("chat_error", {
+      conversationId: 42,
+      error: "First domain failure",
+    });
+    socket.trigger("chat_error", {
+      conversationId: 42,
+      error: "Second domain failure",
+    });
+    const reported = updates.filter(
+      (update) => update.kind === "error.reported",
+    );
+    expect(reported).toHaveLength(2);
+    expect(reported).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "domain",
+          scope: { kind: "conversation", id: "42" },
+        }),
+        expect.objectContaining({
+          source: "domain",
+          scope: { kind: "conversation", id: "42" },
+        }),
+      ]),
+    );
+    expect(
+      updates.filter((update) => update.kind === "error.resolved"),
+    ).toEqual([]);
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("activates verified recovery when realtime state supersedes the REST snapshot", async () => {
+    const response = deferred<Response>();
+    const socket = new PlannedAckSocket(true, {
+      accepted: true,
+      recovered: true,
+      cursor: "cursor-realtime",
+    });
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch: vi.fn(() => response.promise),
+      socketFactory: () => socket,
+    });
+    const subscribed = await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    expect(subscribed.ok).toBe(true);
+    updates.length = 0;
+
+    socket.connected = false;
+    socket.trigger("disconnect", "transport close");
+    socket.connect();
+    await vi.waitFor(() =>
+      expect(
+        updates.some(
+          (update) =>
+            update.kind === "lifecycle.changed" &&
+            update.lifecycle.status === "recovering",
+        ),
+      ).toBe(true),
+    );
+    socket.trigger("conversation_state_changed", {
+      conversationId: 42,
+      state: "working",
+      taskId: "run-from-realtime",
+    });
+    response.resolve(envelope({ working: false, taskId: null }));
+
+    await vi.waitFor(() =>
+      expect(
+        updates.filter((update) => update.kind === "lifecycle.changed").at(-1),
+      ).toMatchObject({
+        lifecycle: {
+          status: "active",
+          recovery: { complete: true, cursor: "cursor-realtime" },
+        },
+      }),
+    );
+    expect(
+      updates.filter((update) => update.kind === "run.replace").at(-1),
+    ).toMatchObject({ run: { id: "run-from-realtime" } });
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("resolves a failed recovery occurrence after a later verified recovery", async () => {
+    const socket = new PlannedAckSocket(
+      true,
+      { accepted: true, recovered: true, cursor: "cursor-1" },
+      { accepted: true, recovered: true, cursor: "cursor-2" },
+    );
+    const updates: ChatUpdate[] = [];
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("failure", { status: 500 }))
+      .mockResolvedValueOnce(envelope({ working: false, taskId: null }));
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch,
+      socketFactory: () => socket,
+    });
+    const subscribed = await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    expect(subscribed.ok).toBe(true);
+
+    socket.connected = false;
+    socket.trigger("disconnect", "transport close");
+    socket.connect();
+    await vi.waitFor(() =>
+      expect(
+        updates.find(
+          (update) =>
+            update.kind === "error.reported" && update.source === "recovery",
+        ),
+      ).toBeDefined(),
+    );
+    const recoveryError = updates.find(
+      (update) =>
+        update.kind === "error.reported" && update.source === "recovery",
+    );
+    if (recoveryError?.kind !== "error.reported") {
+      throw new Error("Recovery error occurrence was not reported");
+    }
+
+    socket.connected = false;
+    socket.trigger("disconnect", "transport close");
+    socket.connect();
+    await vi.waitFor(() =>
+      expect(
+        updates.filter((update) => update.kind === "lifecycle.changed").at(-1),
+      ).toMatchObject({
+        lifecycle: {
+          status: "active",
+          recovery: { complete: true, cursor: "cursor-2" },
+        },
+      }),
+    );
+    expect(
+      updates.some(
+        (update) =>
+          update.kind === "error.resolved" &&
+          update.errorId === recoveryError.errorId,
+      ),
+    ).toBe(true);
+    await gateway.dispose({ deadlineAt: deadline() });
   });
 
   it("joins, maps realtime updates, filters foreign data and falls back safely", async () => {
@@ -1899,7 +2745,11 @@ describe("TFRobotChatGateway Socket boundary", () => {
       safe: true,
       summary: "Failure token=summary-secret",
     });
-    expect(updates.map(({ kind }) => kind)).toEqual([
+    expect(
+      updates
+        .filter(({ kind }) => kind !== "lifecycle.changed")
+        .map(({ kind }) => kind),
+    ).toEqual([
       "timeline.upsert",
       "event.transition.upsert",
       "timeline.upsert",
@@ -1907,7 +2757,9 @@ describe("TFRobotChatGateway Socket boundary", () => {
     expect(JSON.stringify(updates)).not.toContain("sensitive");
     expect(JSON.stringify(updates)).not.toContain("event-name-secret");
     expect(JSON.stringify(updates)).not.toContain("summary-secret");
-    expect(updates.at(-1)).toMatchObject({
+    expect(
+      updates.filter((update) => update.kind === "timeline.upsert").at(-1),
+    ).toMatchObject({
       kind: "timeline.upsert",
       item: {
         kind: "unknown-event",
@@ -1929,7 +2781,9 @@ describe("TFRobotChatGateway Socket boundary", () => {
       conversationId: 42,
       error: "Run failed token=secret-value",
     });
-    expect(updates.at(-1)).toMatchObject({
+    expect(
+      updates.filter((update) => update.kind === "run.replace").at(-1),
+    ).toMatchObject({
       kind: "run.replace",
       run: { id: "run-live", status: "running" },
     });
@@ -1938,7 +2792,14 @@ describe("TFRobotChatGateway Socket boundary", () => {
 
     await subscribed.value.dispose({ deadlineAt: deadline() });
     socket.trigger("chat_message", messageDto);
-    expect(updates).toHaveLength(4);
+    expect(
+      updates.filter(
+        (update) =>
+          update.kind === "timeline.upsert" ||
+          update.kind === "event.transition.upsert" ||
+          update.kind === "run.replace",
+      ),
+    ).toHaveLength(4);
     expect(socket.connected).toBe(false);
   });
 
@@ -2040,7 +2901,13 @@ describe("TFRobotChatGateway Socket boundary", () => {
           message: "Injected disconnect [REDACTED]",
         },
       ]);
-      expect(updates).toHaveLength(3);
+      expect(
+        updates.filter(
+          (update) =>
+            update.kind === "timeline.upsert" ||
+            update.kind === "event.transition.upsert",
+        ),
+      ).toHaveLength(3);
       expect(JSON.stringify(updates)).toContain("[REDACTED]");
       expect(JSON.stringify({ diagnostics, errors, updates })).not.toContain(
         secret,
@@ -2170,8 +3037,11 @@ describe("TFRobotChatGateway Socket boundary", () => {
 
       socketFixture.sockets[0]!.trigger("future_event", { summary: "safe" });
 
-      expect(updates).toHaveLength(1);
-      expect(updates[0]).toMatchObject({
+      const timelineUpdates = updates.filter(
+        (update) => update.kind === "timeline.upsert",
+      );
+      expect(timelineUpdates).toHaveLength(1);
+      expect(timelineUpdates[0]).toMatchObject({
         conversationId: "[REDACTED]",
         item: { conversationId: "[REDACTED]" },
         kind: "timeline.upsert",
@@ -2423,7 +3293,9 @@ describe("TFRobotChatGateway Socket boundary", () => {
     ]);
     expect(socket.connected).toBe(false);
     socket.trigger("chat_message", messageDto);
-    expect(updates).toEqual([]);
+    expect(
+      updates.filter((update) => update.kind === "timeline.upsert"),
+    ).toEqual([]);
     expect(errors).toEqual([]);
   });
 
@@ -2457,13 +3329,15 @@ describe("TFRobotChatGateway Socket boundary", () => {
 
     await vi.waitFor(() => {
       expect(fetch).toHaveBeenCalledOnce();
-      expect(updates).toEqual([
-        {
-          kind: "run.replace",
-          conversationId: "42",
-          run: null,
-        },
-      ]);
+      expect(updates.filter((update) => update.kind === "run.replace")).toEqual(
+        [
+          {
+            kind: "run.replace",
+            conversationId: "42",
+            run: null,
+          },
+        ],
+      );
     });
     expect(socket.emitted).toEqual([
       ["join_conversation", { conversation_id: "42" }],
@@ -2521,18 +3395,20 @@ describe("TFRobotChatGateway Socket boundary", () => {
     socket.connect();
 
     await vi.waitFor(() => {
-      expect(updates).toEqual([
-        {
-          kind: "run.replace",
-          conversationId: "[REDACTED]",
-          run: {
-            id: "task-[REDACTED]",
+      expect(updates.filter((update) => update.kind === "run.replace")).toEqual(
+        [
+          {
+            kind: "run.replace",
             conversationId: "[REDACTED]",
-            status: "running",
-            canInterrupt: true,
+            run: {
+              id: "task-[REDACTED]",
+              conversationId: "[REDACTED]",
+              status: "running",
+              canInterrupt: true,
+            },
           },
-        },
-      ]);
+        ],
+      );
     });
     expect(JSON.stringify(updates)).not.toContain("initial-credential");
     expect(JSON.stringify(updates)).not.toContain(conversationId);
@@ -2674,7 +3550,9 @@ describe("TFRobotChatGateway Socket boundary", () => {
     responses[1]!.resolve(envelope({ working: false, taskId: null }));
     await Promise.resolve();
     await Promise.resolve();
-    expect(updates).toHaveLength(1);
+    expect(
+      updates.filter((update) => update.kind === "run.replace"),
+    ).toHaveLength(1);
   });
 
   it("reports malformed realtime DTOs without throwing or clearing run state", async () => {
@@ -2723,7 +3601,15 @@ describe("TFRobotChatGateway Socket boundary", () => {
         error: "Missing conversation",
       });
     }).not.toThrow();
-    expect(updates).toEqual([]);
+    expect(
+      updates.filter(
+        (update) =>
+          update.kind !== "error.reported" && update.kind !== "error.resolved",
+      ),
+    ).toEqual([]);
+    expect(
+      updates.filter((update) => update.kind === "error.reported"),
+    ).toHaveLength(3);
     expect(errors).toHaveLength(3);
     expect(errors.every(({ code }) => code === "validation")).toBe(true);
   });
@@ -2755,19 +3641,21 @@ describe("TFRobotChatGateway Socket boundary", () => {
     expect(subscribed.ok).toBe(true);
     if (!subscribed.ok) return;
     const socket = socketFixture.sockets[0]!;
+    diagnostics.length = 0;
 
     expect(() => {
       socket.trigger("chat_message", messageDto);
       socket.trigger("chat_message", { ...messageDto, conversationId: "" });
     }).not.toThrow();
-    await vi.waitFor(() => expect(diagnostics).toHaveLength(2));
+    await vi.waitFor(() => expect(diagnostics).toHaveLength(3));
     expect(diagnostics.map(({ code }) => code)).toEqual([
+      "unknown",
       "unknown",
       "validation",
     ]);
   });
 
-  it("isolates replacement subscriptions and Gateway instances", async () => {
+  it("keeps committed subscriptions active while isolating Gateway instances", async () => {
     const firstSockets = createSocketFixture();
     const secondSockets = createSocketFixture();
     const firstUpdates: ChatUpdate[] = [];
@@ -2809,13 +3697,21 @@ describe("TFRobotChatGateway Socket boundary", () => {
       conversationId: 99,
     });
     secondSockets.sockets[0]!.trigger("chat_message", messageDto);
-    expect(firstUpdates).toEqual([]);
-    expect(replacementUpdates).toHaveLength(1);
-    expect(secondUpdates).toHaveLength(1);
+    expect(
+      firstUpdates.filter((update) => update.kind === "timeline.upsert"),
+    ).toHaveLength(1);
+    expect(
+      replacementUpdates.filter((update) => update.kind === "timeline.upsert"),
+    ).toHaveLength(1);
+    expect(
+      secondUpdates.filter((update) => update.kind === "timeline.upsert"),
+    ).toHaveLength(1);
 
     await firstGateway.dispose({ deadlineAt: deadline() });
     secondSockets.sockets[0]!.trigger("chat_message", messageDto);
-    expect(secondUpdates).toHaveLength(2);
+    expect(
+      secondUpdates.filter((update) => update.kind === "timeline.upsert"),
+    ).toHaveLength(2);
     await secondGateway.dispose({ deadlineAt: deadline() });
   });
 

@@ -299,6 +299,59 @@ export interface ChatError {
   readonly details?: ReadonlyJsonValue | undefined;
 }
 
+export type ChatLifecycleStatus =
+  | "connecting"
+  | "joining"
+  | "active"
+  | "reconnecting"
+  | "recovering"
+  | "auth-required"
+  | "offline"
+  | "subscription-failed";
+
+/**
+ * Conversation-scoped transport readiness. A missing lifecycle means a legacy
+ * Gateway whose command availability continues to be capability-driven.
+ */
+export interface ChatLifecycle {
+  readonly status: ChatLifecycleStatus;
+  readonly generation?: number | undefined;
+  readonly reconnectAttempt?: number | undefined;
+  readonly subscriptionId?: string | undefined;
+  readonly recovery?:
+    | {
+        readonly complete: boolean;
+        readonly cursor?: string | undefined;
+        readonly reason?: string | undefined;
+      }
+    | undefined;
+}
+
+export type ChatErrorSource =
+  | "authentication"
+  | "command"
+  | "connection"
+  | "domain"
+  | "protocol"
+  | "recovery"
+  | "runtime"
+  | "subscription";
+
+export type ChatErrorScope =
+  | { readonly kind: "global" }
+  | { readonly kind: "conversation"; readonly id: ConversationId }
+  | { readonly kind: "subscription"; readonly id: string }
+  | { readonly kind: "command"; readonly id: string };
+
+/** One independently resolvable error occurrence. */
+export interface ChatErrorOccurrence {
+  readonly id: string;
+  readonly error: ChatError;
+  readonly source: ChatErrorSource;
+  readonly scope: ChatErrorScope;
+  readonly generation: number;
+}
+
 export interface Capabilities {
   /** Enables ChatGateway.answerInteraction when the optional method exists. */
   readonly answerInteraction?: boolean | undefined;
@@ -326,6 +379,9 @@ export interface ChatSnapshot {
   readonly capabilities: Capabilities;
   readonly pageInfo: TimelinePageInfo;
   readonly pendingInteraction?: AskUserInteractionRequest | undefined;
+  readonly lifecycle?: ChatLifecycle | undefined;
+  readonly activeErrors?: readonly ChatErrorOccurrence[] | undefined;
+  /** @deprecated Prefer activeErrors; retained as the latest-error projection. */
   readonly error?: ChatError | undefined;
 }
 
@@ -369,9 +425,23 @@ export type ChatUpdate =
       readonly interaction: AskUserInteractionRequest | null;
     }
   | {
+      readonly kind: "lifecycle.changed";
+      readonly conversationId: ConversationId;
+      readonly lifecycle: ChatLifecycle;
+    }
+  | {
       readonly kind: "error.reported";
       readonly conversationId?: ConversationId | undefined;
       readonly error: ChatError;
+      readonly errorId?: string | undefined;
+      readonly source?: ChatErrorSource | undefined;
+      readonly scope?: ChatErrorScope | undefined;
+      readonly generation?: number | undefined;
+    }
+  | {
+      readonly kind: "error.resolved";
+      readonly conversationId?: ConversationId | undefined;
+      readonly errorId: string;
     };
 
 export const conversationSchema = createRuntimeSchema(conversationParser);

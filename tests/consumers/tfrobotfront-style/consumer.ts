@@ -65,8 +65,12 @@ class ControlledSocket implements TFRobotSocket {
     this.connected = false;
   }
 
-  emit(eventName: string, payload?: unknown): void {
-    this.emitted.push([eventName, payload]);
+  emit(eventName: string, ...arguments_: unknown[]): void {
+    this.emitted.push([eventName, arguments_[0]]);
+    if (eventName === "join_conversation") {
+      const acknowledgement = arguments_[1];
+      if (typeof acknowledgement === "function") acknowledgement(true);
+    }
   }
 
   off(eventName: string, listener: TFRobotSocketListener): void {
