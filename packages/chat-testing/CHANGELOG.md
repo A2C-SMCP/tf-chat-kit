@@ -1,5 +1,15 @@
 # @turingfocus/chat-testing
 
+## 0.6.0
+
+### Patch Changes
+
+- 91a29e5: Add conversation lifecycle state, independently resolvable error occurrences,
+  atomic TFRobot subscription handoff, acknowledged Socket.IO joins, verified
+  reconnect recovery gating, and lifecycle-aware command controls.
+- Updated dependencies [91a29e5]
+  - @turingfocus/chat-protocol@0.6.0
+
 ## 0.5.0
 
 ### Patch Changes

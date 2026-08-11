@@ -1,5 +1,16 @@
 # @turingfocus/chat-kit
 
+## 0.6.0
+
+### Patch Changes
+
+- Updated dependencies [91a29e5]
+  - @turingfocus/chat-protocol@0.6.0
+  - @turingfocus/chat-runtime@0.6.0
+  - @turingfocus/chat-gateway-tfrobot@0.6.0
+  - @turingfocus/chat-ui-antd@0.6.0
+  - @turingfocus/chat-react@0.6.0
+
 ## 0.5.0
 
 ### Patch Changes
