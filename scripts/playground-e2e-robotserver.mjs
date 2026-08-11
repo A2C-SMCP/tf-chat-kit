@@ -334,10 +334,20 @@ chat.use((socket, next) => {
 chat.on("connection", (socket) => {
   observations.activeSockets += 1;
   observations.socketConnections += 1;
-  socket.on("join_conversation", ({ conversation_id: conversationId }) => {
-    observations.joins += 1;
-    void socket.join(String(conversationId));
-  });
+  socket.on(
+    "join_conversation",
+    async ({ conversation_id: conversationId }, acknowledge) => {
+      observations.joins += 1;
+      await socket.join(String(conversationId));
+      if (typeof acknowledge === "function") {
+        acknowledge({
+          accepted: true,
+          recovered: true,
+          cursor: `fixture-${conversationId}-current`,
+        });
+      }
+    },
+  );
   socket.on("disconnect", () => {
     observations.activeSockets -= 1;
     observations.socketDisconnections += 1;
