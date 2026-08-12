@@ -1,5 +1,16 @@
 # @turingfocus/chat-runtime
 
+## 0.7.0
+
+### Minor Changes
+
+- 93183e0: Add an explicit current TFRobotServer compatibility profile with validated legacy task IDs, same-session REST preflight, bounded best-effort reconnect rebase, and operable degraded lifecycle semantics while preserving the strict verified profile by default. Also add optional conversation rename and delete commands across Protocol, TFRobot Gateway, Runtime, React, Ant Design UI, testing, and the repository Playground, including active-snapshot retirement, an additive empty-state subscription, confirmation, and reserved-prefix cleanup guards.
+
+### Patch Changes
+
+- Updated dependencies [93183e0]
+  - @turingfocus/chat-protocol@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes
