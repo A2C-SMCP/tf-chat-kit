@@ -316,6 +316,80 @@ describe("Playground RobotServer proxy", () => {
     expect(received).toHaveLength(1);
   });
 
+  it("forwards conversation rename and delete methods to the validated upstream", async () => {
+    const received: Array<{
+      readonly body: string;
+      readonly method: string | undefined;
+      readonly url: string;
+    }> = [];
+    upstreamServer = createHttpServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      received.push({
+        body: Buffer.concat(chunks).toString("utf8"),
+        method: request.method,
+        url: request.url ?? "",
+      });
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ code: 200, data: {} }));
+    });
+    const upstreamOrigin = await listen(upstreamServer);
+    process.env["TF_CHAT_PLAYGROUND_ALLOWED_API_ORIGINS"] = upstreamOrigin;
+    vite = await createViteServer({
+      appType: "custom",
+      plugins: [createRobotServerProxyPlugin()],
+      server: { middlewareMode: true },
+    });
+    playgroundServer = createHttpServer(vite.middlewares);
+    const playgroundOrigin = await listen(playgroundServer);
+    const proxyPath = `/__tfrobot_proxy/${encodeURIComponent(
+      upstreamOrigin,
+    )}/tfrobot/example-ns/example-robot/v1/chat/conversations/43`;
+    const headers = {
+      Authorization: "Bearer memory-only-secret",
+      "Content-Type": "application/json",
+      Origin: playgroundOrigin,
+    };
+
+    const renamed = await fetch(
+      `${playgroundOrigin}${proxyPath}?title=Renamed`,
+      {
+        body: JSON.stringify({ title: "Renamed" }),
+        headers,
+        method: "PATCH",
+      },
+    );
+    const deleted = await fetch(`${playgroundOrigin}${proxyPath}`, {
+      headers,
+      method: "DELETE",
+    });
+    const rejectedCollectionDelete = await fetch(
+      `${playgroundOrigin}${proxyPath.replace(/\/43$/u, "")}`,
+      { headers, method: "DELETE" },
+    );
+    const rejectedMessagePatch = await fetch(
+      `${playgroundOrigin}${proxyPath}/messages`,
+      {
+        body: JSON.stringify({ title: "Wrong route" }),
+        headers,
+        method: "PATCH",
+      },
+    );
+
+    expect(renamed.status).toBe(200);
+    expect(deleted.status).toBe(200);
+    expect(rejectedCollectionDelete.status).toBe(405);
+    expect(rejectedMessagePatch.status).toBe(405);
+    expect(received).toEqual([
+      {
+        body: JSON.stringify({ title: "Renamed" }),
+        method: "PATCH",
+        url: "/v1/chat/conversations/43?title=Renamed",
+      },
+      { body: "", method: "DELETE", url: "/v1/chat/conversations/43" },
+    ]);
+  });
+
   it("rejects an oversized upstream response before buffering its body", async () => {
     upstreamServer = createHttpServer((_request, response) => {
       response.writeHead(200, {

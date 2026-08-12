@@ -2,10 +2,13 @@
   "schemaVersion": 1,
   "repository": "A2C-SMCP/tf-chat-kit",
   "server": {
-    "baseline": "TFRobotServer source-and-test-derived V1 contract",
+    "baseline": "TFRobotServer develop@2a97c8f4 source-and-test-derived contract",
     "evidence": "docs/baselines/tfck-7/tfrobot-gateway-compatibility.md",
     "productionSocketStatus": "blocked",
-    "blockedBy": ["optional external E2E environment is not available"]
+    "blockedBy": [
+      "Staging deployed version is unknown",
+      "Staging did not produce assistant, tool, chat_error, or an offline server-generated persisted item during the observation window"
+    ]
   },
   "consumers": {
     "tfrobotfrontMock": {
@@ -41,7 +44,8 @@
   },
   "knownLimitations": [
     "Mock consumers prove package-level integration shapes, not production host rollout.",
-    "Production Socket.IO and real-host E2E are optional compatibility observations and are not release dependencies.",
+    "Production Socket.IO and real-host E2E are optional compatibility observations and are not release dependencies; the deployed Staging commit is unknown.",
+    "The explicit current-server profile provides bounded best-effort REST rebase and cannot recover transient, unpersisted events or claim complete replay.",
     "Realtime Ask User answers remain disabled until the remote-tool routing and authorization gate is complete."
   ]
 }

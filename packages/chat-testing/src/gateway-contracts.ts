@@ -6,11 +6,13 @@ import type {
   ChatSnapshot,
   ChatUpdate,
   CreateConversationInput,
+  DeleteConversationInput,
   GatewayResult,
   InterruptRunInput,
   ListConversationsInput,
   LoadConversationInput,
   MaybePromise,
+  RenameConversationInput,
   SendTextInput,
   SubscribeConversationInput,
 } from "@turingfocus/chat-protocol";
@@ -39,9 +41,11 @@ const dataUpdates = (updates: readonly ChatUpdate[]): readonly ChatUpdate[] =>
 export type GatewayContractOperation =
   | "answerInteraction"
   | "createConversation"
+  | "deleteConversation"
   | "interrupt"
   | "listConversations"
   | "loadConversation"
+  | "renameConversation"
   | "sendText"
   | "subscribe";
 
@@ -57,6 +61,10 @@ export type GatewayContractCall =
       readonly operation: "createConversation";
       readonly input: CreateConversationInput;
     }
+  | {
+      readonly operation: "deleteConversation";
+      readonly input: DeleteConversationInput;
+    }
   | { readonly operation: "interrupt"; readonly input: InterruptRunInput }
   | {
       readonly operation: "listConversations";
@@ -65,6 +73,10 @@ export type GatewayContractCall =
   | {
       readonly operation: "loadConversation";
       readonly input: LoadConversationInput;
+    }
+  | {
+      readonly operation: "renameConversation";
+      readonly input: RenameConversationInput;
     }
   | { readonly operation: "sendText"; readonly input: SendTextInput }
   | {

@@ -41,6 +41,7 @@ import {
 import { RobotServerConnectionPanel } from "./robotserver-panel.js";
 import {
   createRobotServerPlaygroundSession,
+  ROBOTSERVER_TEST_CONVERSATION_PREFIX,
   type RobotServerConnectionConfig,
 } from "./robotserver-session.js";
 
@@ -103,6 +104,11 @@ const PlaygroundWorkspace = ({
   const [conversationHistoryOpen, setConversationHistoryOpen] = useState(false);
   const [createConversationOpen, setCreateConversationOpen] = useState(false);
   const [creatingConversation, setCreatingConversation] = useState(false);
+  const [deleteConversationOpen, setDeleteConversationOpen] = useState(false);
+  const [deletingConversation, setDeletingConversation] = useState(false);
+  const [renameConversationOpen, setRenameConversationOpen] = useState(false);
+  const [renamingConversation, setRenamingConversation] = useState(false);
+  const [renameTitle, setRenameTitle] = useState("");
   const [title, setTitle] = useState("新建本地会话");
   const [eventDetailSplitRatio, setEventDetailSplitRatio] = useState(
     readPlaygroundEventDetailSplitRatio,
@@ -121,6 +127,11 @@ const PlaygroundWorkspace = ({
     setConversationHistoryOpen(false);
     setCreateConversationOpen(false);
     setCreatingConversation(false);
+    setDeleteConversationOpen(false);
+    setDeletingConversation(false);
+    setRenameConversationOpen(false);
+    setRenamingConversation(false);
+    setRenameTitle("");
     setTitle("新建本地会话");
   }, [session]);
 
@@ -152,6 +163,39 @@ const PlaygroundWorkspace = ({
 
   const conversationTitle =
     session.client.getSnapshot()?.conversation.title ?? "请选择会话";
+  const selectedConversation = state.conversations.find(
+    ({ id }) => id === state.selectedConversationId,
+  );
+  const canManageRobotServerTestConversation =
+    session.kind === "robotserver" &&
+    selectedConversation?.title.startsWith(
+      ROBOTSERVER_TEST_CONVERSATION_PREFIX,
+    ) === true;
+
+  const renameSelectedConversation = async () => {
+    if (selectedConversation === undefined || renamingConversation) return;
+    setRenamingConversation(true);
+    try {
+      const renamed = await session.renameConversation(
+        selectedConversation.id,
+        renameTitle,
+      );
+      if (renamed) setRenameConversationOpen(false);
+    } finally {
+      setRenamingConversation(false);
+    }
+  };
+
+  const deleteSelectedConversation = async () => {
+    if (selectedConversation === undefined || deletingConversation) return;
+    setDeletingConversation(true);
+    try {
+      const deleted = await session.deleteConversation(selectedConversation.id);
+      if (deleted) setDeleteConversationOpen(false);
+    } finally {
+      setDeletingConversation(false);
+    }
+  };
 
   const compactNavigation: ChatCompactNavigationConfig = {
     conversationTitle,
@@ -269,6 +313,24 @@ const PlaygroundWorkspace = ({
                   <Button onClick={() => void session.reconnect()}>
                     重连 REST 与 Socket
                   </Button>
+                  {canManageRobotServerTestConversation ? (
+                    <>
+                      <Button
+                        onClick={() => {
+                          setRenameTitle(selectedConversation?.title ?? "");
+                          setRenameConversationOpen(true);
+                        }}
+                      >
+                        重命名测试会话
+                      </Button>
+                      <Button
+                        danger
+                        onClick={() => setDeleteConversationOpen(true)}
+                      >
+                        删除测试会话
+                      </Button>
+                    </>
+                  ) : null}
                 </>
               )}
             </Space>
@@ -322,9 +384,44 @@ const PlaygroundWorkspace = ({
               />
             ) : (
               <Typography.Paragraph style={{ marginBottom: 0 }}>
-                将创建并保留一个带当前时间标识的 Playground 测试会话。
+                将创建一个带当前时间标识的 Playground
+                测试会话；正常结束时会按精确 ID 自动清理。
               </Typography.Paragraph>
             )}
+          </Modal>
+          <Modal
+            cancelText="取消"
+            confirmLoading={renamingConversation}
+            okButtonProps={{
+              disabled: !renameTitle
+                .trim()
+                .startsWith(ROBOTSERVER_TEST_CONVERSATION_PREFIX),
+            }}
+            okText="确认重命名"
+            onCancel={() => setRenameConversationOpen(false)}
+            onOk={() => void renameSelectedConversation()}
+            open={renameConversationOpen}
+            title="重命名测试会话"
+          >
+            <Input
+              aria-label="测试会话标题"
+              disabled={renamingConversation}
+              onChange={(event) => setRenameTitle(event.target.value)}
+              onPressEnter={() => void renameSelectedConversation()}
+              value={renameTitle}
+            />
+          </Modal>
+          <Modal
+            cancelText="取消"
+            confirmLoading={deletingConversation}
+            okButtonProps={{ danger: true }}
+            okText="确认删除"
+            onCancel={() => setDeleteConversationOpen(false)}
+            onOk={() => void deleteSelectedConversation()}
+            open={deleteConversationOpen}
+            title="删除测试会话"
+          >
+            仅删除当前带 {ROBOTSERVER_TEST_CONVERSATION_PREFIX} 前缀的测试会话。
           </Modal>
         </main>
       </ChatProvider>

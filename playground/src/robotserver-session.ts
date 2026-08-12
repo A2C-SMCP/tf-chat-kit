@@ -75,6 +75,8 @@ export interface RobotServerSessionDependencies {
   readonly socketFactory?: TFRobotSocketFactory | undefined;
 }
 
+export const ROBOTSERVER_TEST_CONVERSATION_PREFIX = "[tf-chat-kit playground]";
+
 const parseEndpoint = (
   value: string,
   protocols: readonly string[],
@@ -205,7 +207,7 @@ export const validateRobotServerConnection = (
 };
 
 export const robotServerTestConversationTitle = (now: number): string =>
-  `[tf-chat-kit playground] ${new Date(now).toISOString().slice(0, 19)}`;
+  `${ROBOTSERVER_TEST_CONVERSATION_PREFIX} ${new Date(now).toISOString().slice(0, 19)}`;
 
 const safeErrorDescription = (error: ChatError): string => {
   switch (error.code) {
@@ -270,6 +272,10 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
   #intentRevision = 0;
   #lastClientSnapshot: ChatSnapshot | null = null;
   readonly #listeners = new Set<() => void>();
+  readonly #ownedTestConversationIds = new Set<string>();
+  readonly #testConversationCreations = new Set<
+    ReturnType<ConversationWorkspaceController["createConversation"]>
+  >();
   readonly #now: () => number;
   #state: PlaygroundState = {
     connected: false,
@@ -293,6 +299,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
       messageCreatorProvider: () => config.creator,
       now: this.#now,
       onDiagnostic: (error) => this.#handleDiagnostic(error),
+      serverProfile: { kind: "current-server" },
       ...(config.platformId === undefined
         ? {}
         : { platformId: config.platformId }),
@@ -313,7 +320,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
       this.#syncWorkspace(snapshot);
     });
     this.#unsubscribeWorkspace = () => workspaceSubscription.dispose();
-    const subscription = this.client.subscribe(() => {
+    const subscription = this.client.subscribeState(() => {
       const snapshot = this.client.getSnapshot();
       const previous = this.#lastClientSnapshot;
       this.#lastClientSnapshot = snapshot;
@@ -406,14 +413,76 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
     const revision = this.#beginIntent();
     if (!this.#isCurrentIntent(revision)) return false;
     const title = robotServerTestConversationTitle(this.#now());
-    this.#setState({ status: "正在创建保留的 Playground 测试会话…" });
-    const result = await this.#workspace.createConversation({ title });
+    this.#setState({ status: "正在创建可自动清理的 Playground 测试会话…" });
+    const creation = this.#workspace
+      .createConversation({ title })
+      .then((result) => {
+        if (result.ok) this.#ownedTestConversationIds.add(result.value.id);
+        return result;
+      });
+    this.#testConversationCreations.add(creation);
+    let result: Awaited<typeof creation>;
+    try {
+      result = await creation;
+    } finally {
+      this.#testConversationCreations.delete(creation);
+    }
     if (!this.#isCurrentIntent(revision)) return false;
     if (!result.ok) {
       this.#handleError(result.error);
       return false;
     }
     this.#setState({ status: `正在查看「${result.value.title}」。` });
+    return true;
+  }
+
+  async renameConversation(
+    conversationId: string,
+    title: string,
+  ): Promise<boolean> {
+    const conversation = this.#state.conversations.find(
+      ({ id }) => id === conversationId,
+    );
+    if (
+      conversation === undefined ||
+      !conversation.title.startsWith(ROBOTSERVER_TEST_CONVERSATION_PREFIX) ||
+      !title.trim().startsWith(ROBOTSERVER_TEST_CONVERSATION_PREFIX)
+    ) {
+      this.#setState({
+        status: "Playground 只允许重命名并保留测试会话前缀。",
+      });
+      return false;
+    }
+    const result = await this.#workspace.renameConversation({
+      conversationId,
+      title,
+    });
+    if (!result.ok) {
+      this.#handleError(result.error);
+      return false;
+    }
+    this.#setState({ status: `已重命名为「${result.value.title}」。` });
+    return true;
+  }
+
+  async deleteConversation(conversationId: string): Promise<boolean> {
+    const conversation = this.#state.conversations.find(
+      ({ id }) => id === conversationId,
+    );
+    if (
+      conversation === undefined ||
+      !conversation.title.startsWith(ROBOTSERVER_TEST_CONVERSATION_PREFIX)
+    ) {
+      this.#setState({ status: "Playground 只允许删除保留的测试会话。" });
+      return false;
+    }
+    const result = await this.#workspace.deleteConversation(conversationId);
+    if (!result.ok) {
+      this.#handleError(result.error);
+      return false;
+    }
+    this.#ownedTestConversationIds.delete(conversationId);
+    this.#setState({ status: `已删除测试会话「${conversation.title}」。` });
     return true;
   }
 
@@ -494,6 +563,16 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
     if (this.#disposed) return;
     this.#disposed = true;
     this.#intentRevision += 1;
+    await Promise.allSettled([...this.#testConversationCreations]);
+    await Promise.allSettled(
+      [...this.#ownedTestConversationIds].map((conversationId) =>
+        this.client.deleteConversation({
+          conversationId,
+          deadlineAt: this.#now() + REQUEST_TIMEOUT_MS,
+        }),
+      ),
+    );
+    this.#ownedTestConversationIds.clear();
     this.#unsubscribeWorkspace();
     this.#workspace.dispose();
     this.#unsubscribeClient();
@@ -536,6 +615,12 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
         }
         break;
       case "idle":
+        if (
+          snapshot.selectedConversationId === undefined &&
+          snapshot.pendingConversationId === undefined
+        ) {
+          contentState = { kind: "empty" };
+        }
         break;
     }
     if (

@@ -44,6 +44,29 @@ chat-kit -> chat-ui-antd/chat-react/chat-runtime/chat-gateway-tfrobot/chat-proto
 
 任何 Chat Kit 包都不得反向依赖 TFRobotFront 或其他宿主项目。
 
+### TFRobotServer 协议档位
+
+TFRobot Gateway 默认使用 `{ kind: "verified" }`：Socket join 必须返回明确 ACK，重连只有在 Server 明确证明 durable replay 完整时才恢复为 `active`。当前未提供 ACK/replay cursor/outbox 的 TFRobotServer 可由宿主显式选择兼容档位：
+
+```ts
+const gateway = createTFRobotChatGateway({
+  ...gatewayOptions,
+  serverProfile: {
+    kind: "current-server",
+    rebase: {
+      deadlineMs: 10_000,
+      maxItems: 500,
+      maxPages: 10,
+      pageSize: 50,
+    },
+  },
+});
+```
+
+该档位会先用与 Socket 相同的短期 session 完成 REST 预检，再接受空 ACK；重连时执行有界 REST 历史回补，并进入可操作但有警告的 `degraded`。REST 无法补回未持久化的 `chat_error` 等瞬时事件，因此 `degraded` 永远是 `complete=false`、`assurance=best-effort`、`source=rest-rebase`，不能作为无损恢复证明。认证、租户/owner 授权、Robot 路由和是否启用该档位仍由宿主负责。
+
+当部署的 Server 能为初次 join 返回访问校验 ACK，并在重连 ACK 中提供经过验证的 durable replay cursor/outbox 完整性后，宿主应删除兼容配置，回到默认 `verified`。不要把 `current-server` 当作永久降级开关或在未知 Server 上自动探测启用。
+
 ## 文档
 
 - [宿主 App 接入指南](docs/host-app-integration.md)
@@ -67,12 +90,13 @@ pnpm pack:workspace
 ```
 
 `pnpm dev:playground` 会在 `http://localhost:3000` 启动仓库私有演示应用。Mock 模式直接组合
-正式 Runtime、React、Ant Design UI 与 Memory Gateway，提供会话创建/切换、历史、流式回复、
+正式 Runtime、React、Ant Design UI 与 Memory Gateway，提供会话创建/重命名/删除/切换、历史、流式回复、
 中断、错误、断线和重连场景。RobotServer 模式使用全中文单列表单，填写 RobotServer 服务地址、
 Namespace 与 Robot ID 后，Playground 会推导 API 域名和 Socket namespace/path，并由仅存在于本地
 Vite 开发服务中的同源代理为聊天请求注入 RobotServer 路由头。鉴权可使用管理员密码、Admin Token
 或用户 Token；管理员密码只用于调用 `/v1/auth/login` 换取短期 Admin Token，不会进入聊天会话。
 `platformId`、消息创建者与自定义直连端点位于高级设置中；未使用本地预填时所有字段默认留空。
+RobotServer 实测动作只允许重命名或删除标题以 `[tf-chat-kit playground]` 开头的测试会话，且重命名必须保留此前缀；自动化只清理本次运行准确创建的会话 ID，不会批量删除普通会话。正常结束时会在显式删除之外再次执行 best-effort 精确清理；若浏览器进程被强杀或清理期间网络不可用，远端仍可能残留，后续清理也只能按已记录的精确 ID 执行。
 
 仅在 `pnpm dev:playground` 的本地 Vite 服务中，连接表单会尝试读取仓库根目录的 `.debug` JSON
 作为内存预填值；文件不存在或为空时仍保持全部字段为空。支持的可选字段为 `serverOrigin`、
@@ -106,7 +130,7 @@ React 宿主通过 `ChatProvider` 注入自行持有的 `ChatClient`；该 Provi
 并提供释放失败处理。`useChatSelector` 用于订阅所需切片，避免无关快照更新触发组件渲染；
 `useChatSnapshot` 仅适用于确实需要完整快照的消费者。
 
-Ant Design 宿主默认使用 `ChatWorkspace`，由它管理会话列表、分页、创建、当前选择、切换竞态与
+Ant Design 宿主默认使用 `ChatWorkspace`，由它管理会话列表、分页、创建、可选重命名/删除、当前选择、切换竞态与
 错误重试；宿主只需注入当前 Robot 对应的 `ChatClient`。需要完全自定义页面工作流时，仍可组合
 受控的 `ChatUiShell` 与 `ChatConversationView`。当前会话视图只通过 `ChatProvider` 的 hooks 和 `ChatClient`
 执行历史/实时展示、文本发送、Run 中断与受控 Ask User 回答，不读取 Gateway、SessionProvider、路由或全局 Store。

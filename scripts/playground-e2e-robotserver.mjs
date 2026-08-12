@@ -7,7 +7,7 @@ const PORT = 4310;
 const PLAYGROUND_ORIGIN =
   process.env["TF_CHAT_PLAYGROUND_ORIGIN"] ?? "http://localhost:3000";
 /** @typedef {{ conversationId: number; description: null; title: string; updateTimestamp: number }} ConversationDto */
-/** @typedef {{ activeSockets: number; adminRequests: number; bearerRequests: number; contentTypeRequests: number; corsPreflights: number; interrupts: number; invalidOrigins: number; joins: number; passwordLogins: number; rejectedRest: { missing: number; wrong: number }; rejectedSockets: { missing: number; wrong: number }; routedRequests: number; socketConnections: number; socketDisconnections: number }} Observations */
+/** @typedef {{ activeSockets: number; adminRequests: number; bearerRequests: number; contentTypeRequests: number; conversationDeletes: number; conversationRenames: number; corsPreflights: number; interrupts: number; invalidOrigins: number; joins: number; passwordLogins: number; rejectedRest: { missing: number; wrong: number }; rejectedSockets: { missing: number; wrong: number }; routedRequests: number; socketConnections: number; socketDisconnections: number }} Observations */
 /** @type {Map<string, ConversationDto>} */
 const conversations = new Map();
 /** @type {Map<string, Array<Record<string, unknown>>>} */
@@ -21,6 +21,8 @@ let observations = {
   adminRequests: 0,
   bearerRequests: 0,
   contentTypeRequests: 0,
+  conversationDeletes: 0,
+  conversationRenames: 0,
   corsPreflights: 0,
   interrupts: 0,
   invalidOrigins: 0,
@@ -53,6 +55,8 @@ const reset = () => {
     adminRequests: 0,
     bearerRequests: 0,
     contentTypeRequests: 0,
+    conversationDeletes: 0,
+    conversationRenames: 0,
     corsPreflights: 0,
     interrupts: 0,
     invalidOrigins: 0,
@@ -69,7 +73,7 @@ reset();
 
 const corsHeaders = {
   "Access-Control-Allow-Headers": "Authorization, admin_key, Content-Type",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Methods": "DELETE, GET, PATCH, POST, OPTIONS",
   "Access-Control-Allow-Origin": PLAYGROUND_ORIGIN,
 };
 /**
@@ -115,7 +119,7 @@ const authentication = (request) => {
 };
 /** @param {string} pathname */
 const conversationIdOf = (pathname) =>
-  pathname.match(/^\/v1\/chat\/conversations\/([^/]+)\//u)?.[1];
+  pathname.match(/^\/v1\/chat\/conversations\/([^/]+)(?:\/|$)/u)?.[1];
 
 const httpServer = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${HOST}:${PORT}`);
@@ -222,6 +226,49 @@ const httpServer = createServer(async (request, response) => {
   const conversationId = conversationIdOf(url.pathname);
   if (conversationId === undefined || !conversations.has(conversationId)) {
     error(response, 404, "Conversation not found");
+    return;
+  }
+  if (
+    request.method === "PATCH" &&
+    url.pathname === `/v1/chat/conversations/${conversationId}`
+  ) {
+    const body = await readBody(request);
+    const title =
+      typeof body["title"] === "string"
+        ? body["title"].trim()
+        : (url.searchParams.get("title")?.trim() ?? "");
+    if (title.length === 0) {
+      error(response, 422, "Conversation title is required");
+      return;
+    }
+    const conversation = conversations.get(conversationId);
+    if (conversation === undefined) {
+      error(response, 404, "Conversation not found");
+      return;
+    }
+    conversations.set(conversationId, {
+      ...conversation,
+      title,
+      updateTimestamp: Date.now(),
+    });
+    observations.conversationRenames += 1;
+    envelope(response, conversations.get(conversationId));
+    return;
+  }
+  if (
+    request.method === "DELETE" &&
+    url.pathname === `/v1/chat/conversations/${conversationId}`
+  ) {
+    for (const timer of timers.get(conversationId) ?? []) clearTimeout(timer);
+    timers.delete(conversationId);
+    messages.delete(conversationId);
+    conversations.delete(conversationId);
+    observations.conversationDeletes += 1;
+    chat.in(conversationId).disconnectSockets(true);
+    envelope(response, {
+      conversationId: Number(conversationId),
+      message: "deleted",
+    });
     return;
   }
   if (request.method === "GET" && url.pathname.endsWith("/messages")) {

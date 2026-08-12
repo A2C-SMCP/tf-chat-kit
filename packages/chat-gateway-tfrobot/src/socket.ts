@@ -4,10 +4,12 @@ import {
   chatErrorSchema,
   chatUpdateSchema,
   createGatewayDeadlineExceededError,
+  getTimelineItemKey,
   isGatewayDeadlineExceeded,
   type ChatError,
   type ChatErrorSource,
   type ChatLifecycle,
+  type ChatSnapshot,
   type ChatUpdate,
   type GatewayObserver,
   type GatewayRequestOptions,
@@ -37,9 +39,11 @@ import {
   sanitizeCredentialRaw,
   sanitizeCredentialText,
 } from "./redaction.js";
-import { isValidTFRobotSession } from "./types.js";
+import { isValidTFRobotSession, resolveTFRobotServerProfile } from "./types.js";
 import type { StatusDto } from "./dto.js";
 import type {
+  ResolvedTFRobotCurrentServerRebaseOptions,
+  ResolvedTFRobotServerProfile,
   TFRobotGatewayOptions,
   TFRobotSession,
   TFRobotSocket,
@@ -65,6 +69,7 @@ const RECONNECT_JOIN_TIMEOUT_MS = 10_000;
 
 interface JoinAcknowledgement {
   readonly accepted: boolean;
+  readonly empty: boolean;
   readonly rejectionCode?:
     "authentication" | "authorization" | "validation" | undefined;
   readonly recoveryComplete: boolean;
@@ -75,17 +80,22 @@ interface JoinAcknowledgement {
 const parseJoinAcknowledgement = (
   value: unknown,
   reconnect: boolean,
+  acceptEmpty: boolean,
 ): JoinAcknowledgement => {
   if (value === undefined) {
     return {
-      accepted: reconnect,
+      accepted: reconnect || acceptEmpty,
+      empty: true,
       recoveryComplete: false,
-      ...(reconnect ? {} : { rejectionCode: "validation" as const }),
+      ...(reconnect || acceptEmpty
+        ? {}
+        : { rejectionCode: "validation" as const }),
     };
   }
   if (value === null) {
     return {
       accepted: false,
+      empty: false,
       recoveryComplete: false,
       rejectionCode: "validation",
     };
@@ -93,16 +103,18 @@ const parseJoinAcknowledgement = (
   if (value === false) {
     return {
       accepted: false,
+      empty: false,
       recoveryComplete: false,
       rejectionCode: "validation",
     };
   }
   if (value === true) {
-    return { accepted: true, recoveryComplete: !reconnect };
+    return { accepted: true, empty: false, recoveryComplete: !reconnect };
   }
   if (typeof value !== "object") {
     return {
       accepted: false,
+      empty: false,
       recoveryComplete: false,
       rejectionCode: "validation",
     };
@@ -206,6 +218,7 @@ const parseJoinAcknowledgement = (
     ) || normalizedError === "forbidden";
   return {
     accepted,
+    empty: false,
     ...(authenticationRejected
       ? { rejectionCode: "authentication" as const }
       : authorizationRejected
@@ -335,6 +348,8 @@ interface ActiveSubscription {
   manualReconnectPending: boolean;
   readonly observer: GatewayObserver;
   reconnectAttempt: number;
+  readonly realtimeIdentityRevisions: Map<string, number>;
+  realtimeRevision: number;
   recoveryRevision: number;
   runRevision: number;
   readonly socket: TFRobotSocket;
@@ -347,17 +362,99 @@ type ReconnectStatusLoader = (
 ) => Promise<GatewayResult<StatusDto>>;
 type RecoveryOutcome =
   "success" | "superseded-by-realtime" | "failure" | "auth-required";
+type CurrentServerRecoveryOutcome =
+  | { readonly kind: "success"; readonly reason: string }
+  | { readonly kind: "failure" }
+  | { readonly kind: "auth-required" };
+
+const MAX_RECOVERY_IDENTITIES = 10_000;
+
+const rememberBoundedSetValue = (values: Set<string>, value: string): void => {
+  values.delete(value);
+  values.add(value);
+  while (values.size > MAX_RECOVERY_IDENTITIES) {
+    const oldest = values.values().next().value;
+    if (oldest === undefined) break;
+    values.delete(oldest);
+  }
+};
+
+const rememberBoundedMapValue = (
+  values: Map<string, number>,
+  key: string,
+  value: number,
+): void => {
+  values.delete(key);
+  values.set(key, value);
+  while (values.size > MAX_RECOVERY_IDENTITIES) {
+    const oldest = values.keys().next().value;
+    if (oldest === undefined) break;
+    values.delete(oldest);
+  }
+};
+
+export interface CurrentServerRestInput extends GatewayRequestOptions {
+  readonly checkpoint: ReadonlySet<string>;
+  readonly conversationId: string;
+  readonly limits: ResolvedTFRobotCurrentServerRebaseOptions;
+  readonly session: TFRobotSession;
+  readonly signal: AbortSignal;
+}
+
+export interface CurrentServerRestSnapshot {
+  readonly boundedBy?: "cursor-cycle" | "max-items" | "max-pages" | undefined;
+  readonly checkpointReached: boolean;
+  readonly exhausted: boolean;
+  readonly run: Run | null;
+  readonly updates: readonly ChatUpdate[];
+}
+
+export type CurrentServerRestLoader = (
+  input: CurrentServerRestInput,
+) => Promise<GatewayResult<CurrentServerRestSnapshot>>;
+
+export const recoveryIdentityOfUpdate = (
+  update: ChatUpdate,
+): string | undefined => {
+  if (update.kind === "timeline.upsert") {
+    return getTimelineItemKey(update.item);
+  }
+  if (update.kind === "event.transition.upsert") {
+    return `event:${update.event.id}:transition:${update.event.transition.id}`;
+  }
+  return undefined;
+};
+
+const recoveryIdentitiesOfSnapshot = (
+  snapshot: ChatSnapshot,
+): readonly string[] =>
+  snapshot.timeline.flatMap((item) =>
+    item.kind === "agent-event"
+      ? item.transitions.map(
+          (transition) => `event:${item.id}:transition:${transition.id}`,
+        )
+      : [getTimelineItemKey(item)],
+  );
 
 export class TFRobotSocketClient {
   #disposed = false;
-  #establishmentAbort: AbortController | undefined;
   #establishing: ActiveSubscription | undefined;
+  #pendingEstablishment:
+    | {
+        readonly abort: AbortController;
+        readonly conversationId: string;
+        readonly generation: number;
+      }
+    | undefined;
   readonly #factory: TFRobotSocketFactory;
   readonly #namespaceUrl: string;
   readonly #now: () => number;
   readonly #options: TFRobotGatewayOptions;
   readonly #path: string;
+  readonly #profile: ResolvedTFRobotServerProfile;
+  readonly #currentServerRestLoader: CurrentServerRestLoader;
   readonly #reconnectStatusLoader: ReconnectStatusLoader;
+  readonly #recoveryCheckpoints = new Map<string, Set<string>>();
   readonly #runs = new Map<string, Run | null>();
   readonly #subscriptions = new Set<ActiveSubscription>();
   #subscriptionGeneration = 0;
@@ -365,14 +462,17 @@ export class TFRobotSocketClient {
   constructor(
     options: TFRobotGatewayOptions,
     reconnectStatusLoader: ReconnectStatusLoader,
+    currentServerRestLoader: CurrentServerRestLoader,
   ) {
     this.#options = options;
     this.#factory = options.socketFactory ?? createSocketIoFactory;
     this.#path = options.socketPath ?? "/socket.io";
     this.#now = options.now ?? Date.now;
+    this.#profile = resolveTFRobotServerProfile(options.serverProfile);
     this.#namespaceUrl =
       options.socketNamespaceUrl ?? this.#defaultNamespaceUrl(options.baseUrl);
     this.#reconnectStatusLoader = reconnectStatusLoader;
+    this.#currentServerRestLoader = currentServerRestLoader;
   }
 
   async subscribe(
@@ -401,9 +501,19 @@ export class TFRobotSocketClient {
     const subscriptionId = `tfrobot-subscription-${generation}`;
     this.#cancelEstablishment();
     const establishmentAbort = new AbortController();
-    this.#establishmentAbort = establishmentAbort;
+    const pendingEstablishment = {
+      abort: establishmentAbort,
+      conversationId,
+      generation,
+    };
+    this.#pendingEstablishment = pendingEstablishment;
+    const clearPendingEstablishment = (): void => {
+      if (this.#pendingEstablishment === pendingEstablishment) {
+        this.#pendingEstablishment = undefined;
+      }
+    };
     const authOutcome = await awaitBounded(
-      () => this.#getSocketAuth(conversationId, "connect"),
+      () => this.#getSocketSession(conversationId, "connect"),
       {
         deadlineAt: options.deadlineAt,
         now: this.#now,
@@ -412,6 +522,7 @@ export class TFRobotSocketClient {
     );
     switch (authOutcome.kind) {
       case "aborted": {
+        clearPendingEstablishment();
         return {
           ok: false,
           error: this.#error(
@@ -425,12 +536,14 @@ export class TFRobotSocketClient {
         };
       }
       case "deadline": {
+        clearPendingEstablishment();
         return {
           ok: false,
           error: createGatewayDeadlineExceededError(),
         };
       }
       case "error": {
+        clearPendingEstablishment();
         return {
           ok: false,
           error: this.#error(
@@ -446,6 +559,7 @@ export class TFRobotSocketClient {
       }
     }
     if (this.#disposed || establishmentAbort.signal.aborted) {
+      clearPendingEstablishment();
       return {
         ok: false,
         error: this.#error(
@@ -457,10 +571,44 @@ export class TFRobotSocketClient {
       };
     }
 
-    const credentialValues = new Set(Object.values(authOutcome.value));
+    const initialSession = authOutcome.value;
+    if (this.#profile.kind === "current-server") {
+      const preflight = await this.#currentServerRestLoader({
+        checkpoint: new Set(),
+        conversationId,
+        deadlineAt: options.deadlineAt,
+        limits: {
+          ...this.#profile.rebase,
+          maxItems: this.#profile.rebase.pageSize,
+          maxPages: 1,
+        },
+        session: initialSession,
+        signal: establishmentAbort.signal,
+      });
+      if (this.#disposed || establishmentAbort.signal.aborted) {
+        clearPendingEstablishment();
+        return {
+          ok: false,
+          error: this.#error(
+            "conflict",
+            "TFRobot subscription was replaced during REST preflight",
+            false,
+            undefined,
+          ),
+        };
+      }
+      if (!preflight.ok) {
+        clearPendingEstablishment();
+        return preflight;
+      }
+    }
+
+    const initialAuth = authOf(initialSession);
+    const credentialValues = new Set(Object.values(initialAuth));
     const errorConversationId = (): string =>
       sanitizeCredentialText(conversationId, credentialValues);
-    let firstAuth: TFRobotSocketAuth | undefined = authOutcome.value;
+    let firstAuth: TFRobotSocketAuth | undefined = initialAuth;
+    let currentServerSession: TFRobotSession | undefined = initialSession;
     let authenticationFailure: unknown;
     const connectionAbort = new AbortController();
     let socket: TFRobotSocket;
@@ -477,25 +625,27 @@ export class TFRobotSocketClient {
             firstAuth = undefined;
             return auth;
           }
-          const reconnectAuth = await awaitBounded(
-            () => this.#getSocketAuth(conversationId, "reconnect"),
+          const reconnectSession = await awaitBounded(
+            () => this.#getSocketSession(conversationId, "reconnect"),
             {
               deadlineAt: this.#now() + RECONNECT_AUTH_TIMEOUT_MS,
               now: this.#now,
               signal: connectionAbort.signal,
             },
           );
-          if (reconnectAuth.kind === "value") {
-            for (const value of Object.values(reconnectAuth.value)) {
+          if (reconnectSession.kind === "value") {
+            currentServerSession = reconnectSession.value;
+            const reconnectAuth = authOf(reconnectSession.value);
+            for (const value of Object.values(reconnectAuth)) {
               credentialValues.add(value);
             }
-            return reconnectAuth.value;
+            return reconnectAuth;
           }
           const reason =
-            reconnectAuth.kind === "error"
-              ? reconnectAuth.reason
+            reconnectSession.kind === "error"
+              ? reconnectSession.reason
               : new Error(
-                  reconnectAuth.kind === "deadline"
+                  reconnectSession.kind === "deadline"
                     ? "TFRobot Socket session refresh exceeded its deadline"
                     : "TFRobot Socket session refresh was cancelled",
                 );
@@ -505,6 +655,7 @@ export class TFRobotSocketClient {
       });
     } catch (reason) {
       connectionAbort.abort();
+      clearPendingEstablishment();
       return {
         ok: false,
         error: this.#transportError(
@@ -683,12 +834,18 @@ export class TFRobotSocketClient {
               ? {}
               : {
                   recoveryComplete: recovery.complete,
+                  ...(recovery.assurance === undefined
+                    ? {}
+                    : { recoveryAssurance: recovery.assurance }),
                   ...(recovery.cursor === undefined
                     ? {}
                     : { recoveryCursor: recovery.cursor }),
                   ...(recovery.reason === undefined
                     ? {}
                     : { recoveryReason: recovery.reason }),
+                  ...(recovery.source === undefined
+                    ? {}
+                    : { recoverySource: recovery.source }),
                 }),
           }),
         ).catch(() => undefined);
@@ -728,7 +885,91 @@ export class TFRobotSocketClient {
         );
         return;
       }
+      const recoveryIdentity = recoveryIdentityOfUpdate(update);
+      if (recoveryIdentity !== undefined) {
+        active.realtimeRevision += 1;
+        rememberBoundedMapValue(
+          active.realtimeIdentityRevisions,
+          recoveryIdentity,
+          active.realtimeRevision,
+        );
+        const checkpoint =
+          this.#recoveryCheckpoints.get(conversationId) ?? new Set<string>();
+        rememberBoundedSetValue(checkpoint, recoveryIdentity);
+        this.#recoveryCheckpoints.set(conversationId, checkpoint);
+      }
       next(update);
+    };
+    const rebaseCurrentServer = async (
+      recoveryRevision: number,
+      runRevision: number,
+      session: TFRobotSession,
+      checkpoint: ReadonlySet<string>,
+      realtimeRevision: number,
+    ): Promise<CurrentServerRecoveryOutcome> => {
+      if (this.#profile.kind !== "current-server") {
+        return { kind: "failure" };
+      }
+      const result = await this.#currentServerRestLoader({
+        checkpoint,
+        conversationId,
+        deadlineAt: this.#now() + this.#profile.rebase.deadlineMs,
+        limits: this.#profile.rebase,
+        session,
+        signal: connectionAbort.signal,
+      });
+      if (
+        !active.active ||
+        !this.#subscriptions.has(active) ||
+        !active.socket.connected ||
+        active.recoveryRevision !== recoveryRevision
+      ) {
+        return { kind: "failure" };
+      }
+      if (!result.ok) {
+        const error = sanitizeCredentialError(result.error, credentialValues);
+        if (error.code === "authentication" || error.code === "authorization") {
+          report(error, "authentication");
+          return { kind: "auth-required" };
+        }
+        report(error, "recovery");
+        return { kind: "failure" };
+      }
+      const remembered =
+        this.#recoveryCheckpoints.get(conversationId) ?? new Set<string>();
+      for (const update of result.value.updates) {
+        const identity = recoveryIdentityOfUpdate(update);
+        if (
+          identity !== undefined &&
+          (active.realtimeIdentityRevisions.get(identity) ?? 0) >
+            realtimeRevision
+        ) {
+          continue;
+        }
+        next(update);
+        if (identity !== undefined)
+          rememberBoundedSetValue(remembered, identity);
+      }
+      this.#recoveryCheckpoints.set(conversationId, remembered);
+      if (active.runRevision === runRevision) {
+        const previous = this.#runs.get(conversationId);
+        this.#runs.set(conversationId, result.value.run);
+        if (!sameRun(previous, result.value.run)) {
+          next(
+            chatUpdateSchema.parse({
+              kind: "run.replace",
+              conversationId: errorConversationId(),
+              run: result.value.run,
+            }),
+          );
+        }
+      }
+      const reason = result.value.checkpointReached
+        ? "rest-rebase-reached-checkpoint"
+        : result.value.boundedBy === undefined
+          ? "rest-rebase-history-exhausted"
+          : `rest-rebase-${result.value.boundedBy}`;
+      return { kind: "success", reason };
     };
     let settleEstablishment:
       ((result: GatewayResult<GatewaySubscription>) => void) | undefined;
@@ -758,6 +999,10 @@ export class TFRobotSocketClient {
       }
       const reconnect = subscriptionEstablished;
       if (reconnect) active.reconnectAttempt += 1;
+      const rebaseCheckpoint = new Set(
+        this.#recoveryCheckpoints.get(conversationId) ?? [],
+      );
+      const rebaseRealtimeRevision = active.realtimeRevision;
       const recoveryRevision = ++active.recoveryRevision;
       const runRevision = active.runRevision;
       const joinStartedAt = this.#now();
@@ -788,10 +1033,12 @@ export class TFRobotSocketClient {
               ? rawAcknowledgement
               : sanitizeCredentialRaw(rawAcknowledgement, credentialValues),
             reconnect,
+            this.#profile.kind === "current-server",
           );
         } catch {
           acknowledgement = {
             accepted: false,
+            empty: false,
             recoveryComplete: false,
             rejectionCode: "validation",
             message:
@@ -865,16 +1112,33 @@ export class TFRobotSocketClient {
           });
           resolveError("connection");
           resolveError("authentication");
-          lifecycle(
-            "active",
-            {
-              complete: true,
-              ...(acknowledgement.cursor === undefined
-                ? {}
-                : { cursor: acknowledgement.cursor }),
-            },
-            this.#now() - joinStartedAt,
-          );
+          if (
+            this.#profile.kind === "current-server" &&
+            acknowledgement.empty
+          ) {
+            lifecycle(
+              "degraded",
+              {
+                assurance: "best-effort",
+                complete: false,
+                reason: "initial-rest-preflight",
+                source: "rest-rebase",
+              },
+              this.#now() - joinStartedAt,
+            );
+          } else {
+            lifecycle(
+              "active",
+              {
+                complete: true,
+                ...(acknowledgement.cursor === undefined
+                  ? {}
+                  : { cursor: acknowledgement.cursor }),
+              },
+              this.#now() - joinStartedAt,
+            );
+          }
+          currentServerSession = undefined;
           active.acceptingEvents = true;
           flushRealtime();
           return;
@@ -897,6 +1161,77 @@ export class TFRobotSocketClient {
         );
         active.acceptingEvents = true;
         flushRealtime();
+        if (
+          this.#profile.kind === "current-server" &&
+          !acknowledgement.recoveryComplete
+        ) {
+          const recoverySession = currentServerSession;
+          currentServerSession = undefined;
+          if (recoverySession === undefined) {
+            report(
+              this.#error(
+                "authentication",
+                "TFRobot reconnect did not provide a session for REST rebase",
+                true,
+                errorConversationId(),
+              ),
+              "recovery",
+            );
+            return;
+          }
+          void rebaseCurrentServer(
+            recoveryRevision,
+            runRevision,
+            recoverySession,
+            rebaseCheckpoint,
+            rebaseRealtimeRevision,
+          )
+            .then((outcome) => {
+              if (
+                !active.active ||
+                !this.#subscriptions.has(active) ||
+                !active.socket.connected ||
+                active.recoveryRevision !== recoveryRevision
+              ) {
+                return;
+              }
+              if (outcome.kind === "auth-required") {
+                enterAuthRequired();
+                return;
+              }
+              if (outcome.kind !== "success") return;
+              resolveError("connection");
+              resolveError("recovery");
+              resolveError("authentication");
+              active.manualReconnectAttempted = false;
+              active.manualReconnectPending = false;
+              active.authRequired = false;
+              active.terminal = false;
+              lifecycle(
+                "degraded",
+                {
+                  assurance: "best-effort",
+                  complete: false,
+                  reason: outcome.reason,
+                  source: "rest-rebase",
+                },
+                joinLatencyMs,
+              );
+            })
+            .catch(() => {
+              report(
+                this.#error(
+                  "unknown",
+                  "TFRobot REST rebase failed unexpectedly",
+                  true,
+                  errorConversationId(),
+                ),
+                "recovery",
+              );
+            });
+          return;
+        }
+        currentServerSession = undefined;
         void this.#reconcileRunAfterReconnect(
           active,
           conversationId,
@@ -1356,6 +1691,7 @@ export class TFRobotSocketClient {
         // Adapter ownership is cleared even if an injected transport misbehaves.
       }
       firstAuth = undefined;
+      currentServerSession = undefined;
       credentialValues.clear();
       pendingNotifications.length = 0;
       pendingRealtimeActions.length = 0;
@@ -1368,6 +1704,7 @@ export class TFRobotSocketClient {
         credentialValues,
       );
       cleanup();
+      clearPendingEstablishment();
       return {
         ok: false,
         error,
@@ -1395,6 +1732,8 @@ export class TFRobotSocketClient {
       manualReconnectPending: false,
       observer,
       reconnectAttempt: 0,
+      realtimeIdentityRevisions: new Map(),
+      realtimeRevision: 0,
       recoveryRevision: 0,
       runRevision: 0,
       socket,
@@ -1409,9 +1748,7 @@ export class TFRobotSocketClient {
         if (settled) return;
         settled = true;
         settleEstablishment = undefined;
-        if (this.#establishmentAbort === establishmentAbort) {
-          this.#establishmentAbort = undefined;
-        }
+        clearPendingEstablishment();
         if (this.#establishing === active) this.#establishing = undefined;
         clearTimeout(timeout);
         if (!result.ok) {
@@ -1474,7 +1811,20 @@ export class TFRobotSocketClient {
       subscription.cleanup();
     }
     this.#subscriptions.clear();
+    this.#recoveryCheckpoints.clear();
     this.#runs.clear();
+  }
+
+  rememberSnapshot(snapshot: ChatSnapshot): void {
+    if (this.#disposed) return;
+    const conversationId = snapshot.conversation.id;
+    this.#runs.set(conversationId, snapshot.run);
+    const checkpoint =
+      this.#recoveryCheckpoints.get(conversationId) ?? new Set<string>();
+    for (const identity of recoveryIdentitiesOfSnapshot(snapshot)) {
+      rememberBoundedSetValue(checkpoint, identity);
+    }
+    this.#recoveryCheckpoints.set(conversationId, checkpoint);
   }
 
   rememberRun(conversationId: string, run: Run | null): void {
@@ -1482,9 +1832,28 @@ export class TFRobotSocketClient {
     this.#runs.set(conversationId, run);
   }
 
+  forgetConversation(conversationId: string): void {
+    if (this.#disposed) return;
+    if (
+      this.#pendingEstablishment?.conversationId === conversationId ||
+      this.#establishing?.conversationId === conversationId
+    ) {
+      this.#cancelEstablishment();
+    }
+    for (const subscription of [...this.#subscriptions]) {
+      if (subscription.conversationId !== conversationId) continue;
+      subscription.active = false;
+      subscription.recoveryRevision += 1;
+      subscription.cleanup();
+      this.#subscriptions.delete(subscription);
+    }
+    this.#recoveryCheckpoints.delete(conversationId);
+    this.#runs.delete(conversationId);
+  }
+
   #cancelEstablishment(): void {
-    this.#establishmentAbort?.abort();
-    this.#establishmentAbort = undefined;
+    this.#pendingEstablishment?.abort.abort();
+    this.#pendingEstablishment = undefined;
     this.#establishing?.cancelEstablishment();
     this.#establishing = undefined;
   }
@@ -1497,7 +1866,7 @@ export class TFRobotSocketClient {
     return url.toString().replace(/\/$/u, "");
   }
 
-  async #getSocketAuth(
+  async #getSocketSession(
     conversationId: string,
     purpose: "connect" | "reconnect",
   ) {
@@ -1511,7 +1880,7 @@ export class TFRobotSocketClient {
         "SessionProvider returned invalid TFRobot credentials",
       );
     }
-    return authOf(session);
+    return session;
   }
 
   async #reconcileRunAfterReconnect(

@@ -30,10 +30,19 @@ import {
 
 const deadlineAt = (): number => Date.now() + 60_000;
 
+const deferred = <T>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+};
+
 const wrapGateway = (
   gateway: ChatGateway,
   overrides: Partial<ChatGateway>,
   includeCreateConversation = true,
+  includeConversationManagement = true,
 ): ChatGateway => ({
   ...(gateway.answerInteraction === undefined
     ? {}
@@ -41,10 +50,16 @@ const wrapGateway = (
   ...(!includeCreateConversation || gateway.createConversation === undefined
     ? {}
     : { createConversation: (input) => gateway.createConversation!(input) }),
+  ...(!includeConversationManagement || gateway.deleteConversation === undefined
+    ? {}
+    : { deleteConversation: (input) => gateway.deleteConversation!(input) }),
   dispose: (input) => gateway.dispose(input),
   interrupt: (input) => gateway.interrupt(input),
   listConversations: (input) => gateway.listConversations(input),
   loadConversation: (input) => gateway.loadConversation(input),
+  ...(!includeConversationManagement || gateway.renameConversation === undefined
+    ? {}
+    : { renameConversation: (input) => gateway.renameConversation!(input) }),
   sendText: (input) => gateway.sendText(input),
   subscribe: (input, observer) => gateway.subscribe(input, observer),
   ...overrides,
@@ -137,6 +152,253 @@ describe("ChatClient conversation commands", () => {
     });
     expect(client.getSnapshot()?.conversation.id).toBe(created.value.id);
 
+    await expect(
+      client.renameConversation({
+        conversationId: created.value.id,
+        deadlineAt: deadlineAt(),
+        title: "Renamed by Runtime",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { id: created.value.id, title: "Renamed by Runtime" },
+    });
+    expect(client.getSnapshot()?.conversation.title).toBe("Renamed by Runtime");
+    await expect(
+      client.deleteConversation({
+        conversationId: created.value.id,
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { deletedConversationId: created.value.id },
+    });
+    const afterDelete = await client.listConversations({
+      deadlineAt: deadlineAt(),
+    });
+    expect(
+      afterDelete.ok &&
+        afterDelete.value.conversations.some(
+          (conversation) => conversation.id === created.value.id,
+        ),
+    ).toBe(false);
+
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("fails conversation management closed when adapters omit or misroute it", async () => {
+    const memory = createMemoryChatGateway();
+    const unsupportedClient = createChatClient({
+      gateway: wrapGateway(memory.gateway, {}, true, false),
+    });
+    await expect(
+      unsupportedClient.renameConversation({
+        conversationId: memory.fixtures.conversation.id,
+        deadlineAt: deadlineAt(),
+        title: "Unsupported",
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "unsupported" } });
+    await expect(
+      unsupportedClient.deleteConversation({
+        conversationId: memory.fixtures.conversation.id,
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "unsupported" } });
+    await unsupportedClient.dispose({ deadlineAt: deadlineAt() });
+
+    const mismatchedClient = createChatClient({
+      gateway: wrapGateway(memory.gateway, {
+        deleteConversation: vi.fn(async () => ({
+          ok: true as const,
+          value: { deletedConversationId: "another-conversation" },
+        })),
+        renameConversation: vi.fn(async () => ({
+          ok: true as const,
+          value: {
+            ...memory.fixtures.conversation,
+            id: "another-conversation",
+          },
+        })),
+      }),
+    });
+    await expect(
+      mismatchedClient.renameConversation({
+        conversationId: memory.fixtures.conversation.id,
+        deadlineAt: deadlineAt(),
+        title: "Wrong",
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "validation" } });
+    await expect(
+      mismatchedClient.deleteConversation({
+        conversationId: memory.fixtures.conversation.id,
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "validation" } });
+    await mismatchedClient.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("retires an active conversation atomically after deletion", async () => {
+    const memory = createMemoryChatGateway();
+    const subscriptionCleanup = vi.fn();
+    const deleteConversation: NonNullable<ChatGateway["deleteConversation"]> =
+      vi.fn(async (input) => ({
+        ok: true as const,
+        value: { deletedConversationId: input.conversationId },
+      }));
+    const gateway = wrapGateway(memory.gateway, {
+      deleteConversation,
+      subscribe: async (input, observer) => {
+        const subscribed = await memory.gateway.subscribe(input, observer);
+        if (!subscribed.ok) return subscribed;
+        return {
+          ok: true as const,
+          value: {
+            async dispose() {
+              subscriptionCleanup();
+              // Deliberately leak the fake transport observer. Runtime
+              // generation retirement must still make it silent.
+            },
+          },
+        };
+      },
+    });
+    const client = createChatClient({ gateway });
+    const snapshots: ChatSnapshot[] = [];
+    const states: Array<ChatSnapshot | null> = [];
+    client.subscribe((snapshot) => snapshots.push(snapshot));
+    client.subscribeState((snapshot) => states.push(snapshot));
+    await client.loadConversation({
+      conversationId: memory.fixtures.conversation.id,
+      deadlineAt: deadlineAt(),
+    });
+
+    await expect(
+      client.deleteConversation({
+        conversationId: memory.fixtures.conversation.id,
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { deletedConversationId: memory.fixtures.conversation.id },
+    });
+
+    expect(client.getSnapshot()).toBeNull();
+    expect(snapshots.at(-1)?.conversation.id).toBe(
+      memory.fixtures.conversation.id,
+    );
+    expect(states.at(-1)).toBeNull();
+    expect(subscriptionCleanup).toHaveBeenCalledOnce();
+    const sendCount = memory.controller.calls.filter(
+      ({ operation }) => operation === "sendText",
+    ).length;
+    await expect(
+      client.sendText({
+        conversationId: memory.fixtures.conversation.id,
+        deadlineAt: deadlineAt(),
+        text: "must not dispatch after deletion",
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(
+      memory.controller.calls.filter(
+        ({ operation }) => operation === "sendText",
+      ),
+    ).toHaveLength(sendCount);
+
+    memory.controller.emitUpdateToAll(memory.fixtures.realtimeMessageUpdate);
+    await Promise.resolve();
+    expect(client.getSnapshot()).toBeNull();
+    expect(states.at(-1)).toBeNull();
+
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("invalidates a pending load when that conversation is deleted", async () => {
+    const memory = createMemoryChatGateway();
+    const loadStarted = deferred<void>();
+    const releaseLoad = deferred<void>();
+    const candidateCleanup = vi.fn();
+    const client = createChatClient({
+      gateway: wrapGateway(memory.gateway, {
+        deleteConversation: async (input) => ({
+          ok: true,
+          value: { deletedConversationId: input.conversationId },
+        }),
+        loadConversation: async () => {
+          loadStarted.resolve(undefined);
+          await releaseLoad.promise;
+          return { ok: true, value: memory.fixtures.initialSnapshot };
+        },
+        subscribe: async () => ({
+          ok: true,
+          value: { dispose: candidateCleanup },
+        }),
+      }),
+    });
+    const loading = client.loadConversation({
+      conversationId: memory.fixtures.conversation.id,
+      deadlineAt: deadlineAt(),
+    });
+    await loadStarted.promise;
+
+    await expect(
+      client.deleteConversation({
+        conversationId: memory.fixtures.conversation.id,
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    releaseLoad.resolve(undefined);
+
+    await expect(loading).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(candidateCleanup).toHaveBeenCalledOnce();
+    expect(client.getSnapshot()).toBeNull();
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("rebases a pending load onto metadata renamed while it was in flight", async () => {
+    const memory = createMemoryChatGateway();
+    const loadStarted = deferred<void>();
+    const releaseLoad = deferred<void>();
+    const renamedConversation = {
+      ...memory.fixtures.conversation,
+      title: "Fresh pending title",
+    };
+    const client = createChatClient({
+      gateway: wrapGateway(memory.gateway, {
+        loadConversation: async () => {
+          loadStarted.resolve(undefined);
+          await releaseLoad.promise;
+          return { ok: true, value: memory.fixtures.initialSnapshot };
+        },
+        renameConversation: async () => ({
+          ok: true,
+          value: renamedConversation,
+        }),
+      }),
+    });
+    const loading = client.loadConversation({
+      conversationId: memory.fixtures.conversation.id,
+      deadlineAt: deadlineAt(),
+    });
+    await loadStarted.promise;
+
+    await expect(
+      client.renameConversation({
+        conversationId: memory.fixtures.conversation.id,
+        deadlineAt: deadlineAt(),
+        title: renamedConversation.title,
+      }),
+    ).resolves.toEqual({ ok: true, value: renamedConversation });
+    releaseLoad.resolve(undefined);
+
+    await expect(loading).resolves.toMatchObject({
+      ok: true,
+      value: { conversation: { title: renamedConversation.title } },
+    });
+    expect(client.getSnapshot()?.conversation.title).toBe(
+      renamedConversation.title,
+    );
     await client.dispose({ deadlineAt: deadlineAt() });
   });
 
@@ -1687,6 +1949,7 @@ describe("ChatClient lifecycle and merge behavior", () => {
     await loadInitialSnapshot(client, memory.fixtures.conversation.id);
     const realtimeVisibility: boolean[] = [];
     const subscription = client.subscribe((snapshot) => {
+      if (snapshot === null) return;
       realtimeVisibility.push(
         snapshot.timeline.some(({ id }) => id === "message-realtime"),
       );
@@ -2029,6 +2292,28 @@ describe("ChatClient lifecycle and merge behavior", () => {
       kind: "lifecycle.changed",
       conversationId,
       lifecycle: {
+        status: "degraded",
+        generation: 2,
+        subscriptionId: "subscription-2",
+        recovery: {
+          assurance: "best-effort",
+          complete: false,
+          source: "rest-rebase",
+        },
+      },
+    });
+    await expect(
+      client.sendText({
+        conversationId,
+        text: "allowed while degraded",
+        deadlineAt: deadlineAt(),
+      }),
+    ).resolves.toMatchObject({ ok: true });
+
+    memory.controller.emitUpdateToAll({
+      kind: "lifecycle.changed",
+      conversationId,
+      lifecycle: {
         status: "active",
         generation: 2,
         subscriptionId: "subscription-2",
@@ -2269,6 +2554,7 @@ describe("ChatClient lifecycle and merge behavior", () => {
     });
     const client = createChatClient({ gateway });
     client.subscribe((snapshot) => {
+      if (snapshot === null) return;
       const item = snapshot.timeline.find(
         ({ id }) => id === "message-realtime",
       );
@@ -2308,6 +2594,7 @@ describe("ChatClient lifecycle and merge behavior", () => {
     );
     const seen: string[] = [];
     const firstSubscription = client.subscribe((snapshot) => {
+      if (snapshot === null) return;
       const item = snapshot.timeline.find(
         ({ id }) => id === "message-realtime",
       );
@@ -2320,6 +2607,7 @@ describe("ChatClient lifecycle and merge behavior", () => {
       }
     });
     const secondSubscription = client.subscribe((snapshot) => {
+      if (snapshot === null) return;
       const item = snapshot.timeline.find(
         ({ id }) => id === "message-realtime",
       );
@@ -2462,6 +2750,7 @@ describe("ChatClient lifecycle and merge behavior", () => {
     });
     let disposing: Promise<void> | undefined;
     const subscription = client.subscribe((snapshot) => {
+      if (snapshot === null) return;
       if (
         disposing === undefined &&
         snapshot.timeline.some(({ id }) => id === olderMessage.id)

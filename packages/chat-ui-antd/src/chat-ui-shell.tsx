@@ -39,6 +39,11 @@ export interface ChatUiShellProps {
   readonly labels?: ChatUiLabelOverrides | undefined;
   readonly navigationMode?: ChatNavigationMode | undefined;
   readonly onConversationSelect: (conversationId: string) => void;
+  readonly mutatingConversationIds?: readonly string[] | undefined;
+  readonly onConversationDelete?:
+    ((item: ChatConversationListItem) => void) | undefined;
+  readonly onConversationRename?:
+    ((item: ChatConversationListItem) => void) | undefined;
   readonly pendingConversationId?: string | undefined;
   readonly selectedConversationId?: string | undefined;
   readonly sidebarFooter?: ReactNode | undefined;
@@ -213,6 +218,9 @@ export const ChatUiShell = ({
   header,
   labels: labelOverrides,
   navigationMode = "sidebar",
+  mutatingConversationIds,
+  onConversationDelete,
+  onConversationRename,
   onConversationSelect,
   pendingConversationId,
   selectedConversationId,
@@ -276,6 +284,9 @@ export const ChatUiShell = ({
               items={conversations}
               labels={labels}
               loading={conversationListLoading}
+              mutatingConversationIds={mutatingConversationIds}
+              onDelete={onConversationDelete}
+              onRename={onConversationRename}
               onSelect={onConversationSelect}
               pendingConversationId={pendingConversationId}
               selectedConversationId={selectedConversationId}

@@ -4,6 +4,7 @@ export {
   type ChatClientOptions,
   type ChatClientSubscription,
   type ChatSnapshotListener,
+  type ChatSnapshotStateListener,
   type ChatClientUnhandledError,
   type ChatClientUnhandledErrorSource,
 } from "./chat-client.js";
@@ -17,4 +18,5 @@ export {
   type ConversationWorkspaceSnapshot,
   type ConversationWorkspaceSubscription,
   type CreateWorkspaceConversationInput,
+  type RenameWorkspaceConversationInput,
 } from "./conversation-workspace.js";

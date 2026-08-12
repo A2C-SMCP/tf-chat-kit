@@ -303,11 +303,15 @@ export type ChatLifecycleStatus =
   | "connecting"
   | "joining"
   | "active"
+  | "degraded"
   | "reconnecting"
   | "recovering"
   | "auth-required"
   | "offline"
   | "subscription-failed";
+
+export type ChatRecoveryAssurance = "best-effort" | "verified";
+export type ChatRecoverySource = "rest-rebase" | "server-replay";
 
 /**
  * Conversation-scoped transport readiness. A missing lifecycle means a legacy
@@ -320,9 +324,11 @@ export interface ChatLifecycle {
   readonly subscriptionId?: string | undefined;
   readonly recovery?:
     | {
+        readonly assurance?: ChatRecoveryAssurance | undefined;
         readonly complete: boolean;
         readonly cursor?: string | undefined;
         readonly reason?: string | undefined;
+        readonly source?: ChatRecoverySource | undefined;
       }
     | undefined;
 }

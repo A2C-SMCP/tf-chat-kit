@@ -39,11 +39,13 @@ interface PlaygroundSessionBase {
   readonly client: ChatClient;
   readonly disposed: boolean;
   createConversation(title: string): Promise<boolean>;
+  deleteConversation(conversationId: string): Promise<boolean>;
   getState(): PlaygroundState;
   interrupt(): Promise<void>;
   loadConversations(): Promise<void>;
   loadHistory(): Promise<void>;
   reconnect(): Promise<void>;
+  renameConversation(conversationId: string, title: string): Promise<boolean>;
   refresh(): Promise<void>;
   selectConversation(conversationId: string): Promise<void>;
   start(): Promise<void>;
@@ -152,7 +154,7 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
       this.#syncWorkspace(snapshot);
     });
     this.#unsubscribeWorkspace = () => workspaceSubscription.dispose();
-    const subscription = this.client.subscribe(() => this.#emit());
+    const subscription = this.client.subscribeState(() => this.#emit());
     this.#unsubscribeClient = () => subscription.dispose();
   }
 
@@ -207,6 +209,32 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
     }
     this.#setState({ status: `正在查看「${result.value.title}」。` });
     return true;
+  }
+
+  async renameConversation(
+    conversationId: string,
+    title: string,
+  ): Promise<boolean> {
+    if (this.#disposed) return false;
+    const result = await this.#workspace.renameConversation({
+      conversationId,
+      title,
+    });
+    this.#setState({
+      status: result.ok
+        ? `已重命名为「${result.value.title}」。`
+        : result.error.message,
+    });
+    return result.ok;
+  }
+
+  async deleteConversation(conversationId: string): Promise<boolean> {
+    if (this.#disposed) return false;
+    const result = await this.#workspace.deleteConversation(conversationId);
+    this.#setState({
+      status: result.ok ? "会话已删除。" : result.error.message,
+    });
+    return result.ok;
   }
 
   async selectConversation(conversationId: string): Promise<void> {
@@ -355,6 +383,16 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
         ? {}
         : {
             createConversation: (input) => gateway.createConversation!(input),
+          }),
+      ...(gateway.renameConversation === undefined
+        ? {}
+        : {
+            renameConversation: (input) => gateway.renameConversation!(input),
+          }),
+      ...(gateway.deleteConversation === undefined
+        ? {}
+        : {
+            deleteConversation: (input) => gateway.deleteConversation!(input),
           }),
       dispose: (input) => gateway.dispose(input),
       listConversations: (input) => gateway.listConversations(input),

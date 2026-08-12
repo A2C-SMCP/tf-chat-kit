@@ -82,8 +82,10 @@ export interface TFRobotLifecycleDiagnostic {
   readonly reconnectAttempt: number;
   readonly joinLatencyMs?: number | undefined;
   readonly recoveryComplete?: boolean | undefined;
+  readonly recoveryAssurance?: "best-effort" | "verified" | undefined;
   readonly recoveryCursor?: string | undefined;
   readonly recoveryReason?: string | undefined;
+  readonly recoverySource?: "rest-rebase" | "server-replay" | undefined;
 }
 
 export interface TFRobotSocketFactoryInput {
@@ -96,11 +98,106 @@ export type TFRobotSocketFactory = (
   input: TFRobotSocketFactoryInput,
 ) => TFRobotSocket;
 
+export interface TFRobotCurrentServerRebaseOptions {
+  /** Maximum history items accepted across all pages. Defaults to 500. */
+  readonly maxItems?: number | undefined;
+  /** Maximum history requests per reconnect. Defaults to 10. */
+  readonly maxPages?: number | undefined;
+  /** REST rebase budget in milliseconds. Defaults to 10 seconds. */
+  readonly deadlineMs?: number | undefined;
+  /** Requested messages per history page. Defaults to 50; maximum 100. */
+  readonly pageSize?: number | undefined;
+}
+
+export type TFRobotServerProfile =
+  | { readonly kind: "verified" }
+  | {
+      readonly kind: "current-server";
+      readonly rebase?: TFRobotCurrentServerRebaseOptions | undefined;
+    };
+
+export interface ResolvedTFRobotCurrentServerRebaseOptions {
+  readonly deadlineMs: number;
+  readonly maxItems: number;
+  readonly maxPages: number;
+  readonly pageSize: number;
+}
+
+export type ResolvedTFRobotServerProfile =
+  | { readonly kind: "verified" }
+  | {
+      readonly kind: "current-server";
+      readonly rebase: ResolvedTFRobotCurrentServerRebaseOptions;
+    };
+
+const positiveInteger = (
+  value: number | undefined,
+  fallback: number,
+  maximum: number,
+  label: string,
+): number => {
+  const resolved = value ?? fallback;
+  if (!Number.isInteger(resolved) || resolved <= 0 || resolved > maximum) {
+    throw new TypeError(`${label} must be a positive integer up to ${maximum}`);
+  }
+  return resolved;
+};
+
+export function resolveTFRobotServerProfile(
+  value: TFRobotServerProfile | undefined,
+): ResolvedTFRobotServerProfile {
+  if (value === undefined) {
+    return Object.freeze({ kind: "verified" });
+  }
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    !("kind" in value) ||
+    (value.kind !== "verified" && value.kind !== "current-server")
+  ) {
+    throw new TypeError(
+      'TFRobot serverProfile.kind must be "verified" or "current-server"',
+    );
+  }
+  if (value.kind === "verified") return Object.freeze({ kind: "verified" });
+  return Object.freeze({
+    kind: "current-server",
+    rebase: Object.freeze({
+      deadlineMs: positiveInteger(
+        value.rebase?.deadlineMs,
+        10_000,
+        60_000,
+        "current-server rebase deadlineMs",
+      ),
+      maxItems: positiveInteger(
+        value.rebase?.maxItems,
+        500,
+        10_000,
+        "current-server rebase maxItems",
+      ),
+      maxPages: positiveInteger(
+        value.rebase?.maxPages,
+        10,
+        100,
+        "current-server rebase maxPages",
+      ),
+      pageSize: positiveInteger(
+        value.rebase?.pageSize,
+        50,
+        100,
+        "current-server rebase pageSize",
+      ),
+    }),
+  });
+}
+
 export interface TFRobotGatewayOptions {
   /** Direct TFRobotServer or host BFF base URL, including any route prefix. */
   readonly baseUrl: string;
   readonly messageCreatorProvider: TFRobotMessageCreatorProvider;
   readonly sessionProvider: SessionProvider<TFRobotSession>;
+  /** Defaults to strict, replay-verified Server semantics. */
+  readonly serverProfile?: TFRobotServerProfile | undefined;
   /** Optional fixed platform filter for conversation discovery. */
   readonly platformId?: number | string | undefined;
   /** Defaults to the origin of baseUrl plus the `/chat` namespace. */

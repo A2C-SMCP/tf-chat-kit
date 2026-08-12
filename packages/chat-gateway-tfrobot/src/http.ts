@@ -82,12 +82,15 @@ const responseMessage = (
 interface RequestInput<T> {
   readonly body?: unknown;
   readonly conversationId?: string | undefined;
-  readonly method: "GET" | "POST";
+  readonly method: "DELETE" | "GET" | "PATCH" | "POST";
   readonly operation: SessionOperation;
   readonly options: GatewayRequestOptions;
   readonly path: string;
   readonly query?: Readonly<Record<string, number | string | undefined>>;
   readonly schema: z.ZodType<T>;
+  /** One request-scoped session shared with a Socket connect/reconnect. */
+  readonly session?: TFRobotSession | undefined;
+  readonly signal?: AbortSignal | undefined;
 }
 
 export class TFRobotHttpClient {
@@ -127,6 +130,9 @@ export class TFRobotHttpClient {
     }
 
     const controller = new AbortController();
+    const abortFromCaller = (): void => controller.abort();
+    input.signal?.addEventListener("abort", abortFromCaller, { once: true });
+    if (input.signal?.aborted === true) controller.abort();
     this.#inFlight.add(controller);
     const timeout = setTimeout(
       () => controller.abort(),
@@ -145,32 +151,34 @@ export class TFRobotHttpClient {
           ? {}
           : { conversationId: input.conversationId }),
       };
-      let session: TFRobotSession;
-      const sessionOutcome = await awaitBounded(
-        () => this.#options.sessionProvider.getSession(sessionRequest),
-        {
-          deadlineAt: input.options.deadlineAt,
-          now: this.#now,
-          signal: controller.signal,
-        },
-      );
-      switch (sessionOutcome.kind) {
-        case "aborted":
-        case "deadline": {
-          return this.#interruptedResult(errorConversationId);
-        }
-        case "error": {
-          return {
-            ok: false,
-            error: chatErrorSchema.parse({
-              code: "authentication",
-              message: "Unable to obtain a TFRobot session",
-              retryable: true,
-            }),
-          };
-        }
-        case "value": {
-          session = sessionOutcome.value;
+      let session = input.session;
+      if (session === undefined) {
+        const sessionOutcome = await awaitBounded(
+          () => this.#options.sessionProvider.getSession(sessionRequest),
+          {
+            deadlineAt: input.options.deadlineAt,
+            now: this.#now,
+            signal: controller.signal,
+          },
+        );
+        switch (sessionOutcome.kind) {
+          case "aborted":
+          case "deadline": {
+            return this.#interruptedResult(errorConversationId);
+          }
+          case "error": {
+            return {
+              ok: false,
+              error: chatErrorSchema.parse({
+                code: "authentication",
+                message: "Unable to obtain a TFRobot session",
+                retryable: true,
+              }),
+            };
+          }
+          case "value": {
+            session = sessionOutcome.value;
+          }
         }
       }
       if (!isValidTFRobotSession(session)) {
@@ -352,6 +360,7 @@ export class TFRobotHttpClient {
       };
     } finally {
       clearTimeout(timeout);
+      input.signal?.removeEventListener("abort", abortFromCaller);
       this.#inFlight.delete(controller);
     }
   }

@@ -34,6 +34,7 @@ import {
   type ToolReturn,
 } from "@turingfocus/chat-protocol";
 
+import { getTransportTaskId } from "./dto.js";
 import type {
   ConversationDto,
   EventDto,
@@ -727,9 +728,10 @@ const mergeEvents = (events: readonly AgentEvent[]): readonly AgentEvent[] => {
 
 export const mapRun = (conversationId: string, dto: StatusDto): Run | null => {
   if (!dto.working) return null;
-  const hasTransportTaskId = dto.taskId != null;
+  const taskId = getTransportTaskId(dto);
+  const hasTransportTaskId = taskId !== undefined;
   return {
-    id: dto.taskId == null ? syntheticRunId(conversationId) : asId(dto.taskId),
+    id: taskId ?? syntheticRunId(conversationId),
     conversationId,
     status: "running",
     canInterrupt: hasTransportTaskId,

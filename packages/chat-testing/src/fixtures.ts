@@ -29,6 +29,7 @@ export interface ChatContractFixtures {
   readonly conversation: Conversation;
   readonly conversationUpdate: ChatUpdate;
   readonly disconnectError: ChatError;
+  readonly degradedLifecycleUpdate: ChatUpdate;
   readonly duplicateEventTransitionUpdate: ChatUpdate;
   readonly duplicateMessageUpdates: readonly [ChatUpdate, ChatUpdate];
   readonly foreignConversationUpdates: readonly ChatUpdate[];
@@ -37,6 +38,7 @@ export interface ChatContractFixtures {
   readonly interruptSuccess: InterruptRunSuccess;
   readonly outOfOrderEventUpdates: readonly [ChatUpdate, ChatUpdate];
   readonly realtimeMessageUpdate: ChatUpdate;
+  readonly recoveringLifecycleUpdate: ChatUpdate;
   readonly replacementMessageUpdate: ChatUpdate;
   readonly reportedErrorUpdate: ChatUpdate;
   readonly runUpdate: ChatUpdate;
@@ -309,6 +311,33 @@ export const createChatContractFixtures = (
       details: { safeField: "safe-value" },
     },
   });
+  const recoveringLifecycleUpdate = chatUpdateSchema.parse({
+    kind: "lifecycle.changed",
+    conversationId,
+    lifecycle: {
+      status: "recovering",
+      generation: 2,
+      reconnectAttempt: 1,
+      subscriptionId: "subscription-contract",
+      recovery: { complete: false },
+    },
+  });
+  const degradedLifecycleUpdate = chatUpdateSchema.parse({
+    kind: "lifecycle.changed",
+    conversationId,
+    lifecycle: {
+      status: "degraded",
+      generation: 2,
+      reconnectAttempt: 1,
+      subscriptionId: "subscription-contract",
+      recovery: {
+        assurance: "best-effort",
+        complete: false,
+        reason: "rest-rebase-reached-checkpoint",
+        source: "rest-rebase",
+      },
+    },
+  });
   const foreignConversationId = "conversation-foreign";
   const foreignConversation = conversationSchema.parse({
     id: foreignConversationId,
@@ -404,6 +433,7 @@ export const createChatContractFixtures = (
     capabilitiesUpdate,
     conversation,
     conversationUpdate,
+    degradedLifecycleUpdate,
     disconnectError,
     duplicateEventTransitionUpdate,
     duplicateMessageUpdates,
@@ -416,6 +446,7 @@ export const createChatContractFixtures = (
     }),
     outOfOrderEventUpdates,
     realtimeMessageUpdate,
+    recoveringLifecycleUpdate,
     replacementMessageUpdate,
     reportedErrorUpdate,
     runUpdate,

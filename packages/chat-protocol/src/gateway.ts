@@ -12,6 +12,7 @@ import type {
   AskUserInteractionAnswer,
   Capabilities,
   ChatError,
+  ChatLifecycle,
   ChatSnapshot,
   ChatUpdate,
   Conversation,
@@ -19,6 +20,26 @@ import type {
   Run,
   RunId,
 } from "./models.js";
+
+/** Whether transport readiness permits conversation commands. */
+export const isChatLifecycleOperable = (
+  lifecycle: ChatLifecycle | undefined,
+): boolean => {
+  if (lifecycle === undefined) return true;
+  if (lifecycle.status === "degraded") {
+    return (
+      lifecycle.recovery?.complete === false &&
+      lifecycle.recovery.assurance === "best-effort" &&
+      lifecycle.recovery.source === "rest-rebase"
+    );
+  }
+  return (
+    lifecycle.status === "active" &&
+    lifecycle.recovery?.complete !== false &&
+    ((lifecycle.reconnectAttempt ?? 0) === 0 ||
+      lifecycle.recovery?.complete === true)
+  );
+};
 
 export type MaybePromise<T> = PromiseLike<T> | T;
 
@@ -60,6 +81,19 @@ export interface ConversationPage {
 
 export interface CreateConversationInput extends GatewayRequestOptions {
   readonly title: string;
+}
+
+export interface RenameConversationInput extends GatewayRequestOptions {
+  readonly conversationId: ConversationId;
+  readonly title: string;
+}
+
+export interface DeleteConversationInput extends GatewayRequestOptions {
+  readonly conversationId: ConversationId;
+}
+
+export interface DeleteConversationSuccess {
+  readonly deletedConversationId: ConversationId;
 }
 
 export type GatewayResult<T> =
@@ -176,6 +210,14 @@ export interface ChatGateway {
   createConversation?(
     input: CreateConversationInput,
   ): Promise<GatewayResult<Conversation>>;
+  /** Optional for backward compatibility with adapters lacking management APIs. */
+  renameConversation?(
+    input: RenameConversationInput,
+  ): Promise<GatewayResult<Conversation>>;
+  /** Optional for backward compatibility with adapters lacking management APIs. */
+  deleteConversation?(
+    input: DeleteConversationInput,
+  ): Promise<GatewayResult<DeleteConversationSuccess>>;
   /**
    * Optional during migration. Runtime dispatches only when both the normalized
    * capability and this method are present.
@@ -257,6 +299,24 @@ const createConversationInputParser: z.ZodType<CreateConversationInput> =
   z.object({
     title: z.string().trim().min(1),
     deadlineAt: deadlineParser,
+  });
+
+const renameConversationInputParser: z.ZodType<RenameConversationInput> =
+  z.object({
+    conversationId: z.string().min(1),
+    title: z.string().trim().min(1),
+    deadlineAt: deadlineParser,
+  });
+
+const deleteConversationInputParser: z.ZodType<DeleteConversationInput> =
+  z.object({
+    conversationId: z.string().min(1),
+    deadlineAt: deadlineParser,
+  });
+
+const deleteConversationSuccessParser: z.ZodType<DeleteConversationSuccess> =
+  z.object({
+    deletedConversationId: z.string().min(1),
   });
 
 const loadConversationInputParser: z.ZodType<LoadConversationInput> = z.object({
@@ -343,6 +403,18 @@ export const createConversationInputSchema = createRuntimeSchema(
 );
 export const createConversationResultSchema = createRuntimeSchema(
   gatewayResultParser(conversationParser),
+);
+export const renameConversationInputSchema = createRuntimeSchema(
+  renameConversationInputParser,
+);
+export const renameConversationResultSchema = createRuntimeSchema(
+  gatewayResultParser(conversationParser),
+);
+export const deleteConversationInputSchema = createRuntimeSchema(
+  deleteConversationInputParser,
+);
+export const deleteConversationResultSchema = createRuntimeSchema(
+  gatewayResultParser(deleteConversationSuccessParser),
 );
 export const loadConversationInputSchema = createRuntimeSchema(
   loadConversationInputParser,
