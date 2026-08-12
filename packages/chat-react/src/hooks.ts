@@ -24,7 +24,7 @@ const useChatSubscription = (
 ): ((onStoreChange: () => void) => () => void) =>
   useCallback(
     (onStoreChange) => {
-      const subscription = client.subscribe(() => {
+      const subscription = client.subscribeState(() => {
         onStoreChange();
       });
       return () => {

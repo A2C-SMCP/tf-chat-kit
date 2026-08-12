@@ -2,10 +2,13 @@ import {
   answerInteractionInputSchema,
   createConversationInputSchema,
   createGatewayDeadlineExceededError,
+  deleteConversationInputSchema,
   getAskUserInteractionAnswerValidationError,
   isGatewayDeadlineExceeded,
+  isChatLifecycleOperable,
   isGatewayOperationSupported,
   listConversationsInputSchema,
+  renameConversationInputSchema,
   type AnswerInteractionInput,
   type AnswerInteractionSuccess,
   type ChatError,
@@ -16,6 +19,8 @@ import {
   type Conversation,
   type ConversationPage,
   type CreateConversationInput,
+  type DeleteConversationInput,
+  type DeleteConversationSuccess,
   type GatewayRequestOptions,
   type GatewayResult,
   type GatewaySubscription,
@@ -23,6 +28,7 @@ import {
   type InterruptRunSuccess,
   type ListConversationsInput,
   type LoadConversationInput,
+  type RenameConversationInput,
   type SendTextInput,
   type SendTextSuccess,
 } from "@turingfocus/chat-protocol";
@@ -45,6 +51,7 @@ import {
 import {
   SnapshotStore,
   type SnapshotListener,
+  type SnapshotStateListener,
   type SnapshotSubscription,
 } from "./snapshot-store.js";
 import { mergeHistoryTimeline } from "./timeline.js";
@@ -67,6 +74,7 @@ export interface ChatClientUnhandledError {
 }
 
 export type ChatSnapshotListener = SnapshotListener;
+export type ChatSnapshotStateListener = SnapshotStateListener;
 export type ChatClientSubscription = SnapshotSubscription;
 
 interface PendingHandoff {
@@ -164,6 +172,8 @@ export class ChatClient {
   #historyRequestId = 0;
   #loadRequestId = 0;
   #structuredGatewayErrorMarker: StructuredGatewayErrorMarker | undefined;
+  #pendingLoadConversationId: string | undefined;
+  #pendingLoadConversationOverride: Conversation | undefined;
   #pendingLoadRequestId: number | undefined;
   #pendingHandoff: PendingHandoff | undefined;
 
@@ -189,6 +199,11 @@ export class ChatClient {
     return this.#snapshotStore.subscribe(listener);
   }
 
+  /** Subscribes to active snapshot state, including `null` after deletion. */
+  subscribeState(listener: ChatSnapshotStateListener): ChatClientSubscription {
+    return this.#snapshotStore.subscribeState(listener);
+  }
+
   /**
    * Retires the current top-level conversation load without changing an
    * already committed snapshot. Once a snapshot commits, this is a no-op and
@@ -197,6 +212,8 @@ export class ChatClient {
   cancelPendingConversationLoad(): void {
     if (this.#disposed || this.#pendingLoadRequestId === undefined) return;
     this.#loadRequestId += 1;
+    this.#pendingLoadConversationId = undefined;
+    this.#pendingLoadConversationOverride = undefined;
     this.#pendingLoadRequestId = undefined;
     this.#pendingHandoff = undefined;
   }
@@ -250,6 +267,146 @@ export class ChatClient {
       : result;
   }
 
+  async renameConversation(
+    input: RenameConversationInput,
+  ): Promise<GatewayResult<Conversation>> {
+    const parsed = renameConversationInputSchema.safeParse(input);
+    if (!parsed.success) {
+      return runtimeFailure(
+        "validation",
+        "Conversation rename input is invalid",
+      );
+    }
+    if (this.#disposed) {
+      return runtimeFailure("conflict", "ChatClient has already been disposed");
+    }
+    if (isGatewayDeadlineExceeded(parsed.data)) {
+      return {
+        ok: false,
+        error: createGatewayDeadlineExceededError(parsed.data.conversationId),
+      };
+    }
+    if (this.#gateway.renameConversation === undefined) {
+      return runtimeFailure(
+        "unsupported",
+        "Conversation rename is unavailable",
+        parsed.data.conversationId,
+      );
+    }
+
+    const result = await this.#gateway.renameConversation(parsed.data);
+    if (this.#disposed) {
+      return runtimeFailure(
+        "conflict",
+        "Conversation rename was superseded",
+        parsed.data.conversationId,
+      );
+    }
+    if (!result.ok) return result;
+    if (result.value.id !== parsed.data.conversationId) {
+      return runtimeFailure(
+        "validation",
+        "Gateway renamed a different conversation",
+        parsed.data.conversationId,
+      );
+    }
+    if (this.#pendingLoadConversationId === result.value.id) {
+      this.#pendingLoadConversationOverride = cloneImmutable(result.value);
+    }
+    const current = this.#snapshotStore.latestState();
+    if (current?.snapshot.conversation.id === result.value.id) {
+      this.#snapshotStore.commit(
+        updateSnapshotState(current, {
+          conversation: cloneImmutable(result.value),
+        }),
+      );
+    }
+    return result;
+  }
+
+  async deleteConversation(
+    input: DeleteConversationInput,
+  ): Promise<GatewayResult<DeleteConversationSuccess>> {
+    const parsed = deleteConversationInputSchema.safeParse(input);
+    if (!parsed.success) {
+      return runtimeFailure(
+        "validation",
+        "Conversation deletion input is invalid",
+      );
+    }
+    if (this.#disposed) {
+      return runtimeFailure("conflict", "ChatClient has already been disposed");
+    }
+    if (isGatewayDeadlineExceeded(parsed.data)) {
+      return {
+        ok: false,
+        error: createGatewayDeadlineExceededError(parsed.data.conversationId),
+      };
+    }
+    if (this.#gateway.deleteConversation === undefined) {
+      return runtimeFailure(
+        "unsupported",
+        "Conversation deletion is unavailable",
+        parsed.data.conversationId,
+      );
+    }
+
+    const result = await this.#gateway.deleteConversation(parsed.data);
+    if (this.#disposed) {
+      return runtimeFailure(
+        "conflict",
+        "Conversation deletion was superseded",
+        parsed.data.conversationId,
+      );
+    }
+    if (
+      result.ok &&
+      result.value.deletedConversationId !== parsed.data.conversationId
+    ) {
+      return runtimeFailure(
+        "validation",
+        "Gateway deleted a different conversation",
+        parsed.data.conversationId,
+      );
+    }
+    if (
+      result.ok &&
+      this.#pendingLoadConversationId === parsed.data.conversationId
+    ) {
+      this.#loadRequestId += 1;
+      this.#pendingLoadConversationId = undefined;
+      this.#pendingLoadConversationOverride = undefined;
+      this.#pendingLoadRequestId = undefined;
+      this.#pendingHandoff = undefined;
+    }
+    if (
+      result.ok &&
+      this.#snapshotStore.state?.snapshot.conversation.id ===
+        parsed.data.conversationId
+    ) {
+      const subscription = this.#gatewaySubscription;
+      this.#gatewaySubscription = undefined;
+      this.#conversationEpoch += 1;
+      this.#generation += 1;
+      this.#historyRequestId += 1;
+      this.#loadRequestId += 1;
+      this.#pendingLoadConversationId = undefined;
+      this.#pendingLoadConversationOverride = undefined;
+      this.#pendingLoadRequestId = undefined;
+      this.#pendingHandoff = undefined;
+      this.#structuredGatewayErrorMarker = undefined;
+      this.#interactionAnswersInFlight.clear();
+      this.#retiredInteractionIdentities.clear();
+      this.#supersededInteractionAnswers.clear();
+      this.#snapshotStore.clear();
+      await this.#runSubscriptionCleanup(
+        () => subscription?.dispose(parsed.data),
+        parsed.data.conversationId,
+      );
+    }
+    return result;
+  }
+
   async loadConversation(
     input: LoadConversationInput,
   ): Promise<GatewayResult<ChatSnapshot>> {
@@ -270,6 +427,8 @@ export class ChatClient {
         input.conversationId,
       );
     }
+    this.#pendingLoadConversationId = input.conversationId;
+    this.#pendingLoadConversationOverride = undefined;
     this.#pendingLoadRequestId = requestId;
 
     const notificationQueue = createGatewayNotificationQueue(
@@ -370,7 +529,16 @@ export class ChatClient {
       loaded.value.capabilities.liveUpdates && subscribed.ok
         ? subscribed.value
         : undefined;
-    const loadedState = createSnapshotState(loaded.value);
+    const conversationOverride =
+      this.#pendingLoadRequestId === requestId &&
+      this.#pendingLoadConversationId === input.conversationId
+        ? this.#pendingLoadConversationOverride
+        : undefined;
+    const loadedState = createSnapshotState(
+      conversationOverride === undefined
+        ? loaded.value
+        : { ...loaded.value, conversation: conversationOverride },
+    );
     const currentState = this.#snapshotStore.state;
     const handoff = this.#pendingHandoff;
     let nextState =
@@ -602,6 +770,8 @@ export class ChatClient {
     this.#retiredInteractionIdentities.clear();
     this.#supersededInteractionAnswers.clear();
     this.#loadRequestId += 1;
+    this.#pendingLoadConversationId = undefined;
+    this.#pendingLoadConversationOverride = undefined;
     this.#pendingLoadRequestId = undefined;
     this.#pendingHandoff = undefined;
     this.#snapshotStore.close();
@@ -742,13 +912,7 @@ export class ChatClient {
       );
     }
     const lifecycle = this.#snapshotStore.state.snapshot.lifecycle;
-    if (
-      lifecycle !== undefined &&
-      (lifecycle.status !== "active" ||
-        lifecycle.recovery?.complete === false ||
-        ((lifecycle.reconnectAttempt ?? 0) > 0 &&
-          lifecycle.recovery?.complete !== true))
-    ) {
+    if (lifecycle !== undefined && !isChatLifecycleOperable(lifecycle)) {
       return runtimeFailure(
         lifecycle.status === "auth-required"
           ? "authentication"
@@ -794,6 +958,8 @@ export class ChatClient {
 
   #clearPendingLoad(requestId: number): void {
     if (this.#pendingLoadRequestId === requestId) {
+      this.#pendingLoadConversationId = undefined;
+      this.#pendingLoadConversationOverride = undefined;
       this.#pendingLoadRequestId = undefined;
     }
     if (this.#pendingHandoff?.requestId === requestId) {

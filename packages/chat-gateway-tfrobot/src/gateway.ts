@@ -4,9 +4,12 @@ import {
   createGatewayDeadlineExceededError,
   isGatewayDeadlineExceeded,
   type ChatGateway,
+  type ChatUpdate,
   type Conversation,
   type ConversationPage,
   type CreateConversationInput,
+  type DeleteConversationInput,
+  type DeleteConversationSuccess,
   type GatewayObserver,
   type GatewayRequestOptions,
   type GatewayResult,
@@ -15,6 +18,7 @@ import {
   type InterruptRunSuccess,
   type ListConversationsInput,
   type LoadConversationInput,
+  type RenameConversationInput,
   type SendTextInput,
   type SendTextSuccess,
   type SubscribeConversationInput,
@@ -24,6 +28,8 @@ import { awaitBounded } from "./bounded.js";
 import {
   conversationDtoSchema,
   conversationPageDtoSchema,
+  deleteConversationDtoSchema,
+  getTransportTaskId,
   historyDtoSchema,
   interruptDtoSchema,
   outboundMessageCreatorSchema,
@@ -33,11 +39,19 @@ import {
 import { TFRobotHttpClient } from "./http.js";
 import {
   mapConversation,
+  mapEventUpdate,
+  mapMessageUpdate,
+  mapRun,
   mapSnapshot,
   syntheticRunId,
   TFROBOT_CAPABILITIES,
 } from "./mapper.js";
-import { TFRobotSocketClient } from "./socket.js";
+import {
+  recoveryIdentityOfUpdate,
+  TFRobotSocketClient,
+  type CurrentServerRestInput,
+  type CurrentServerRestSnapshot,
+} from "./socket.js";
 import type { TFRobotGatewayOptions, TFRobotMessageCreator } from "./types.js";
 
 const DEFAULT_PAGE_SIZE = 20;
@@ -48,10 +62,23 @@ const limitOf = (limit: number | undefined): number =>
   Math.min(limit ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
 
 const conversationPath = (conversationId: string, suffix: string): string =>
-  `v1/chat/conversations/${encodeURIComponent(conversationId)}/${suffix}`;
+  `v1/chat/conversations/${encodeURIComponent(conversationId)}${suffix.length === 0 ? "" : `/${suffix}`}`;
+
+type ConversationMutation =
+  | {
+      readonly conversation: Conversation;
+      readonly kind: "rename";
+      readonly revision: number;
+      readonly transportConversationId: number | string;
+    }
+  | {
+      readonly kind: "delete";
+      readonly revision: number;
+    };
 
 export class TFRobotChatGateway implements ChatGateway {
   readonly #conversations = new Map<string, Conversation>();
+  readonly #conversationMutations = new Map<string, ConversationMutation>();
   #disposed = false;
   readonly #http: TFRobotHttpClient;
   readonly #lifecycle = new AbortController();
@@ -59,6 +86,7 @@ export class TFRobotChatGateway implements ChatGateway {
   readonly #options: TFRobotGatewayOptions;
   readonly #socket: TFRobotSocketClient;
   readonly #transportConversationIds = new Map<string, number | string>();
+  #mutationRevision = 0;
 
   constructor(options: TFRobotGatewayOptions) {
     for (const endpoint of [options.baseUrl, options.socketNamespaceUrl]) {
@@ -73,17 +101,20 @@ export class TFRobotChatGateway implements ChatGateway {
     this.#options = options;
     this.#http = new TFRobotHttpClient(options);
     this.#now = options.now ?? Date.now;
-    this.#socket = new TFRobotSocketClient(options, (conversationId) =>
-      this.#http.request({
-        method: "GET",
-        path: conversationPath(conversationId, "status"),
-        operation: "read",
-        options: {
-          deadlineAt: this.#now() + RECONNECT_STATUS_TIMEOUT_MS,
-        },
-        conversationId,
-        schema: statusDtoSchema,
-      }),
+    this.#socket = new TFRobotSocketClient(
+      options,
+      (conversationId) =>
+        this.#http.request({
+          method: "GET",
+          path: conversationPath(conversationId, "status"),
+          operation: "read",
+          options: {
+            deadlineAt: this.#now() + RECONNECT_STATUS_TIMEOUT_MS,
+          },
+          conversationId,
+          schema: statusDtoSchema,
+        }),
+      (input) => this.#loadCurrentServerRestSnapshot(input),
     );
   }
 
@@ -92,6 +123,7 @@ export class TFRobotChatGateway implements ChatGateway {
   ): Promise<GatewayResult<ConversationPage>> {
     const disposed = this.#disposedResult<ConversationPage>();
     if (disposed !== undefined) return disposed;
+    const readRevision = this.#mutationRevision;
     const result = await this.#http.request({
       method: "GET",
       path: "v1/chat/conversations",
@@ -118,17 +150,25 @@ export class TFRobotChatGateway implements ChatGateway {
     }
     const mappingDeadline = this.#deadlineResult<ConversationPage>(input);
     if (mappingDeadline !== undefined) return mappingDeadline;
+    const visibleConversations: Conversation[] = [];
     for (const [index, conversation] of conversations.entries()) {
-      this.#conversations.set(conversation.id, conversation);
-      this.#transportConversationIds.set(
-        conversation.id,
+      const resolved = this.#resolveConversationRead(
+        conversation,
         transportConversations[index]!.conversationId,
+        readRevision,
+      );
+      if (resolved === undefined) continue;
+      visibleConversations.push(resolved.conversation);
+      this.#conversations.set(resolved.conversation.id, resolved.conversation);
+      this.#transportConversationIds.set(
+        resolved.conversation.id,
+        resolved.transportConversationId,
       );
     }
     return {
       ok: true,
       value: {
-        conversations,
+        conversations: visibleConversations,
         ...(result.value.cursor == null || result.value.cursor.length === 0
           ? {}
           : { nextCursor: result.value.cursor }),
@@ -172,7 +212,106 @@ export class TFRobotChatGateway implements ChatGateway {
       conversation.id,
       result.value.conversationId,
     );
+    this.#conversationMutations.set(conversation.id, {
+      conversation,
+      kind: "rename",
+      revision: ++this.#mutationRevision,
+      transportConversationId: result.value.conversationId,
+    });
     return { ok: true, value: conversation };
+  }
+
+  async renameConversation(
+    input: RenameConversationInput,
+  ): Promise<GatewayResult<Conversation>> {
+    const disposed = this.#disposedResult<Conversation>();
+    if (disposed !== undefined) return disposed;
+    const transportConversationId =
+      this.#transportConversationIds.get(input.conversationId) ??
+      input.conversationId;
+    const result = await this.#http.request({
+      method: "PATCH",
+      path: conversationPath(String(transportConversationId), ""),
+      operation: "send",
+      options: input,
+      conversationId: input.conversationId,
+      query: { title: input.title },
+      body: { title: input.title },
+      schema: conversationDtoSchema,
+    });
+    const requestDisposed = this.#disposedResult<Conversation>();
+    if (requestDisposed !== undefined) return requestDisposed;
+    const requestDeadline = this.#deadlineResult<Conversation>(input);
+    if (requestDeadline !== undefined) return requestDeadline;
+    if (!result.ok) return result;
+    let conversation: Conversation;
+    try {
+      conversation = mapConversation(result.value);
+    } catch {
+      return this.#mappingError(
+        "TFRobot renamed conversation could not be normalized",
+        input.conversationId,
+      );
+    }
+    if (conversation.id !== input.conversationId) {
+      return this.#mappingError(
+        "TFRobot rename response identified another conversation",
+        input.conversationId,
+      );
+    }
+    this.#conversations.set(conversation.id, conversation);
+    this.#transportConversationIds.set(
+      conversation.id,
+      result.value.conversationId,
+    );
+    this.#conversationMutations.set(conversation.id, {
+      conversation,
+      kind: "rename",
+      revision: ++this.#mutationRevision,
+      transportConversationId: result.value.conversationId,
+    });
+    return { ok: true, value: conversation };
+  }
+
+  async deleteConversation(
+    input: DeleteConversationInput,
+  ): Promise<GatewayResult<DeleteConversationSuccess>> {
+    const disposed = this.#disposedResult<DeleteConversationSuccess>();
+    if (disposed !== undefined) return disposed;
+    const transportConversationId =
+      this.#transportConversationIds.get(input.conversationId) ??
+      input.conversationId;
+    const result = await this.#http.request({
+      method: "DELETE",
+      path: conversationPath(String(transportConversationId), ""),
+      operation: "send",
+      options: input,
+      conversationId: input.conversationId,
+      schema: deleteConversationDtoSchema,
+    });
+    const requestDisposed = this.#disposedResult<DeleteConversationSuccess>();
+    if (requestDisposed !== undefined) return requestDisposed;
+    const requestDeadline =
+      this.#deadlineResult<DeleteConversationSuccess>(input);
+    if (requestDeadline !== undefined) return requestDeadline;
+    if (!result.ok) return result;
+    if (String(result.value.conversationId) !== input.conversationId) {
+      return this.#mappingError(
+        "TFRobot delete response identified another conversation",
+        input.conversationId,
+      );
+    }
+    this.#conversations.delete(input.conversationId);
+    this.#transportConversationIds.delete(input.conversationId);
+    this.#conversationMutations.set(input.conversationId, {
+      kind: "delete",
+      revision: ++this.#mutationRevision,
+    });
+    this.#socket.forgetConversation(input.conversationId);
+    return {
+      ok: true,
+      value: { deletedConversationId: input.conversationId },
+    };
   }
 
   async loadConversation(
@@ -180,6 +319,7 @@ export class TFRobotChatGateway implements ChatGateway {
   ): Promise<GatewayResult<ReturnType<typeof mapSnapshot>>> {
     const disposed = this.#disposedResult<ReturnType<typeof mapSnapshot>>();
     if (disposed !== undefined) return disposed;
+    const readRevision = this.#mutationRevision;
     if (!this.#conversations.has(input.conversationId)) {
       await this.listConversations({
         deadlineAt: input.deadlineAt,
@@ -215,16 +355,31 @@ export class TFRobotChatGateway implements ChatGateway {
     if (requestDeadline !== undefined) return requestDeadline;
     if (!history.ok) return history;
     if (!status.ok) return status;
+    const mutation = this.#conversationMutations.get(input.conversationId);
+    if (
+      mutation?.revision !== undefined &&
+      mutation.revision > readRevision &&
+      mutation.kind === "delete"
+    ) {
+      return this.#mutationConflict(
+        "Conversation was deleted while its snapshot was loading",
+        input.conversationId,
+      );
+    }
     let snapshot: ReturnType<typeof mapSnapshot>;
     try {
       const conversation =
-        this.#conversations.get(input.conversationId) ??
-        mapConversation({
-          conversationId: input.conversationId,
-          title: input.conversationId,
-        });
+        mutation !== undefined &&
+        mutation.revision > readRevision &&
+        mutation.kind === "rename"
+          ? mutation.conversation
+          : (this.#conversations.get(input.conversationId) ??
+            mapConversation({
+              conversationId: input.conversationId,
+              title: input.conversationId,
+            }));
       snapshot = mapSnapshot(conversation, history.value, status.value);
-      this.#socket.rememberRun(input.conversationId, snapshot.run);
+      this.#socket.rememberSnapshot(snapshot);
     } catch {
       return this.#mappingError(
         "TFRobot conversation snapshot could not be normalized",
@@ -292,9 +447,8 @@ export class TFRobotChatGateway implements ChatGateway {
           ok: true,
           value: {
             runId:
-              result.value.taskId != null
-                ? String(result.value.taskId)
-                : syntheticRunId(input.conversationId),
+              getTransportTaskId(result.value) ??
+              syntheticRunId(input.conversationId),
           },
         }
       : result;
@@ -333,7 +487,7 @@ export class TFRobotChatGateway implements ChatGateway {
       ? {
           ok: true,
           value: {
-            cancellationId: String(result.value.taskId),
+            cancellationId: getTransportTaskId(result.value)!,
             interruptedRunId: input.runId,
           },
         }
@@ -347,6 +501,7 @@ export class TFRobotChatGateway implements ChatGateway {
     this.#socket.dispose();
     this.#http.dispose();
     this.#conversations.clear();
+    this.#conversationMutations.clear();
     this.#transportConversationIds.clear();
     if (isGatewayDeadlineExceeded(options, this.#now())) return;
   }
@@ -374,14 +529,187 @@ export class TFRobotChatGateway implements ChatGateway {
     };
   }
 
-  #mappingError<T>(message: string): GatewayResult<T> {
+  #mappingError<T>(message: string, conversationId?: string): GatewayResult<T> {
     return {
       ok: false,
       error: chatErrorSchema.parse({
         code: "validation",
         message,
         retryable: false,
+        ...(conversationId === undefined ? {} : { conversationId }),
       }),
+    };
+  }
+
+  #mutationConflict<T>(
+    message: string,
+    conversationId: string,
+  ): GatewayResult<T> {
+    return {
+      ok: false,
+      error: chatErrorSchema.parse({
+        code: "conflict",
+        conversationId,
+        message,
+        retryable: false,
+      }),
+    };
+  }
+
+  #resolveConversationRead(
+    conversation: Conversation,
+    transportConversationId: number | string,
+    readRevision: number,
+  ):
+    | {
+        readonly conversation: Conversation;
+        readonly transportConversationId: number | string;
+      }
+    | undefined {
+    const mutation = this.#conversationMutations.get(conversation.id);
+    if (mutation === undefined || mutation.revision <= readRevision) {
+      return { conversation, transportConversationId };
+    }
+    return mutation.kind === "delete"
+      ? undefined
+      : {
+          conversation: mutation.conversation,
+          transportConversationId: mutation.transportConversationId,
+        };
+  }
+
+  async #loadCurrentServerRestSnapshot(
+    input: CurrentServerRestInput,
+  ): Promise<GatewayResult<CurrentServerRestSnapshot>> {
+    const status = await this.#http.request({
+      method: "GET",
+      path: conversationPath(input.conversationId, "status"),
+      operation: "read",
+      options: input,
+      conversationId: input.conversationId,
+      schema: statusDtoSchema,
+      session: input.session,
+      signal: input.signal,
+    });
+    if (!status.ok) return status;
+
+    const updates: ChatUpdate[] = [];
+    const seenRecoveryIdentities = new Set<string>();
+    const seenCursors = new Set<string>();
+    let boundedBy: CurrentServerRestSnapshot["boundedBy"];
+    let checkpointReached = false;
+    let cursor: string | undefined;
+    let exhausted = false;
+    let itemCount = 0;
+
+    for (let page = 0; page < input.limits.maxPages; page += 1) {
+      const history = await this.#http.request({
+        method: "GET",
+        path: conversationPath(input.conversationId, "messages"),
+        operation: "read",
+        options: input,
+        conversationId: input.conversationId,
+        query: {
+          count: -Math.min(
+            input.limits.pageSize,
+            input.limits.maxItems - itemCount,
+          ),
+          cursor,
+        },
+        schema: historyDtoSchema,
+        session: input.session,
+        signal: input.signal,
+      });
+      if (!history.ok) return history;
+
+      let pageUpdates: ChatUpdate[];
+      try {
+        pageUpdates = [
+          ...(history.value.messages ?? []).map(mapMessageUpdate),
+          ...(history.value.events ?? []).map(mapEventUpdate),
+        ];
+        if (
+          pageUpdates.some(
+            (update) =>
+              (update.kind !== "timeline.upsert" &&
+                update.kind !== "event.transition.upsert") ||
+              update.conversationId !== input.conversationId,
+          )
+        ) {
+          return this.#mappingError(
+            "TFRobot recovery history contained data for another conversation",
+          );
+        }
+        pageUpdates.sort((left, right) => {
+          const timestampOf = (update: ChatUpdate): number =>
+            update.kind === "timeline.upsert"
+              ? (update.item.updatedAt ?? update.item.createdAt)
+              : update.kind === "event.transition.upsert"
+                ? update.event.transition.occurredAt
+                : 0;
+          return timestampOf(right) - timestampOf(left);
+        });
+      } catch {
+        return this.#mappingError(
+          "TFRobot recovery history could not be normalized",
+        );
+      }
+
+      for (const update of pageUpdates) {
+        const identity = recoveryIdentityOfUpdate(update);
+        if (identity !== undefined && input.checkpoint.has(identity)) {
+          checkpointReached = true;
+          break;
+        }
+        if (identity !== undefined && seenRecoveryIdentities.has(identity)) {
+          continue;
+        }
+        if (itemCount >= input.limits.maxItems) {
+          boundedBy = "max-items";
+          break;
+        }
+        updates.push(update);
+        itemCount += 1;
+        if (identity !== undefined) seenRecoveryIdentities.add(identity);
+      }
+      if (boundedBy === "max-items") break;
+      if (checkpointReached) break;
+
+      const nextCursor = history.value.cursor ?? undefined;
+      if (nextCursor === undefined || nextCursor.length === 0) {
+        exhausted = true;
+        break;
+      }
+      if (itemCount >= input.limits.maxItems) {
+        boundedBy = "max-items";
+        break;
+      }
+      if (seenCursors.has(nextCursor)) {
+        boundedBy = "cursor-cycle";
+        break;
+      }
+      seenCursors.add(nextCursor);
+      cursor = nextCursor;
+      if (page + 1 === input.limits.maxPages) boundedBy = "max-pages";
+    }
+
+    let run: CurrentServerRestSnapshot["run"];
+    try {
+      run = mapRun(input.conversationId, status.value);
+    } catch {
+      return this.#mappingError(
+        "TFRobot recovery status could not be normalized",
+      );
+    }
+    return {
+      ok: true,
+      value: {
+        ...(boundedBy === undefined ? {} : { boundedBy }),
+        checkpointReached,
+        exhausted,
+        run,
+        updates,
+      },
     };
   }
 

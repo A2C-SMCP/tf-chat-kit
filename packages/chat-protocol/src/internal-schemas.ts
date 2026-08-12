@@ -536,6 +536,7 @@ const chatLifecycleParser = z
       "connecting",
       "joining",
       "active",
+      "degraded",
       "reconnecting",
       "recovering",
       "auth-required",
@@ -547,9 +548,11 @@ const chatLifecycleParser = z
     subscriptionId: z.string().min(1).optional(),
     recovery: z
       .object({
+        assurance: z.enum(["best-effort", "verified"]).optional(),
         complete: z.boolean(),
         cursor: z.string().optional(),
         reason: z.string().optional(),
+        source: z.enum(["rest-rebase", "server-replay"]).optional(),
       })
       .optional(),
   })
@@ -565,6 +568,31 @@ const chatLifecycleParser = z
         path: ["recovery", "complete"],
         message:
           "an active lifecycle cannot have incomplete or unverified reconnect recovery",
+      });
+    }
+    if (
+      lifecycle.status === "degraded" &&
+      (lifecycle.recovery?.complete !== false ||
+        lifecycle.recovery.assurance !== "best-effort" ||
+        lifecycle.recovery.source !== "rest-rebase")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["recovery"],
+        message:
+          "a degraded lifecycle requires incomplete best-effort REST rebase recovery",
+      });
+    }
+    if (
+      lifecycle.status !== "degraded" &&
+      (lifecycle.recovery?.assurance === "best-effort" ||
+        lifecycle.recovery?.source === "rest-rebase")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["recovery"],
+        message:
+          "best-effort REST rebase recovery is only valid for a degraded lifecycle",
       });
     }
   });

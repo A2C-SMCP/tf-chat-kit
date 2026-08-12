@@ -14,6 +14,7 @@ import {
   type ConversationWorkspaceControllerOptions,
   type ConversationWorkspaceSnapshot,
   type CreateWorkspaceConversationInput,
+  type RenameWorkspaceConversationInput,
 } from "@turingfocus/chat-runtime";
 
 import { useChatClient } from "./hooks.js";
@@ -38,11 +39,23 @@ export interface ConversationWorkspaceBinding {
     | Awaited<ReturnType<ConversationWorkspaceController["createConversation"]>>
     | undefined
   >;
+  deleteConversation(
+    conversationId: string,
+  ): Promise<
+    | Awaited<ReturnType<ConversationWorkspaceController["deleteConversation"]>>
+    | undefined
+  >;
   loadMore(): Promise<
     Awaited<ReturnType<ConversationWorkspaceController["loadMore"]>> | undefined
   >;
   refresh(): Promise<
     Awaited<ReturnType<ConversationWorkspaceController["refresh"]>> | undefined
+  >;
+  renameConversation(
+    input: RenameWorkspaceConversationInput,
+  ): Promise<
+    | Awaited<ReturnType<ConversationWorkspaceController["renameConversation"]>>
+    | undefined
   >;
   selectConversation(
     conversationId: string,
@@ -69,7 +82,9 @@ interface WorkspaceEntry {
 const EMPTY_WORKSPACE_SNAPSHOT: ConversationWorkspaceSnapshot = Object.freeze({
   conversations: Object.freeze([]),
   creating: false,
+  deletingConversationIds: Object.freeze([]),
   listStatus: "idle",
+  renamingConversationIds: Object.freeze([]),
   selectionStatus: "idle",
 });
 
@@ -181,6 +196,18 @@ export const useConversationWorkspace = (
       Promise.resolve(undefined),
     [activeEntry],
   );
+  const deleteConversation = useCallback(
+    (conversationId: string) =>
+      activeEntry?.controller.deleteConversation(conversationId) ??
+      Promise.resolve(undefined),
+    [activeEntry],
+  );
+  const renameConversation = useCallback(
+    (input: RenameWorkspaceConversationInput) =>
+      activeEntry?.controller.renameConversation(input) ??
+      Promise.resolve(undefined),
+    [activeEntry],
+  );
   const selectConversation = useCallback(
     (conversationId: string) =>
       activeEntry?.controller.selectConversation(conversationId) ??
@@ -192,17 +219,21 @@ export const useConversationWorkspace = (
     () => ({
       controller: activeEntry?.controller ?? null,
       createConversation,
+      deleteConversation,
       loadMore,
       ready: activeEntry !== null,
       refresh,
+      renameConversation,
       selectConversation,
       snapshot,
     }),
     [
       activeEntry,
       createConversation,
+      deleteConversation,
       loadMore,
       refresh,
+      renameConversation,
       selectConversation,
       snapshot,
     ],

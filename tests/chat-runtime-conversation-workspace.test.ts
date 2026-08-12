@@ -66,6 +66,209 @@ describe("ConversationWorkspaceController", () => {
     await client.dispose({ deadlineAt: deadlineAt() });
   });
 
+  it("renames and deletes conversations while keeping selection state coherent", async () => {
+    const memory = createMemoryChatGateway();
+    const client = createChatClient({ gateway: memory.gateway });
+    const controller = createConversationWorkspaceController({
+      client,
+      getDeadlineAt: deadlineAt,
+    });
+    await controller.start();
+    const created = await controller.createConversation({
+      title: "Managed target",
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const renamed = await controller.renameConversation({
+      conversationId: created.value.id,
+      title: "Renamed target",
+    });
+    expect(renamed).toMatchObject({
+      ok: true,
+      value: { id: created.value.id, title: "Renamed target" },
+    });
+    expect(controller.getSnapshot()).toMatchObject({
+      conversationMutationError: undefined,
+      renamingConversationIds: [],
+      selectedConversationId: created.value.id,
+    });
+    expect(client.getSnapshot()?.conversation.title).toBe("Renamed target");
+
+    await expect(
+      controller.deleteConversation(created.value.id),
+    ).resolves.toEqual({
+      ok: true,
+      value: { deletedConversationId: created.value.id },
+    });
+    expect(controller.getSnapshot()).toMatchObject({
+      deletingConversationIds: [],
+      selectedConversationId: undefined,
+      selectionStatus: "idle",
+    });
+    expect(
+      controller
+        .getSnapshot()
+        .conversations.some(({ id }) => id === created.value.id),
+    ).toBe(false);
+
+    controller.dispose();
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("exposes mutation progress, rejects overlap and preserves failures", async () => {
+    const memory = createMemoryChatGateway();
+    const client = createChatClient({ gateway: memory.gateway });
+    const controller = createConversationWorkspaceController({
+      client,
+      getDeadlineAt: deadlineAt,
+    });
+    await controller.start();
+    const conversationId = memory.fixtures.conversation.id;
+    const renameHold = memory.controller.holdNext("renameConversation");
+    const renaming = controller.renameConversation({
+      conversationId,
+      title: "Held rename",
+    });
+    await renameHold.started;
+    expect(controller.getSnapshot().renamingConversationIds).toEqual([
+      conversationId,
+    ]);
+    await expect(
+      controller.deleteConversation(conversationId),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    renameHold.release();
+    await renaming;
+
+    memory.controller.failNext("deleteConversation", {
+      code: "authorization",
+      conversationId,
+      message: "delete denied",
+      retryable: false,
+    });
+    await expect(
+      controller.deleteConversation(conversationId),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "authorization" },
+    });
+    expect(controller.getSnapshot()).toMatchObject({
+      conversationMutationError: {
+        code: "authorization",
+        message: "delete denied",
+      },
+      deletingConversationIds: [],
+    });
+    expect(
+      controller
+        .getSnapshot()
+        .conversations.some(({ id }) => id === conversationId),
+    ).toBe(true);
+
+    controller.dispose();
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("does not let a list request started before a mutation restore stale metadata", async () => {
+    const memory = createMemoryChatGateway();
+    memory.controller.setConversationPage({
+      conversations: [memory.fixtures.conversation],
+    });
+    const client = createChatClient({ gateway: memory.gateway });
+    const controller = createConversationWorkspaceController({
+      client,
+      getDeadlineAt: deadlineAt,
+    });
+    await controller.start();
+    const conversationId = memory.fixtures.conversation.id;
+
+    const staleRenameList = memory.controller.holdNext("listConversations");
+    const refreshingBeforeRename = controller.refresh();
+    await staleRenameList.started;
+    await controller.renameConversation({
+      conversationId,
+      title: "Mutation wins",
+    });
+    staleRenameList.release();
+    await refreshingBeforeRename;
+    expect(controller.getSnapshot()).toMatchObject({
+      conversations: [{ id: conversationId, title: "Mutation wins" }],
+      listStatus: "ready",
+    });
+
+    const staleDeleteList = memory.controller.holdNext("listConversations");
+    const cleanupHold = memory.controller.holdNext("subscription.dispose");
+    const refreshingBeforeDelete = controller.refresh();
+    await staleDeleteList.started;
+    const deleting = controller.deleteConversation(conversationId);
+    await cleanupHold.started;
+    staleDeleteList.release();
+    await refreshingBeforeDelete;
+    expect(controller.getSnapshot()).toMatchObject({
+      conversations: [],
+      listStatus: "ready",
+      selectedConversationId: undefined,
+    });
+    cleanupHold.release();
+    await deleting;
+
+    controller.dispose();
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
+  it("restores the selected conversation when a pending selection is deleted", async () => {
+    const memory = createMemoryChatGateway();
+    const client = createChatClient({ gateway: memory.gateway });
+    const controller = createConversationWorkspaceController({
+      client,
+      getDeadlineAt: deadlineAt,
+    });
+    await controller.start();
+    const selectedId = memory.fixtures.conversation.id;
+    const created = await memory.gateway.createConversation({
+      deadlineAt: deadlineAt(),
+      title: "Pending deletion target",
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    await controller.refresh();
+
+    const loadHold = memory.controller.holdNext("loadConversation");
+    const selecting = controller.selectConversation(created.value.id);
+    await loadHold.started;
+    expect(controller.getSnapshot()).toMatchObject({
+      pendingConversationId: created.value.id,
+      selectedConversationId: selectedId,
+      selectionStatus: "loading",
+    });
+
+    await expect(
+      controller.deleteConversation(created.value.id),
+    ).resolves.toMatchObject({ ok: true });
+    expect(client.getSnapshot()?.conversation.id).toBe(selectedId);
+    expect(controller.getSnapshot()).toMatchObject({
+      pendingConversationId: undefined,
+      selectedConversationId: selectedId,
+      selectionStatus: "ready",
+    });
+
+    loadHold.release();
+    await expect(selecting).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(controller.getSnapshot()).toMatchObject({
+      selectedConversationId: selectedId,
+      selectionStatus: "ready",
+    });
+
+    controller.dispose();
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
   it("preserves Gateway page order by default and appends deduplicated pages", async () => {
     const memory = createMemoryChatGateway();
     const created = await memory.gateway.createConversation({
@@ -576,6 +779,7 @@ describe("ConversationWorkspaceController", () => {
     });
     let newerRefresh: ReturnType<typeof controller.refresh> | undefined;
     const subscription = client.subscribe((snapshot) => {
+      if (snapshot === null) return;
       if (newerRefresh !== undefined) return;
       memory.controller.setConversationPage({ conversations: [] });
       newerRefresh = controller.refresh();

@@ -72,6 +72,7 @@ pnpm add react@^18.2.0 react-dom@^18.2.0 antd@^5.23.4
 | `socketNamespaceUrl`     | 建议显式填写 | Socket.IO Namespace URL；不填时默认使用 `baseUrl` 的 origin 加 `/chat`       |
 | `socketPath`             | 否           | Socket.IO path，默认 `/socket.io`                                            |
 | `platformId`             | 否           | 查询和创建会话时使用的平台过滤值                                             |
+| `serverProfile`          | 否           | 默认 `verified`；仅为当前缺少可靠 join/replay ACK 的 Server 显式选择兼容档位 |
 | `SessionProvider`        | 是           | 按需返回当前短期凭据，并处理凭据失效通知                                     |
 | `messageCreatorProvider` | 是           | 发送消息时返回当前宿主用户的 `uid`、`name` 和可选头像                        |
 
@@ -132,6 +133,8 @@ export function createHostChatClientFactory(
 
   return createTFRobotChatClientFactory({
     baseUrl: config.apiBaseUrl,
+    // 默认 verified。只有已确认是当前 legacy Server 时才显式配置：
+    // serverProfile: { kind: "current-server" },
     sessionProvider,
     messageCreatorProvider: () => config.getCurrentUser(),
     socketNamespaceUrl: config.socketNamespaceUrl,
@@ -157,6 +160,28 @@ export const getChatDeadlineAt = deadlineAt;
 - 内部受控宿主如果确实需要 Admin Token，可以返回 `{ kind: "admin", adminKey }`；不要把该模式用于第三方浏览器应用。
 - `messageCreatorProvider` 与认证分开，Gateway 不解析 Token 来猜用户身份。
 - `deadlineAt` 是 Unix epoch 毫秒的**绝对截止时间**，不是超时秒数；每次操作都要生成新值。
+
+#### `current-server` 兼容档位
+
+默认 `verified` 档位对空 join ACK 失败关闭，并要求 Server 在重连时明确证明 replay 完整。若目标部署仍是当前缺少 join ACK 和 durable replay cursor/outbox 的 TFRobotServer，宿主可显式配置：
+
+```ts
+serverProfile: {
+  kind: "current-server",
+  rebase: {
+    deadlineMs: 10_000,
+    maxItems: 500,
+    maxPages: 10,
+    pageSize: 50,
+  },
+},
+```
+
+Gateway 会用同一次连接/重连取得的短期 session 执行 REST 状态与历史读取：初次订阅只有 REST 预检成功后才能接受空 ACK；401、403、404 和显式拒绝仍然失败关闭。重连空 ACK 后按上限向旧历史分页至 checkpoint，并用 identity 与 revision guard 合并持久化消息、事件和 transition。
+
+成功回补只会发布 `degraded`，其固定语义是 `complete=false`、`assurance=best-effort`、`source=rest-rebase`。Runtime 允许继续发送/中断，Ant Design UI 保留非阻塞警告；`recovering`、`offline`、`auth-required` 仍禁止命令。因为 REST 不包含未持久化的 `chat_error` 等瞬时事件，宿主不得把该状态上报为完整恢复。达到 page/item/deadline 上限同样保持 best-effort，并在 lifecycle reason 中说明边界。
+
+这是宿主控制的迁移档位，不负责修复 Server 的 owner/tenant 授权或 producer 隔离。Server 上线访问校验 join ACK 和经过验证的 durable replay cursor/outbox 后，应移除该配置并回到默认 `verified`。
 
 ### 4.1 事件时间和 transition 语义
 
@@ -220,7 +245,7 @@ await hostOwnedClient.dispose({ deadlineAt: Date.now() + 10_000 });
 
 ## 6. 使用托管会话工作区
 
-推荐的宿主路径是直接挂载 `ChatWorkspace`。它负责查询、刷新、分页和创建会话，维护 loading/error/selected/pending 状态，默认选择首个会话，并在创建后自动切换；慢请求不会覆盖用户更新的选择。宿主不再保存会话列表或编写创建和切换流程。
+推荐的宿主路径是直接挂载 `ChatWorkspace`。它负责查询、刷新、分页、创建、重命名和删除会话，维护 loading/error/selected/pending/mutating 状态，默认选择首个会话，并在创建后自动切换；慢请求不会覆盖用户更新的选择。宿主不再保存会话列表或编写创建和切换流程。
 
 ```tsx
 import { ChatWorkspace } from "@turingfocus/chat-kit";
@@ -230,6 +255,8 @@ export function HostChatWorkspace() {
     <div style={{ height: "100%", minHeight: 480 }}>
       <ChatWorkspace
         allowCreate
+        allowDelete
+        allowRename
         getDeadlineAt={() => Date.now() + 10_000}
         pageSize={50}
       />
@@ -240,11 +267,11 @@ export function HostChatWorkspace() {
 
 `ChatWorkspace` 必须位于 `ChatProvider` 或 `OwnedChatProvider` 内。宿主仍负责当前组织和 Robot、最终 HTTP/Socket endpoint、`SessionProvider`、当前用户身份、路由、权限与埋点；Robot、账号或环境变化时，通过替换上层稳定 factory 让旧 Client 和工作区一起释放。
 
-如果 Gateway 不支持创建会话，不传 `allowCreate`。需要定制列表顺序时传入 `orderConversations`；默认严格保留 Gateway 顺序，避免分页后按页重排。
+如果 Gateway 不支持对应命令，不传 `allowCreate`、`allowRename` 或 `allowDelete`。三个入口均默认关闭；删除会显示确认对话框。是否允许当前用户修改某个会话、是否需要更强的二次确认、审计与保留策略仍由宿主负责，不能把 UI 开关当成服务端授权。需要定制列表顺序时传入 `orderConversations`；默认严格保留 Gateway 顺序，避免分页后按页重排。
 
 ### 6.1 使用无样式托管绑定
 
-宿主需要自己的视觉但不想重复实现会话状态机时，使用 `useConversationWorkspace`。该 hook 返回不可变 `snapshot` 以及 `refresh`、`loadMore`、`createConversation` 和 `selectConversation`；它在 effect 中创建 controller，在 Client 更换、StrictMode 回放或卸载时停止旧异步工作，但不会释放宿主持有的 Client。
+宿主需要自己的视觉但不想重复实现会话状态机时，使用 `useConversationWorkspace`。该 hook 返回不可变 `snapshot` 以及 `refresh`、`loadMore`、`createConversation`、`renameConversation`、`deleteConversation` 和 `selectConversation`；它在 effect 中创建 controller，在 Client 更换、StrictMode 回放或卸载时停止旧异步工作，但不会释放宿主持有的 Client。同一会话的重命名与删除互斥；成功删除当前选中会话后工作区清空选择，不会擅自切换到另一条会话。
 
 ### 6.2 高级受控组合
 
@@ -487,7 +514,7 @@ import {
 const gateway = createTFRobotChatGateway(gatewayOptions);
 const client = createChatClient({ gateway });
 
-const subscription = client.subscribe(() => {
+const subscription = client.subscribeState(() => {
   const snapshot = client.getSnapshot();
   renderWithHostFramework(snapshot);
 });
@@ -501,6 +528,8 @@ subscription.dispose();
 await client.dispose({ deadlineAt: Date.now() + 10_000 });
 ```
 
+需要感知“当前活动会话已被删除”的宿主应使用新增的 `subscribeState`；它会在删除成功时收到 `null`，此后 `getSnapshot()` 也返回 `null`，直到另一个会话加载成功。原有 `subscribe(ChatSnapshotListener)` 保持向后兼容，只发布非空快照，不要求既有宿主增加 `null` 分支。Runtime 会先退役该会话的订阅和异步 generation，再发布空状态，因此删除后的迟到实时更新以及 send/interrupt/answer 命令不会继续作用于旧会话。
+
 同一个宿主可以创建多个客户端实例。每个实例都必须拥有独立 Gateway；不要在不同用户、租户或页面之间共享一个可变的全局 Gateway。
 
 ## 9. 能力边界
@@ -509,7 +538,7 @@ UI 和宿主逻辑应读取当前快照的 `capabilities`，不要假设所有 G
 
 当前 TFRobot Gateway 支持：
 
-- 会话列表和会话创建；
+- 会话列表、创建、重命名和删除；
 - 历史加载与实时订阅；
 - 文本发送；
 - 对拥有真实活动 `taskId` 的 Run 执行中断。

@@ -19,6 +19,9 @@ export interface ConversationWorkspaceSnapshot {
   readonly conversations: readonly Conversation[];
   readonly creating: boolean;
   readonly creationError?: ChatError | undefined;
+  readonly deletingConversationIds: readonly string[];
+  readonly renamingConversationIds: readonly string[];
+  readonly conversationMutationError?: ChatError | undefined;
   readonly listError?: ChatError | undefined;
   readonly listStatus: ConversationWorkspaceListStatus;
   readonly nextCursor?: string | undefined;
@@ -53,6 +56,11 @@ export interface CreateWorkspaceConversationInput {
   readonly title: string;
 }
 
+export interface RenameWorkspaceConversationInput {
+  readonly conversationId: string;
+  readonly title: string;
+}
+
 interface ListenerRegistration {
   active: boolean;
   readonly listener: (snapshot: ConversationWorkspaceSnapshot) => void;
@@ -67,7 +75,9 @@ interface AppliedConversationPage {
 const INITIAL_SNAPSHOT: ConversationWorkspaceSnapshot = cloneImmutable({
   conversations: [],
   creating: false,
+  deletingConversationIds: [],
   listStatus: "idle",
+  renamingConversationIds: [],
   selectionStatus: "idle",
 });
 
@@ -135,6 +145,7 @@ export class ConversationWorkspaceController {
   readonly #clientSubscription: ConversationWorkspaceSubscription;
   #createInFlight = 0;
   #createRevision = 0;
+  readonly #deletingConversationIds = new Set<string>();
   #disposed = false;
   readonly #getDeadlineAt: () => number;
   readonly #initialSelection: "first" | "none";
@@ -145,6 +156,7 @@ export class ConversationWorkspaceController {
     | ((conversations: readonly Conversation[]) => readonly Conversation[])
     | undefined;
   readonly #pageSize: number | undefined;
+  readonly #renamingConversationIds = new Set<string>();
   #selectionIntentRevision = 0;
   #selectionRevision = 0;
   #snapshot: ConversationWorkspaceSnapshot = INITIAL_SNAPSHOT;
@@ -156,8 +168,9 @@ export class ConversationWorkspaceController {
     this.#onUnhandledError = options.onUnhandledError;
     this.#orderConversations = options.orderConversations;
     this.#pageSize = options.pageSize;
-    this.#clientSubscription = this.#client.subscribe((snapshot) => {
-      this.#handleClientSnapshot(snapshot);
+    this.#clientSubscription = this.#client.subscribeState((snapshot) => {
+      if (snapshot === null) this.#handleClientSnapshotCleared();
+      else this.#handleClientSnapshot(snapshot);
     });
   }
 
@@ -348,6 +361,133 @@ export class ConversationWorkspaceController {
     return result;
   }
 
+  async renameConversation(
+    input: RenameWorkspaceConversationInput,
+  ): Promise<GatewayResult<Conversation>> {
+    if (this.#disposed) {
+      return controllerFailure(
+        "Conversation workspace has already been disposed",
+        input.conversationId,
+      );
+    }
+    if (
+      this.#renamingConversationIds.has(input.conversationId) ||
+      this.#deletingConversationIds.has(input.conversationId)
+    ) {
+      return controllerFailure(
+        "Conversation mutation is already in progress",
+        input.conversationId,
+      );
+    }
+    this.#renamingConversationIds.add(input.conversationId);
+    this.#commitMutationState(undefined);
+    const requestOptions = this.#requestOptions(input.conversationId);
+    const result = requestOptions.ok
+      ? await this.#client.renameConversation({
+          conversationId: input.conversationId,
+          deadlineAt: requestOptions.value,
+          title: input.title,
+        })
+      : requestOptions;
+    this.#renamingConversationIds.delete(input.conversationId);
+    if (this.#disposed) return result;
+    if (!result.ok) {
+      this.#commitMutationState(result.error);
+      return result;
+    }
+    this.#listRevision += 1;
+    this.#commit({
+      ...this.#snapshot,
+      conversations: this.#upsertConversation(result.value),
+      conversationMutationError: undefined,
+      listError: undefined,
+      listStatus: "ready",
+      renamingConversationIds: [...this.#renamingConversationIds],
+    });
+    return result;
+  }
+
+  async deleteConversation(
+    conversationId: string,
+  ): Promise<GatewayResult<{ readonly deletedConversationId: string }>> {
+    if (this.#disposed) {
+      return controllerFailure(
+        "Conversation workspace has already been disposed",
+        conversationId,
+      );
+    }
+    if (
+      this.#deletingConversationIds.has(conversationId) ||
+      this.#renamingConversationIds.has(conversationId)
+    ) {
+      return controllerFailure(
+        "Conversation mutation is already in progress",
+        conversationId,
+      );
+    }
+    this.#deletingConversationIds.add(conversationId);
+    this.#commitMutationState(undefined);
+    const requestOptions = this.#requestOptions(conversationId);
+    const result = requestOptions.ok
+      ? await this.#client.deleteConversation({
+          conversationId,
+          deadlineAt: requestOptions.value,
+        })
+      : requestOptions;
+    this.#deletingConversationIds.delete(conversationId);
+    if (this.#disposed) return result;
+    if (!result.ok) {
+      this.#commitMutationState(result.error);
+      return result;
+    }
+
+    this.#listRevision += 1;
+    const conversations = this.#snapshot.conversations.filter(
+      (conversation) => conversation.id !== conversationId,
+    );
+    const deletesSelected =
+      this.#snapshot.selectedConversationId === conversationId;
+    const deletesPending =
+      this.#snapshot.pendingConversationId === conversationId;
+    if (deletesSelected || deletesPending) {
+      this.#selectionIntentRevision += 1;
+      this.#selectionRevision += 1;
+      this.#automaticSelectionRevision = undefined;
+      this.#client.cancelPendingConversationLoad();
+    }
+    this.#commit({
+      ...this.#snapshot,
+      conversations,
+      conversationMutationError: undefined,
+      deletingConversationIds: [...this.#deletingConversationIds],
+      listError: undefined,
+      listStatus: "ready",
+      ...(deletesSelected
+        ? {
+            pendingConversationId: undefined,
+            selectedConversationId: undefined,
+            selectionError: undefined,
+            selectionStatus:
+              conversations.length === 0
+                ? ("empty" as const)
+                : ("idle" as const),
+          }
+        : deletesPending
+          ? {
+              pendingConversationId: undefined,
+              selectionError: undefined,
+              selectionStatus:
+                this.#snapshot.selectedConversationId === undefined
+                  ? conversations.length === 0
+                    ? ("empty" as const)
+                    : ("idle" as const)
+                  : ("ready" as const),
+            }
+          : {}),
+    });
+    return result;
+  }
+
   async selectConversation(
     conversationId: string,
   ): Promise<GatewayResult<ChatSnapshot>> {
@@ -529,6 +669,15 @@ export class ConversationWorkspaceController {
     }
   }
 
+  #commitMutationState(error: ChatError | undefined): void {
+    this.#commit({
+      ...this.#snapshot,
+      conversationMutationError: error,
+      deletingConversationIds: [...this.#deletingConversationIds],
+      renamingConversationIds: [...this.#renamingConversationIds],
+    });
+  }
+
   #cancelAutomaticSelection(): boolean {
     if (
       this.#automaticSelectionRevision === undefined ||
@@ -618,6 +767,32 @@ export class ConversationWorkspaceController {
     this.#commit({
       ...this.#snapshot,
       conversations: this.#upsertConversation(snapshot.conversation),
+    });
+  }
+
+  #handleClientSnapshotCleared(): void {
+    if (this.#disposed) return;
+    const conversationId =
+      this.#snapshot.selectedConversationId ??
+      this.#snapshot.pendingConversationId;
+    if (conversationId === undefined) return;
+    const conversations = this.#snapshot.conversations.filter(
+      (conversation) => conversation.id !== conversationId,
+    );
+    this.#listRevision += 1;
+    this.#selectionIntentRevision += 1;
+    this.#selectionRevision += 1;
+    this.#automaticSelectionRevision = undefined;
+    this.#commit({
+      ...this.#snapshot,
+      conversations,
+      listError: undefined,
+      listStatus: "ready",
+      pendingConversationId: undefined,
+      selectedConversationId: undefined,
+      selectionError: undefined,
+      selectionStatus:
+        conversations.length === 0 ? ("empty" as const) : ("idle" as const),
     });
   }
 

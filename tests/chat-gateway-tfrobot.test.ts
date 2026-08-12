@@ -13,11 +13,21 @@ import {
   mapEventUpdate,
   syntheticRunId,
 } from "../packages/chat-gateway-tfrobot/src/mapper.js";
+import {
+  getTransportTaskId,
+  interruptDtoSchema,
+  sendTextDtoSchema,
+  statusDtoSchema,
+} from "../packages/chat-gateway-tfrobot/src/dto.js";
 import type {
   ChatError,
   ChatUpdate,
   SessionProvider,
 } from "../packages/chat-protocol/src/index.js";
+import {
+  createCurrentServerFixture,
+  CURRENT_SERVER_HOLD_ACK,
+} from "./support/current-server-fixture.js";
 
 const deadline = (): number => Date.now() + 60_000;
 
@@ -179,6 +189,445 @@ const createSocketFixture = () => {
 };
 
 describe("TFRobotChatGateway REST boundary", () => {
+  it.each([
+    [{ taskId: "task-camel" }, "task-camel", true],
+    [{ task_id: "task-snake" }, "task-snake", true],
+    [{ taskId: "task-both", task_id: "task-both" }, "task-both", true],
+    [{ taskId: "task-a", task_id: "task-b" }, undefined, false],
+    [{}, undefined, true],
+  ] as const)(
+    "validates reusable task ID aliases %#",
+    (fields, expected, valid) => {
+      for (const schema of [sendTextDtoSchema, statusDtoSchema]) {
+        const input =
+          schema === statusDtoSchema ? { working: true, ...fields } : fields;
+        const parsed = schema.safeParse(input);
+        expect(parsed.success).toBe(valid);
+        if (!parsed.success) continue;
+        expect(getTransportTaskId(parsed.data)).toBe(expected);
+        expect(schema.safeParse(parsed.data).success).toBe(true);
+      }
+      expect(interruptDtoSchema.safeParse(fields).success).toBe(
+        valid && expected !== undefined,
+      );
+    },
+  );
+
+  it("renames and deletes a conversation through validated management endpoints", async () => {
+    const requests: Request[] = [];
+    const fetch = vi.fn(
+      async (
+        input: Parameters<typeof globalThis.fetch>[0],
+        init?: Parameters<typeof globalThis.fetch>[1],
+      ) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        if (request.method === "GET") {
+          return envelope({ conversations: [conversationDto], cursor: null });
+        }
+        if (request.method === "PATCH") {
+          return envelope({ ...conversationDto, title: "Renamed remotely" });
+        }
+        if (request.method === "DELETE") {
+          return envelope({ conversationId: 42, message: "deleted" });
+        }
+        throw new Error(`Unexpected request: ${request.method}`);
+      },
+    );
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/api/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch,
+      socketFactory: createSocketFixture().factory,
+    });
+    await gateway.listConversations({ deadlineAt: deadline() });
+
+    await expect(
+      gateway.renameConversation!({
+        conversationId: "42",
+        deadlineAt: deadline(),
+        title: "Renamed remotely",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { id: "42", title: "Renamed remotely" },
+    });
+    await expect(
+      gateway.deleteConversation!({
+        conversationId: "42",
+        deadlineAt: deadline(),
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { deletedConversationId: "42" },
+    });
+
+    const renameRequest = requests[1]!;
+    expect(renameRequest.method).toBe("PATCH");
+    expect(new URL(renameRequest.url).pathname).toBe(
+      "/api/v1/chat/conversations/42",
+    );
+    expect(new URL(renameRequest.url).searchParams.get("title")).toBe(
+      "Renamed remotely",
+    );
+    await expect(renameRequest.clone().json()).resolves.toEqual({
+      title: "Renamed remotely",
+    });
+    expect(requests[2]?.method).toBe("DELETE");
+    expect(new URL(requests[2]!.url).pathname).toBe(
+      "/api/v1/chat/conversations/42",
+    );
+  });
+
+  it("rebases a stale conversation list onto a completed rename before caching it", async () => {
+    const staleListStarted = deferred<void>();
+    const staleListResponse = deferred<Response>();
+    const fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        const path = new URL(request.url).pathname;
+        if (request.method === "GET" && path.endsWith("/conversations")) {
+          staleListStarted.resolve(undefined);
+          return staleListResponse.promise;
+        }
+        if (request.method === "PATCH") {
+          return envelope({ ...conversationDto, title: "Fresh title" });
+        }
+        if (path.endsWith("/messages")) {
+          return envelope({ cursor: null, events: [], messages: [] });
+        }
+        if (path.endsWith("/status")) {
+          return envelope({ taskId: null, working: false });
+        }
+        throw new Error(`Unexpected request: ${request.method} ${path}`);
+      },
+    );
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/api/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch,
+      socketFactory: createSocketFixture().factory,
+    });
+    const listing = gateway.listConversations({ deadlineAt: deadline() });
+    await staleListStarted.promise;
+
+    await expect(
+      gateway.renameConversation!({
+        conversationId: "42",
+        deadlineAt: deadline(),
+        title: "Fresh title",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { id: "42", title: "Fresh title" },
+    });
+    staleListResponse.resolve(
+      envelope({ conversations: [conversationDto], cursor: null }),
+    );
+
+    await expect(listing).resolves.toMatchObject({
+      ok: true,
+      value: { conversations: [{ id: "42", title: "Fresh title" }] },
+    });
+    await expect(
+      gateway.loadConversation({
+        conversationId: "42",
+        deadlineAt: deadline(),
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { conversation: { id: "42", title: "Fresh title" } },
+    });
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("filters a deleted conversation from a stale in-flight list response", async () => {
+    const staleListStarted = deferred<void>();
+    const staleListResponse = deferred<Response>();
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/api/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch: vi.fn(async (input, init) => {
+        const request = new Request(input, init);
+        if (request.method === "DELETE") {
+          return envelope({ conversationId: 42, message: "deleted" });
+        }
+        staleListStarted.resolve(undefined);
+        return staleListResponse.promise;
+      }),
+      socketFactory: createSocketFixture().factory,
+    });
+    const listing = gateway.listConversations({ deadlineAt: deadline() });
+    await staleListStarted.promise;
+
+    await expect(
+      gateway.deleteConversation!({
+        conversationId: "42",
+        deadlineAt: deadline(),
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    staleListResponse.resolve(
+      envelope({ conversations: [conversationDto], cursor: null }),
+    );
+
+    await expect(listing).resolves.toMatchObject({
+      ok: true,
+      value: { conversations: [] },
+    });
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("rejects a snapshot response that arrives after its conversation was deleted", async () => {
+    const historyStarted = deferred<void>();
+    const statusStarted = deferred<void>();
+    const historyResponse = deferred<Response>();
+    const statusResponse = deferred<Response>();
+    const fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        const path = new URL(request.url).pathname;
+        if (request.method === "DELETE") {
+          return envelope({ conversationId: 42, message: "deleted" });
+        }
+        if (request.method === "GET" && path.endsWith("/conversations")) {
+          return envelope({ conversations: [conversationDto], cursor: null });
+        }
+        if (path.endsWith("/messages")) {
+          historyStarted.resolve(undefined);
+          return historyResponse.promise;
+        }
+        if (path.endsWith("/status")) {
+          statusStarted.resolve(undefined);
+          return statusResponse.promise;
+        }
+        throw new Error(`Unexpected request: ${request.method} ${path}`);
+      },
+    );
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/api/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch,
+      socketFactory: createSocketFixture().factory,
+    });
+    await gateway.listConversations({ deadlineAt: deadline() });
+    const loading = gateway.loadConversation({
+      conversationId: "42",
+      deadlineAt: deadline(),
+    });
+    await Promise.all([historyStarted.promise, statusStarted.promise]);
+
+    await expect(
+      gateway.deleteConversation!({
+        conversationId: "42",
+        deadlineAt: deadline(),
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    historyResponse.resolve(
+      envelope({ cursor: null, events: [], messages: [] }),
+    );
+    statusResponse.resolve(envelope({ taskId: null, working: false }));
+
+    await expect(loading).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict", conversationId: "42" },
+    });
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("cancels a deleted conversation while Socket authentication is pending", async () => {
+    const connectSessionStarted = deferred<void>();
+    const connectSession = deferred<TFRobotSession>();
+    const sockets = createSocketFixture();
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/api/",
+      messageCreatorProvider,
+      sessionProvider: {
+        getSession(request) {
+          if (request.purpose === "connect") {
+            connectSessionStarted.resolve(undefined);
+            return connectSession.promise;
+          }
+          return { kind: "bearer", token: "request-token" };
+        },
+      },
+      fetch: vi.fn(async () =>
+        envelope({ conversationId: 42, message: "deleted" }),
+      ),
+      socketFactory: sockets.factory,
+    });
+    const subscribing = gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: () => undefined },
+    );
+    await connectSessionStarted.promise;
+
+    await expect(
+      gateway.deleteConversation!({
+        conversationId: "42",
+        deadlineAt: deadline(),
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { deletedConversationId: "42" },
+    });
+    connectSession.resolve({ kind: "bearer", token: "late-token" });
+
+    await expect(subscribing).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(sockets.inputs).toHaveLength(0);
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("cancels a deleted conversation while current-server preflight is pending", async () => {
+    const preflightStarted = deferred<void>();
+    const preflightResponse = deferred<Response>();
+    const sockets = createSocketFixture();
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/api/",
+      messageCreatorProvider,
+      serverProfile: { kind: "current-server" },
+      sessionProvider: sessionProvider(),
+      fetch: vi.fn(async (input, init) => {
+        const request = new Request(input, init);
+        if (request.method === "DELETE") {
+          return envelope({ conversationId: 42, message: "deleted" });
+        }
+        if (new URL(request.url).pathname.endsWith("/status")) {
+          preflightStarted.resolve(undefined);
+          return preflightResponse.promise;
+        }
+        return envelope({ cursor: null, events: [], messages: [] });
+      }),
+      socketFactory: sockets.factory,
+    });
+    const subscribing = gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: () => undefined },
+    );
+    await preflightStarted.promise;
+
+    await expect(
+      gateway.deleteConversation!({
+        conversationId: "42",
+        deadlineAt: deadline(),
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { deletedConversationId: "42" },
+    });
+    preflightResponse.resolve(envelope({ taskId: null, working: false }));
+
+    await expect(subscribing).resolves.toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(sockets.inputs).toHaveLength(0);
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it.each([
+    ["rename", "PATCH", { ...conversationDto, conversationId: 43 }],
+    ["delete", "DELETE", { conversationId: 43, message: "deleted" }],
+  ] as const)(
+    "fails closed when a %s response identifies another conversation",
+    async (operation, method, response) => {
+      const gateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/api/",
+        messageCreatorProvider,
+        sessionProvider: sessionProvider(),
+        fetch: vi.fn(async (_input, init) => {
+          expect(init?.method).toBe(method);
+          return envelope(response);
+        }),
+        socketFactory: createSocketFixture().factory,
+      });
+      const result =
+        operation === "rename"
+          ? await gateway.renameConversation!({
+              conversationId: "42",
+              deadlineAt: deadline(),
+              title: "Wrong target",
+            })
+          : await gateway.deleteConversation!({
+              conversationId: "42",
+              deadlineAt: deadline(),
+            });
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: "validation" },
+      });
+    },
+  );
+
+  it("uses legacy snake task IDs for load, send and run-pinned interrupt", async () => {
+    const requestBodies: unknown[] = [];
+    const fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        const path = new URL(request.url).pathname;
+        if (path.endsWith("/conversations")) {
+          return envelope({ conversations: [conversationDto], cursor: null });
+        }
+        if (request.method === "GET" && path.endsWith("/messages")) {
+          return envelope({ messages: [], events: [], cursor: null });
+        }
+        if (path.endsWith("/status")) {
+          return envelope({ working: true, task_id: "legacy-status-run" });
+        }
+        if (request.method === "POST" && path.endsWith("/messages")) {
+          return envelope({ task_id: "legacy-send-run" });
+        }
+        requestBodies.push(await request.json());
+        return envelope({ task_id: "legacy-cancellation" });
+      },
+    );
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      fetch,
+      socketFactory: createSocketFixture().factory,
+    });
+
+    await expect(
+      gateway.loadConversation({
+        conversationId: "42",
+        deadlineAt: deadline(),
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { run: { id: "legacy-status-run", canInterrupt: true } },
+    });
+    await expect(
+      gateway.sendText({
+        conversationId: "42",
+        text: "legacy response",
+        deadlineAt: deadline(),
+      }),
+    ).resolves.toEqual({ ok: true, value: { runId: "legacy-send-run" } });
+    await expect(
+      gateway.interrupt({
+        conversationId: "42",
+        runId: "legacy-send-run",
+        deadlineAt: deadline(),
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      value: {
+        cancellationId: "legacy-cancellation",
+        interruptedRunId: "legacy-send-run",
+      },
+    });
+    expect(requestBodies).toEqual([{ taskId: "legacy-send-run" }]);
+    await gateway.dispose({ deadlineAt: deadline() });
+  });
+
   it("invokes the browser global fetch with its required Window receiver", async () => {
     const browserFetch = vi.fn(function (this: typeof globalThis) {
       if (this !== globalThis) {
@@ -1844,6 +2293,757 @@ describe("TFRobotChatGateway REST boundary", () => {
       },
     });
     expect(JSON.stringify(result)).not.toContain(secret);
+  });
+});
+
+describe("TFRobotChatGateway current-server profile", () => {
+  const currentServerProfile = {
+    kind: "current-server" as const,
+    rebase: { deadlineMs: 1_000, maxItems: 10, maxPages: 2, pageSize: 5 },
+  };
+
+  it("preflights with the Socket session and treats an empty ACK as degraded", async () => {
+    const fixture = createCurrentServerFixture();
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      serverProfile: currentServerProfile,
+      sessionProvider: fixture.sessionProvider,
+      fetch: fixture.fetch,
+      socketFactory: fixture.socketFactory,
+    });
+
+    await expect(
+      gateway.subscribe(
+        { conversationId: "42", deadlineAt: deadline() },
+        { next: (update) => updates.push(update) },
+      ),
+    ).resolves.toMatchObject({ ok: true });
+
+    expect(fixture.sessionRequests).toHaveLength(1);
+    expect(fixture.requests).toHaveLength(2);
+    expect(
+      fixture.requests.every(
+        (request) => request.authorization === "Bearer fixture-session-token",
+      ),
+    ).toBe(true);
+    expect(fixture.socket.authentications).toEqual([
+      { token: "fixture-session-token" },
+    ]);
+    expect(
+      updates.filter((update) => update.kind === "lifecycle.changed").at(-1),
+    ).toMatchObject({
+      lifecycle: {
+        status: "degraded",
+        recovery: {
+          assurance: "best-effort",
+          complete: false,
+          reason: "initial-rest-preflight",
+          source: "rest-rebase",
+        },
+      },
+    });
+    expect(
+      updates.some(
+        (update) =>
+          update.kind === "lifecycle.changed" &&
+          update.lifecycle.status === "active",
+      ),
+    ).toBe(false);
+    gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it.each([
+    [401, "authentication"],
+    [403, "authorization"],
+    [404, "not-found"],
+  ] as const)(
+    "fails preflight closed for HTTP %i",
+    async (status, expectedCode) => {
+      const fixture = createCurrentServerFixture({
+        status: [new Response("failure", { status })],
+      });
+      const gateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        serverProfile: currentServerProfile,
+        sessionProvider: fixture.sessionProvider,
+        fetch: fixture.fetch,
+        socketFactory: fixture.socketFactory,
+      });
+
+      await expect(
+        gateway.subscribe(
+          { conversationId: "42", deadlineAt: deadline() },
+          { next: () => undefined },
+        ),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { code: expectedCode },
+      });
+      expect(() => fixture.socket).toThrow("Socket was not created");
+      gateway.dispose({ deadlineAt: deadline() });
+    },
+  );
+
+  it("fails preflight closed when REST history belongs to another conversation", async () => {
+    const fixture = createCurrentServerFixture({
+      history: [
+        {
+          messages: [{ ...messageDto, conversationId: 43 }],
+          events: [],
+          cursor: null,
+        },
+      ],
+    });
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      serverProfile: currentServerProfile,
+      sessionProvider: fixture.sessionProvider,
+      fetch: fixture.fetch,
+      socketFactory: fixture.socketFactory,
+    });
+
+    await expect(
+      gateway.subscribe(
+        { conversationId: "42", deadlineAt: deadline() },
+        { next: () => undefined },
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "validation" },
+    });
+    expect(() => fixture.socket).toThrow("Socket was not created");
+    gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("still fails closed for an explicit join rejection", async () => {
+    const fixture = createCurrentServerFixture({
+      acknowledgements: [{ statusCode: 403 }],
+    });
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      serverProfile: currentServerProfile,
+      sessionProvider: fixture.sessionProvider,
+      fetch: fixture.fetch,
+      socketFactory: fixture.socketFactory,
+    });
+
+    await expect(
+      gateway.subscribe(
+        { conversationId: "42", deadlineAt: deadline() },
+        { next: () => undefined },
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "authorization" },
+    });
+    expect(fixture.socket.connected).toBe(false);
+    expect(fixture.invalidations).toHaveLength(1);
+    gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("rebases persisted offline items to a checkpoint without duplicates", async () => {
+    const offlineMessage = {
+      ...messageDto,
+      msgId: "message-offline",
+      content: "Persisted while offline",
+      createTimestamp: 1_773_705_600_300,
+      role: "assistant",
+    };
+    const fixture = createCurrentServerFixture({
+      acknowledgements: [undefined, undefined],
+      history: [
+        { messages: [], events: [], cursor: null },
+        {
+          messages: [offlineMessage],
+          events: [eventDto],
+          cursor: "older-page",
+        },
+        { messages: [messageDto], events: [], cursor: null },
+      ],
+    });
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      serverProfile: currentServerProfile,
+      sessionProvider: fixture.sessionProvider,
+      fetch: fixture.fetch,
+      socketFactory: fixture.socketFactory,
+    });
+    const subscribed = await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    expect(subscribed.ok).toBe(true);
+    fixture.socket.trigger("chat_message", messageDto);
+    updates.length = 0;
+
+    fixture.socket.forceDisconnect();
+    fixture.socket.connect();
+
+    await vi.waitFor(() =>
+      expect(
+        updates.filter((update) => update.kind === "lifecycle.changed").at(-1),
+      ).toMatchObject({
+        lifecycle: {
+          status: "degraded",
+          recovery: {
+            assurance: "best-effort",
+            complete: false,
+            reason: "rest-rebase-reached-checkpoint",
+            source: "rest-rebase",
+          },
+        },
+      }),
+    );
+    expect(
+      updates.filter(
+        (update) =>
+          update.kind === "timeline.upsert" &&
+          update.item.kind === "message" &&
+          update.item.id === "message-1",
+      ),
+    ).toHaveLength(0);
+    expect(
+      updates.filter(
+        (update) =>
+          update.kind === "timeline.upsert" &&
+          update.item.kind === "message" &&
+          update.item.id === "message-offline",
+      ),
+    ).toHaveLength(1);
+    expect(
+      updates.filter((update) => update.kind === "event.transition.upsert"),
+    ).toHaveLength(1);
+    expect(fixture.sessionRequests).toHaveLength(2);
+    expect(fixture.requests).toHaveLength(5);
+    expect(new URL(fixture.requests[4]!.url).searchParams.get("cursor")).toBe(
+      "older-page",
+    );
+    gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("does not let an older REST item overwrite a newer realtime revision", async () => {
+    const historyResponse = deferred<Response>();
+    let rebaseHistoryStarted = false;
+    const oldMessage = {
+      ...messageDto,
+      content: "Older REST content",
+      createTimestamp: 1_773_705_600_200,
+    };
+    const realtimeMessage = {
+      ...messageDto,
+      content: "Newer realtime content",
+      createTimestamp: 1_773_705_600_400,
+    };
+    const fixture = createCurrentServerFixture({
+      acknowledgements: [undefined, undefined],
+      history: [
+        { messages: [], events: [], cursor: null },
+        () => {
+          rebaseHistoryStarted = true;
+          return historyResponse.promise;
+        },
+      ],
+    });
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      serverProfile: currentServerProfile,
+      sessionProvider: fixture.sessionProvider,
+      fetch: fixture.fetch,
+      socketFactory: fixture.socketFactory,
+    });
+    await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    updates.length = 0;
+    fixture.socket.forceDisconnect();
+    fixture.socket.connect();
+    await vi.waitFor(() => expect(rebaseHistoryStarted).toBe(true));
+    fixture.socket.trigger("chat_message", realtimeMessage);
+    historyResponse.resolve(
+      envelope({ messages: [oldMessage], events: [], cursor: null }),
+    );
+
+    await vi.waitFor(() =>
+      expect(
+        updates.filter((update) => update.kind === "lifecycle.changed").at(-1),
+      ).toMatchObject({ lifecycle: { status: "degraded" } }),
+    );
+    const messageUpdates = updates.filter(
+      (update) =>
+        update.kind === "timeline.upsert" &&
+        update.item.kind === "message" &&
+        update.item.id === "message-1",
+    );
+    expect(messageUpdates).toHaveLength(1);
+    expect(messageUpdates[0]).toMatchObject({
+      item: { content: { kind: "text", text: "Newer realtime content" } },
+    });
+    gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("does not turn ACK-buffered realtime into a rebase stop checkpoint", async () => {
+    const bufferedMessage = {
+      ...messageDto,
+      msgId: "message-buffered-after-reconnect",
+      content: "Realtime after reconnect",
+      createTimestamp: 1_773_705_600_500,
+      role: "assistant",
+    };
+    const offlineMessage = {
+      ...messageDto,
+      msgId: "message-older-offline",
+      content: "Older persisted offline message",
+      createTimestamp: 1_773_705_600_300,
+      role: "assistant",
+    };
+    const fixture = createCurrentServerFixture({
+      acknowledgements: [undefined, CURRENT_SERVER_HOLD_ACK],
+      history: [
+        { messages: [], events: [], cursor: null },
+        {
+          messages: [bufferedMessage, offlineMessage],
+          events: [],
+          cursor: null,
+        },
+      ],
+    });
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      serverProfile: currentServerProfile,
+      sessionProvider: fixture.sessionProvider,
+      fetch: fixture.fetch,
+      socketFactory: fixture.socketFactory,
+    });
+    await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    updates.length = 0;
+
+    fixture.socket.forceDisconnect();
+    fixture.socket.connect();
+    await vi.waitFor(() =>
+      expect(fixture.socket.pendingAcknowledgements).toHaveLength(1),
+    );
+    fixture.socket.trigger("chat_message", bufferedMessage);
+    fixture.socket.acknowledgeNext();
+
+    await vi.waitFor(() =>
+      expect(
+        updates.filter((update) => update.kind === "lifecycle.changed").at(-1),
+      ).toMatchObject({ lifecycle: { status: "degraded" } }),
+    );
+    expect(
+      updates.filter(
+        (update) =>
+          update.kind === "timeline.upsert" &&
+          update.item.id === "message-buffered-after-reconnect",
+      ),
+    ).toHaveLength(1);
+    expect(
+      updates.filter(
+        (update) =>
+          update.kind === "timeline.upsert" &&
+          update.item.id === "message-older-offline",
+      ),
+    ).toHaveLength(1);
+    gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("rejects foreign rebase data before checkpoint and identity bookkeeping", async () => {
+    const foreignTransition = {
+      ...eventDto,
+      conversationId: 43,
+      eventId: "shared-event",
+      transitionId: "shared-transition",
+      createTimestamp: 1_773_705_600_600,
+    };
+    const targetTransition = {
+      ...foreignTransition,
+      conversationId: 42,
+      createTimestamp: 1_773_705_600_400,
+    };
+    const offlineMessage = {
+      ...messageDto,
+      msgId: "message-after-foreign-page",
+      content: "Target history remains recoverable",
+      createTimestamp: 1_773_705_600_300,
+      role: "assistant",
+    };
+    const fixture = createCurrentServerFixture({
+      acknowledgements: [undefined, undefined, undefined],
+      history: [
+        { messages: [], events: [], cursor: null },
+        {
+          messages: [
+            {
+              ...messageDto,
+              conversationId: 43,
+              createTimestamp: 1_773_705_600_500,
+            },
+          ],
+          events: [foreignTransition],
+          cursor: null,
+        },
+        {
+          messages: [offlineMessage, messageDto],
+          events: [targetTransition],
+          cursor: null,
+        },
+      ],
+    });
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      serverProfile: currentServerProfile,
+      sessionProvider: fixture.sessionProvider,
+      fetch: fixture.fetch,
+      socketFactory: fixture.socketFactory,
+    });
+    await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    fixture.socket.trigger("chat_message", messageDto);
+    updates.length = 0;
+
+    fixture.socket.forceDisconnect();
+    fixture.socket.connect();
+    await vi.waitFor(() =>
+      expect(
+        updates.some(
+          (update) =>
+            update.kind === "error.reported" && update.source === "recovery",
+        ),
+      ).toBe(true),
+    );
+    expect(
+      updates.filter((update) => update.kind === "lifecycle.changed").at(-1),
+    ).toMatchObject({ lifecycle: { status: "recovering" } });
+    expect(
+      updates.some(
+        (update) =>
+          update.kind === "event.transition.upsert" &&
+          update.event.id === "shared-event",
+      ),
+    ).toBe(false);
+
+    updates.length = 0;
+    fixture.socket.forceDisconnect();
+    fixture.socket.connect();
+    await vi.waitFor(() =>
+      expect(
+        updates.filter((update) => update.kind === "lifecycle.changed").at(-1),
+      ).toMatchObject({
+        lifecycle: {
+          status: "degraded",
+          recovery: { reason: "rest-rebase-reached-checkpoint" },
+        },
+      }),
+    );
+    expect(
+      updates.filter(
+        (update) =>
+          update.kind === "event.transition.upsert" &&
+          update.event.id === "shared-event",
+      ),
+    ).toHaveLength(1);
+    expect(
+      updates.filter(
+        (update) =>
+          update.kind === "timeline.upsert" &&
+          update.item.id === "message-after-foreign-page",
+      ),
+    ).toHaveLength(1);
+    gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it.each([
+    [
+      { maxItems: 1, maxPages: 2, pageSize: 2 },
+      {
+        messages: [{ ...messageDto, msgId: "bounded-newest" }],
+        events: [],
+        cursor: "more-items",
+      },
+      "rest-rebase-max-items",
+    ],
+    [
+      { maxItems: 10, maxPages: 1, pageSize: 2 },
+      {
+        messages: [{ ...messageDto, msgId: "page-one-message" }],
+        events: [],
+        cursor: "page-two",
+      },
+      "rest-rebase-max-pages",
+    ],
+  ] as const)(
+    "reports a best-effort boundary when checkpoint search is bounded %#",
+    async (rebase, history, reason) => {
+      const fixture = createCurrentServerFixture({
+        acknowledgements: [undefined, undefined],
+        history: [{ messages: [], events: [], cursor: null }, history],
+      });
+      const updates: ChatUpdate[] = [];
+      const gateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        serverProfile: {
+          kind: "current-server",
+          rebase: { deadlineMs: 1_000, ...rebase },
+        },
+        sessionProvider: fixture.sessionProvider,
+        fetch: fixture.fetch,
+        socketFactory: fixture.socketFactory,
+      });
+      await gateway.subscribe(
+        { conversationId: "42", deadlineAt: deadline() },
+        { next: (update) => updates.push(update) },
+      );
+      updates.length = 0;
+      fixture.socket.forceDisconnect();
+      fixture.socket.connect();
+
+      await vi.waitFor(() =>
+        expect(
+          updates
+            .filter((update) => update.kind === "lifecycle.changed")
+            .at(-1),
+        ).toMatchObject({
+          lifecycle: {
+            status: "degraded",
+            recovery: { complete: false, reason },
+          },
+        }),
+      );
+      if (reason === "rest-rebase-max-items") {
+        expect(
+          updates.filter((update) => update.kind === "timeline.upsert"),
+        ).toHaveLength(1);
+      }
+      gateway.dispose({ deadlineAt: deadline() });
+    },
+  );
+
+  it("bounds recovery when a history cursor repeats", async () => {
+    const fixture = createCurrentServerFixture({
+      acknowledgements: [undefined, undefined],
+      history: [
+        { messages: [], events: [], cursor: null },
+        {
+          messages: [
+            {
+              ...messageDto,
+              msgId: "cursor-cycle-newer",
+              createTimestamp: 1_773_705_600_300,
+            },
+          ],
+          events: [],
+          cursor: "repeated-cursor",
+        },
+        {
+          messages: [
+            {
+              ...messageDto,
+              msgId: "cursor-cycle-older",
+              createTimestamp: 1_773_705_600_200,
+            },
+          ],
+          events: [],
+          cursor: "repeated-cursor",
+        },
+      ],
+    });
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      serverProfile: {
+        kind: "current-server",
+        rebase: { deadlineMs: 1_000, maxItems: 10, maxPages: 3, pageSize: 5 },
+      },
+      sessionProvider: fixture.sessionProvider,
+      fetch: fixture.fetch,
+      socketFactory: fixture.socketFactory,
+    });
+    await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    updates.length = 0;
+    fixture.socket.forceDisconnect();
+    fixture.socket.connect();
+
+    await vi.waitFor(() =>
+      expect(
+        updates.filter((update) => update.kind === "lifecycle.changed").at(-1),
+      ).toMatchObject({
+        lifecycle: {
+          status: "degraded",
+          recovery: { reason: "rest-rebase-cursor-cycle" },
+        },
+      }),
+    );
+    expect(
+      updates.filter((update) => update.kind === "timeline.upsert"),
+    ).toHaveLength(2);
+    expect(new URL(fixture.requests[4]!.url).searchParams.get("cursor")).toBe(
+      "repeated-cursor",
+    );
+    gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("keeps recovery non-operable when the REST rebase deadline expires", async () => {
+    const fixture = createCurrentServerFixture({
+      acknowledgements: [undefined, undefined],
+      history: [
+        { messages: [], events: [], cursor: null },
+        () => new Promise<Response>(() => undefined),
+      ],
+    });
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      serverProfile: {
+        kind: "current-server",
+        rebase: { deadlineMs: 10, maxItems: 10, maxPages: 2, pageSize: 5 },
+      },
+      sessionProvider: fixture.sessionProvider,
+      fetch: fixture.fetch,
+      socketFactory: fixture.socketFactory,
+    });
+    await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    updates.length = 0;
+    fixture.socket.forceDisconnect();
+    fixture.socket.connect();
+
+    await vi.waitFor(() =>
+      expect(
+        updates.some(
+          (update) =>
+            update.kind === "error.reported" && update.source === "recovery",
+        ),
+      ).toBe(true),
+    );
+    expect(
+      updates.filter((update) => update.kind === "lifecycle.changed").at(-1),
+    ).toMatchObject({ lifecycle: { status: "recovering" } });
+    gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("ignores a late rebase after a conversation switch", async () => {
+    const historyResponse = deferred<Response>();
+    let rebaseHistoryStarted = false;
+    const fixture = createCurrentServerFixture({
+      acknowledgements: [undefined, undefined],
+      history: [
+        { messages: [], events: [], cursor: null },
+        () => {
+          rebaseHistoryStarted = true;
+          return historyResponse.promise;
+        },
+        { messages: [], events: [], cursor: null },
+      ],
+    });
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      serverProfile: {
+        kind: "current-server",
+        rebase: { deadlineMs: 1_000, maxItems: 1, maxPages: 1, pageSize: 1 },
+      },
+      sessionProvider: fixture.sessionProvider,
+      fetch: fixture.fetch,
+      socketFactory: fixture.socketFactory,
+    });
+    const subscribed = await gateway.subscribe(
+      { conversationId: "42", deadlineAt: deadline() },
+      { next: (update) => updates.push(update) },
+    );
+    if (!subscribed.ok) throw new Error("Expected subscription to succeed");
+    updates.length = 0;
+    fixture.socket.forceDisconnect();
+    fixture.socket.connect();
+    await vi.waitFor(() => expect(rebaseHistoryStarted).toBe(true));
+    await subscribed.value.dispose({ deadlineAt: deadline() });
+    const switchedUpdates: ChatUpdate[] = [];
+    await expect(
+      gateway.subscribe(
+        { conversationId: "43", deadlineAt: deadline() },
+        { next: (update) => switchedUpdates.push(update) },
+      ),
+    ).resolves.toMatchObject({ ok: true });
+    historyResponse.resolve(
+      envelope({
+        messages: [{ ...messageDto, msgId: "late-message", role: "assistant" }],
+        events: [],
+        cursor: "bounded-cursor",
+      }),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(
+      updates.some(
+        (update) =>
+          update.kind === "timeline.upsert" &&
+          update.item.id === "late-message",
+      ),
+    ).toBe(false);
+    expect(
+      switchedUpdates
+        .filter((update) => update.kind === "lifecycle.changed")
+        .at(-1),
+    ).toMatchObject({ lifecycle: { status: "degraded" } });
+    expect(
+      updates.some(
+        (update) =>
+          update.kind === "lifecycle.changed" &&
+          update.lifecycle.status === "degraded",
+      ),
+    ).toBe(false);
+    gateway.dispose({ deadlineAt: deadline() });
+  });
+
+  it("validates bounded rebase configuration", () => {
+    expect(() =>
+      createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        serverProfile: {
+          kind: "current-server",
+          rebase: { maxPages: 0 },
+        },
+        sessionProvider: sessionProvider(),
+      }),
+    ).toThrow("maxPages must be a positive integer");
+    for (const serverProfile of [{}, { kind: "verfied" }]) {
+      expect(() =>
+        createTFRobotChatGateway({
+          baseUrl: "https://robot.example/",
+          messageCreatorProvider,
+          serverProfile: serverProfile as never,
+          sessionProvider: sessionProvider(),
+        }),
+      ).toThrow('serverProfile.kind must be "verified" or "current-server"');
+    }
   });
 });
 

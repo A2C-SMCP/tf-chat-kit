@@ -8,12 +8,16 @@ import {
   createConversationInputSchema,
   createConversationResultSchema,
   createGatewayDeadlineExceededError,
+  deleteConversationInputSchema,
+  deleteConversationResultSchema,
   interruptRunInputSchema,
   interruptRunResultSchema,
   isGatewayDeadlineExceeded,
   isGatewayOperationSupported,
   listConversationsInputSchema,
   loadConversationInputSchema,
+  renameConversationInputSchema,
+  renameConversationResultSchema,
   sendTextInputSchema,
   sendTextResultSchema,
   subscribeConversationInputSchema,
@@ -26,6 +30,8 @@ import {
   type Conversation,
   type ConversationPage,
   type CreateConversationInput,
+  type DeleteConversationInput,
+  type DeleteConversationSuccess,
   type GatewayObserver,
   type GatewayRequestOptions,
   type GatewayResult,
@@ -34,6 +40,7 @@ import {
   type InterruptRunSuccess,
   type ListConversationsInput,
   type LoadConversationInput,
+  type RenameConversationInput,
   type SendTextInput,
   type SendTextSuccess,
   type SubscribeConversationInput,
@@ -68,6 +75,10 @@ export type MemoryGatewayCall =
       readonly operation: "createConversation";
       readonly input: CreateConversationInput;
     }
+  | {
+      readonly operation: "deleteConversation";
+      readonly input: DeleteConversationInput;
+    }
   | { readonly operation: "interrupt"; readonly input: InterruptRunInput }
   | {
       readonly operation: "listConversations";
@@ -76,6 +87,10 @@ export type MemoryGatewayCall =
   | {
       readonly operation: "loadConversation";
       readonly input: LoadConversationInput;
+    }
+  | {
+      readonly operation: "renameConversation";
+      readonly input: RenameConversationInput;
     }
   | { readonly operation: "sendText"; readonly input: SendTextInput }
   | {
@@ -120,7 +135,12 @@ export interface MemoryGatewayHarness {
 }
 
 export type MemoryChatGatewayPort = ChatGateway &
-  Required<Pick<ChatGateway, "createConversation">>;
+  Required<
+    Pick<
+      ChatGateway,
+      "createConversation" | "deleteConversation" | "renameConversation"
+    >
+  >;
 
 interface ObserverRegistration {
   active: boolean;
@@ -503,6 +523,81 @@ class MemoryChatGateway implements ChatGateway {
     return createConversationResultSchema.parse({
       ok: true,
       value: conversation,
+    });
+  }
+
+  async renameConversation(
+    input: RenameConversationInput,
+  ): Promise<GatewayResult<Conversation>> {
+    const parsedInput = renameConversationInputSchema.parse(input);
+    this.#record({ operation: "renameConversation", input: parsedInput });
+    const guarded = this.#guard<Conversation>(
+      "renameConversation",
+      parsedInput,
+    );
+    if (guarded !== undefined) return guarded;
+    const held = await this.#waitForOperation(
+      "renameConversation",
+      parsedInput,
+    );
+    if (held?.failure !== undefined) return held.failure;
+    const settled = this.#settledGuard<Conversation>(parsedInput);
+    if (settled !== undefined) return settled;
+    const existing = this.#conversations.get(parsedInput.conversationId);
+    if (existing === undefined) return notFound(parsedInput.conversationId);
+    const conversation = {
+      ...existing,
+      title: parsedInput.title,
+      updatedAt: this.#clock.now(),
+    };
+    this.#conversations.set(conversation.id, conversation);
+    const snapshot = this.#snapshots.get(conversation.id);
+    if (snapshot !== undefined) {
+      this.#snapshots.set(
+        conversation.id,
+        chatSnapshotSchema.parse({ ...snapshot, conversation }),
+      );
+    }
+    return renameConversationResultSchema.parse({
+      ok: true,
+      value: conversation,
+    });
+  }
+
+  async deleteConversation(
+    input: DeleteConversationInput,
+  ): Promise<GatewayResult<DeleteConversationSuccess>> {
+    const parsedInput = deleteConversationInputSchema.parse(input);
+    this.#record({ operation: "deleteConversation", input: parsedInput });
+    const guarded = this.#guard<DeleteConversationSuccess>(
+      "deleteConversation",
+      parsedInput,
+    );
+    if (guarded !== undefined) return guarded;
+    const held = await this.#waitForOperation(
+      "deleteConversation",
+      parsedInput,
+    );
+    if (held?.failure !== undefined) return held.failure;
+    const settled = this.#settledGuard<DeleteConversationSuccess>(parsedInput);
+    if (settled !== undefined) return settled;
+    if (!this.#conversations.has(parsedInput.conversationId)) {
+      return notFound(parsedInput.conversationId);
+    }
+    this.#conversations.delete(parsedInput.conversationId);
+    this.#snapshots.delete(parsedInput.conversationId);
+    this.#conversationIds = this.#conversationIds.filter(
+      (conversationId) => conversationId !== parsedInput.conversationId,
+    );
+    for (const registration of [...this.#observers]) {
+      if (registration.conversationId !== parsedInput.conversationId) continue;
+      registration.active = false;
+      registration.transportSubscription?.dispose();
+      this.#observers.delete(registration);
+    }
+    return deleteConversationResultSchema.parse({
+      ok: true,
+      value: { deletedConversationId: parsedInput.conversationId },
     });
   }
 

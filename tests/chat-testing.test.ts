@@ -8,6 +8,7 @@ import {
   compareTimelineItems,
   getTimelineItemKey,
   hasCompatibleAgentEventMetadata,
+  isChatLifecycleOperable,
   type AgentEvent,
   type ChatError,
   type ChatGateway,
@@ -88,12 +89,34 @@ class ReferenceRuntimeAdapter implements RuntimeContractAdapter {
   }
 
   sendText(input: SendTextInput): Promise<GatewayResult<SendTextSuccess>> {
+    if (!isChatLifecycleOperable(this.#snapshot?.lifecycle)) {
+      return Promise.resolve({
+        ok: false,
+        error: {
+          code: "conflict",
+          message: "Chat transport is not ready for commands",
+          retryable: true,
+          conversationId: input.conversationId,
+        },
+      });
+    }
     return this.#gateway.sendText(input);
   }
 
   interrupt(
     input: InterruptRunInput,
   ): Promise<GatewayResult<InterruptRunSuccess>> {
+    if (!isChatLifecycleOperable(this.#snapshot?.lifecycle)) {
+      return Promise.resolve({
+        ok: false,
+        error: {
+          code: "conflict",
+          message: "Chat transport is not ready for commands",
+          retryable: true,
+          conversationId: input.conversationId,
+        },
+      });
+    }
     const runId = input.runId ?? this.#snapshot?.run?.id;
     return this.#gateway.interrupt(
       runId === undefined ? input : { ...input, runId },
@@ -262,6 +285,14 @@ class ReferenceRuntimeAdapter implements RuntimeContractAdapter {
           this.#snapshot = chatSnapshotSchema.parse({
             ...this.#snapshot,
             capabilities: update.capabilities,
+          });
+        }
+        break;
+      case "lifecycle.changed":
+        if (this.#snapshot !== null) {
+          this.#snapshot = chatSnapshotSchema.parse({
+            ...this.#snapshot,
+            lifecycle: update.lifecycle,
           });
         }
         break;
@@ -621,6 +652,32 @@ describe("Memory ChatGateway", () => {
         deadlineAt: memory.controller.now() + 1_000,
       }),
     ).resolves.toMatchObject({ ok: true, value: { timeline: [] } });
+
+    await expect(
+      memory.gateway.renameConversation({
+        conversationId: second.id,
+        deadlineAt: memory.controller.now() + 1_000,
+        title: "Renamed second conversation",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { id: second.id, title: "Renamed second conversation" },
+    });
+    await expect(
+      memory.gateway.deleteConversation({
+        conversationId: second.id,
+        deadlineAt: memory.controller.now() + 1_000,
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { deletedConversationId: second.id },
+    });
+    await expect(
+      memory.gateway.loadConversation({
+        conversationId: second.id,
+        deadlineAt: memory.controller.now() + 1_000,
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "not-found" } });
   });
 
   it("preserves exact scripted pages and reserves their conversation ids", async () => {

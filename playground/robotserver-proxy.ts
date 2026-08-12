@@ -16,6 +16,7 @@ const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const UPSTREAM_TIMEOUT_MS = 15_000;
 const ROUTING_SEGMENT = /^[a-z0-9-]+$/u;
 const CHAT_PATH = /^\/v1\/chat(?:\/|$)/u;
+const CONVERSATION_ITEM_PATH = /^\/v1\/chat\/conversations\/[^/]+$/u;
 const LOGIN_PATH = "/v1/auth/login";
 
 interface ProxyTarget {
@@ -285,7 +286,7 @@ const proxyRequest = async (
   let body: Uint8Array | undefined;
   try {
     body =
-      request.method === "POST"
+      request.method === "PATCH" || request.method === "POST"
         ? await readBody(
             request,
             target.kind === "login"
@@ -422,7 +423,10 @@ export const createRobotServerProxyPlugin = (
       const methodAllowed =
         target.kind === "login"
           ? request.method === "POST"
-          : request.method === "GET" || request.method === "POST";
+          : request.method === "GET" ||
+            request.method === "POST" ||
+            ((request.method === "DELETE" || request.method === "PATCH") &&
+              CONVERSATION_ITEM_PATH.test(target.upstreamUrl.pathname));
       if (!methodAllowed) {
         sendJson(response, 405, "该 RobotServer 代理请求方法不受支持。");
         return;

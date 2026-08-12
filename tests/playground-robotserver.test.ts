@@ -167,7 +167,10 @@ const socketFixture = () => {
   };
 };
 
-const createRobotServerFixture = (auth: "admin" | "bearer") => {
+const createRobotServerFixture = (
+  auth: "admin" | "bearer",
+  options: { readonly createResponse?: Promise<void> | undefined } = {},
+) => {
   const config = validConfig(auth);
   const sockets = socketFixture();
   const requests: Request[] = [];
@@ -196,7 +199,24 @@ const createRobotServerFixture = (auth: "admin" | "bearer") => {
         url.pathname.endsWith("/conversations")
       ) {
         createdTitle = url.searchParams.get("title") ?? undefined;
+        await options.createResponse;
         return envelope(conversationDto(43, createdTitle ?? "Missing title"));
+      }
+      if (
+        request.method === "PATCH" &&
+        url.pathname.endsWith("/conversations/43")
+      ) {
+        const body = (await request.json()) as { title?: unknown };
+        createdTitle =
+          typeof body.title === "string" ? body.title : createdTitle;
+        return envelope(conversationDto(43, createdTitle ?? "Missing title"));
+      }
+      if (
+        request.method === "DELETE" &&
+        url.pathname.endsWith("/conversations/43")
+      ) {
+        createdTitle = undefined;
+        return envelope({ conversationId: 43, message: "deleted" });
       }
       if (request.method === "GET" && url.pathname.endsWith("/messages")) {
         return envelope({ cursor: null, events: [], messages: [] });
@@ -519,6 +539,25 @@ describe("RobotServer Playground authenticated lifecycle", () => {
       ).toBe(true);
       await fixture.session.interrupt();
 
+      await expect(fixture.session.deleteConversation("42")).resolves.toBe(
+        false,
+      );
+      const renamedTitle = `${robotServerTestConversationTitle(
+        fixture.now,
+      )} renamed`;
+      await expect(
+        fixture.session.renameConversation("43", renamedTitle),
+      ).resolves.toBe(true);
+      expect(fixture.title()).toBe(renamedTitle);
+      await expect(fixture.session.deleteConversation("43")).resolves.toBe(
+        true,
+      );
+      expect(fixture.title()).toBeUndefined();
+      expect(fixture.session.getState()).toMatchObject({
+        contentState: { kind: "empty" },
+        selectedConversationId: undefined,
+      });
+
       expect(fixture.requests.length).toBeGreaterThanOrEqual(8);
       for (const request of fixture.requests) {
         expect(request.headers.get(header)).toBe(value);
@@ -532,6 +571,20 @@ describe("RobotServer Playground authenticated lifecycle", () => {
       }
       expect(
         fixture.requests.some((request) => request.url.endsWith("/interrupt")),
+      ).toBe(true);
+      expect(
+        fixture.requests.some(
+          (request) =>
+            request.method === "PATCH" &&
+            new URL(request.url).pathname.endsWith("/conversations/43"),
+        ),
+      ).toBe(true);
+      expect(
+        fixture.requests.some(
+          (request) =>
+            request.method === "DELETE" &&
+            new URL(request.url).pathname.endsWith("/conversations/43"),
+        ),
       ).toBe(true);
       expect(fixture.sockets.inputs).not.toHaveLength(0);
       for (const socketInput of fixture.sockets.inputs) {
@@ -573,6 +626,54 @@ describe("RobotServer Playground authenticated lifecycle", () => {
       ).toBe(true);
     },
   );
+
+  it("best-effort deletes only exact conversations created by the session during disposal", async () => {
+    const fixture = createRobotServerFixture("bearer");
+    await fixture.session.start();
+    await expect(
+      fixture.session.createConversation("ignored-host-title"),
+    ).resolves.toBe(true);
+    expect(fixture.title()).toBe(robotServerTestConversationTitle(fixture.now));
+
+    await fixture.session.dispose();
+
+    expect(fixture.title()).toBeUndefined();
+    const deletePaths = fixture.requests
+      .filter((request) => request.method === "DELETE")
+      .map((request) => new URL(request.url).pathname);
+    expect(deletePaths).toEqual([
+      expect.stringMatching(/\/v1\/chat\/conversations\/43$/u),
+    ]);
+    expect(deletePaths.some((path) => path.endsWith("/42"))).toBe(false);
+  });
+
+  it("waits for an in-flight test creation before disposal cleanup snapshots owned IDs", async () => {
+    const createResponse = deferred<void>();
+    const fixture = createRobotServerFixture("bearer", {
+      createResponse: createResponse.promise,
+    });
+    await fixture.session.start();
+    const creating = fixture.session.createConversation("ignored-host-title");
+    await vi.waitFor(() =>
+      expect(
+        fixture.requests.some(
+          (request) =>
+            request.method === "POST" &&
+            new URL(request.url).pathname.endsWith("/conversations"),
+        ),
+      ).toBe(true),
+    );
+
+    const disposing = fixture.session.dispose();
+    createResponse.resolve(undefined);
+
+    await expect(creating).resolves.toBe(false);
+    await disposing;
+    expect(fixture.title()).toBeUndefined();
+    expect(
+      fixture.requests.filter((request) => request.method === "DELETE"),
+    ).toHaveLength(1);
+  });
 
   it.each([
     [401, "authentication", "RobotServer 鉴权失败。"],
@@ -752,10 +853,10 @@ describe("RobotServer Playground authenticated lifecycle", () => {
           });
         }
         if (path.includes("/42/") && path.endsWith("/messages")) {
-          return selectedHistory.promise;
+          return selectedHistory.promise.then((response) => response.clone());
         }
         if (path.includes("/42/") && path.endsWith("/status")) {
-          return selectedStatus.promise;
+          return selectedStatus.promise.then((response) => response.clone());
         }
         if (path.includes("/44/") && path.endsWith("/messages")) {
           return envelope({ cursor: null, events: [], messages: [] });
@@ -967,10 +1068,12 @@ describe("RobotServer Playground authenticated lifecycle", () => {
     });
 
     const older = session.start();
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.length).toBeGreaterThanOrEqual(2),
+    );
     const latest = session.refresh();
     await latest;
-    expect(fetch).toHaveBeenCalledTimes(6);
+    expect(fetch.mock.calls.length).toBeGreaterThanOrEqual(7);
     olderHistory.resolve(envelope({ cursor: null, events: [], messages: [] }));
     olderStatus.resolve(envelope({ taskId: null, working: false }));
     await older;

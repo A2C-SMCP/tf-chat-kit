@@ -19,6 +19,10 @@ export const defaultChatUiLabels: ChatUiLabels = Object.freeze({
   createConversationConfirm: "Create",
   createConversationTitleLabel: "Conversation title",
   createConversationTitlePlaceholder: "Enter a conversation title",
+  deleteConversation: "Delete conversation",
+  deleteConversationCancel: "Cancel",
+  deleteConversationConfirm: "Delete",
+  deleteConversationPrompt: "Delete this conversation permanently?",
   disconnectedDescription:
     "Live updates are unavailable. Check the connection and try again.",
   disconnectedTitle: "Disconnected",
@@ -40,6 +44,8 @@ export const defaultChatUiLabels: ChatUiLabels = Object.freeze({
   interrupting: "Stopping",
   jumpToLatest: "Jump to latest",
   loadMoreConversations: "Load more conversations",
+  renameConversation: "Rename conversation",
+  renameConversationConfirm: "Rename",
   loadingDescription: "The conversation is being prepared.",
   loadingTitle: "Loading conversation",
   newMessages: "new messages",
@@ -59,6 +65,8 @@ export const defaultChatUiLabels: ChatUiLabels = Object.freeze({
     connecting: "Connecting…",
     joining: "Joining conversation…",
     active: "Connected",
+    degraded:
+      "Connected with best-effort recovery; transient updates may be missing.",
     reconnecting: "Connection lost. Reconnecting…",
     recovering: "Reconnected. Recovering missed updates…",
     "auth-required": "Sign in again to continue.",

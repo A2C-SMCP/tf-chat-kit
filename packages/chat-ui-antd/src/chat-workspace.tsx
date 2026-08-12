@@ -30,6 +30,10 @@ type ConversationWorkspaceSnapshot = ConversationWorkspaceBinding["snapshot"];
 export interface ChatWorkspaceProps {
   /** Shows a managed creation dialog. Defaults to false. */
   readonly allowCreate?: boolean | undefined;
+  /** Shows per-conversation deletion with confirmation. Defaults to false. */
+  readonly allowDelete?: boolean | undefined;
+  /** Shows per-conversation title editing. Defaults to false. */
+  readonly allowRename?: boolean | undefined;
   readonly className?: string | undefined;
   readonly conversationViewProps?:
     Omit<ChatConversationViewProps, "getDeadlineAt" | "labels"> | undefined;
@@ -84,6 +88,8 @@ const contentStateFor = (
 /** A managed conversation workspace; hosts only inject a ChatClient and policy. */
 export const ChatWorkspace = ({
   allowCreate = false,
+  allowDelete = false,
+  allowRename = false,
   className,
   conversationViewProps,
   formatConversationUpdatedAt,
@@ -107,10 +113,26 @@ export const ChatWorkspace = ({
     pageSize,
   });
   const [createOpen, setCreateOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<
+    ConversationWorkspaceSnapshot["conversations"][number] | undefined
+  >();
+  const [deleteError, setDeleteError] =
+    useState<ConversationWorkspaceSnapshot["conversationMutationError"]>();
+  const [renameTarget, setRenameTarget] = useState<
+    ConversationWorkspaceSnapshot["conversations"][number] | undefined
+  >();
+  const [renameError, setRenameError] =
+    useState<ConversationWorkspaceSnapshot["conversationMutationError"]>();
+  const [renameTitle, setRenameTitle] = useState("");
   const [title, setTitle] = useState("");
 
   useEffect(() => {
     setCreateOpen(false);
+    setDeleteError(undefined);
+    setDeleteTarget(undefined);
+    setRenameError(undefined);
+    setRenameTarget(undefined);
+    setRenameTitle("");
     setTitle("");
   }, [workspace.controller]);
 
@@ -146,6 +168,32 @@ export const ChatWorkspace = ({
       setTitle("");
     }
   }, [title, workspace]);
+  const rename = useCallback(async () => {
+    const normalizedTitle = renameTitle.trim();
+    if (renameTarget === undefined || normalizedTitle.length === 0) return;
+    const result = await workspace.renameConversation({
+      conversationId: renameTarget.id,
+      title: normalizedTitle,
+    });
+    if (result?.ok === true) {
+      setRenameTarget(undefined);
+      setRenameTitle("");
+    } else if (result?.ok === false) {
+      setRenameError(result.error);
+    }
+  }, [renameTarget, renameTitle, workspace]);
+  const deleteConversation = useCallback(async () => {
+    if (deleteTarget === undefined) return;
+    const result = await workspace.deleteConversation(deleteTarget.id);
+    if (result?.ok === true) setDeleteTarget(undefined);
+    else if (result?.ok === false) setDeleteError(result.error);
+  }, [deleteTarget, workspace]);
+  const deletingTarget =
+    deleteTarget !== undefined &&
+    workspace.snapshot.deletingConversationIds.includes(deleteTarget.id);
+  const renamingTarget =
+    renameTarget !== undefined &&
+    workspace.snapshot.renamingConversationIds.includes(renameTarget.id);
 
   const resolvedSidebarTitle = allowCreate ? (
     <Space
@@ -189,6 +237,29 @@ export const ChatWorkspace = ({
         formatConversationUpdatedAt={formatConversationUpdatedAt}
         header={header}
         labels={labels}
+        mutatingConversationIds={[
+          ...workspace.snapshot.deletingConversationIds,
+          ...workspace.snapshot.renamingConversationIds,
+        ]}
+        onConversationDelete={
+          allowDelete
+            ? (conversation) => {
+                setDeleteError(undefined);
+                setRenameTarget(undefined);
+                setDeleteTarget(conversation);
+              }
+            : undefined
+        }
+        onConversationRename={
+          allowRename
+            ? (conversation) => {
+                setDeleteTarget(undefined);
+                setRenameError(undefined);
+                setRenameTarget(conversation);
+                setRenameTitle(conversation.title);
+              }
+            : undefined
+        }
         onConversationSelect={(conversationId) => {
           void workspace.selectConversation(conversationId);
         }}
@@ -257,6 +328,73 @@ export const ChatWorkspace = ({
               value={title}
             />
           </label>
+        </Space>
+      </Modal>
+      <Modal
+        cancelButtonProps={{ disabled: deletingTarget }}
+        cancelText={labels.deleteConversationCancel ?? "Cancel"}
+        closable={!deletingTarget}
+        confirmLoading={deletingTarget}
+        okButtonProps={{ danger: true }}
+        okText={labels.deleteConversationConfirm ?? "Delete"}
+        keyboard={!deletingTarget}
+        maskClosable={!deletingTarget}
+        onCancel={() => {
+          setDeleteError(undefined);
+          setDeleteTarget(undefined);
+        }}
+        onOk={() => void deleteConversation()}
+        open={deleteTarget !== undefined}
+        title={labels.deleteConversation ?? "Delete conversation"}
+      >
+        <Space direction="vertical" style={{ width: "100%" }}>
+          <Typography.Text>
+            {labels.deleteConversationPrompt ??
+              "Delete this conversation permanently?"}
+          </Typography.Text>
+          {deleteError === undefined ? null : (
+            <Alert
+              message={deleteError.message}
+              role="alert"
+              showIcon
+              type="error"
+            />
+          )}
+        </Space>
+      </Modal>
+      <Modal
+        cancelButtonProps={{ disabled: renamingTarget }}
+        closable={!renamingTarget}
+        confirmLoading={renamingTarget}
+        okButtonProps={{ disabled: renameTitle.trim().length === 0 }}
+        okText={labels.renameConversationConfirm ?? "Rename"}
+        keyboard={!renamingTarget}
+        maskClosable={!renamingTarget}
+        onCancel={() => {
+          setRenameError(undefined);
+          setRenameTarget(undefined);
+          setRenameTitle("");
+        }}
+        onOk={() => void rename()}
+        open={renameTarget !== undefined}
+        title={labels.renameConversation ?? "Rename conversation"}
+      >
+        <Space direction="vertical" style={{ width: "100%" }}>
+          {renameError === undefined ? null : (
+            <Alert
+              message={renameError.message}
+              role="alert"
+              showIcon
+              type="error"
+            />
+          )}
+          <Input
+            aria-label={labels.createConversationTitleLabel}
+            autoFocus
+            onChange={(event) => setRenameTitle(event.target.value)}
+            onPressEnter={() => void rename()}
+            value={renameTitle}
+          />
         </Space>
       </Modal>
     </>

@@ -17,16 +17,21 @@ import {
   createConversationInputSchema,
   createConversationResultSchema,
   createGatewayDeadlineExceededError,
+  deleteConversationInputSchema,
+  deleteConversationResultSchema,
   getTimelineItemKey,
   gatewayRequestOptionsSchema,
   hasCompatibleAgentEventMetadata,
   interruptRunResultSchema,
   interruptRunInputSchema,
+  isChatLifecycleOperable,
   isGatewayDeadlineExceeded,
   isGatewayOperationSupported,
   listConversationsInputSchema,
   loadConversationInputSchema,
   messageSchema,
+  renameConversationInputSchema,
+  renameConversationResultSchema,
   sanitizeRaw,
   sendTextInputSchema,
   sendTextResultSchema,
@@ -1018,6 +1023,49 @@ describe("normalized protocol schemas", () => {
         errorId: "missing-source-and-scope",
       }).success,
     ).toBe(false);
+    const degraded = chatUpdateSchema.safeParse({
+      kind: "lifecycle.changed",
+      conversationId: conversation.id,
+      lifecycle: {
+        status: "degraded",
+        reconnectAttempt: 1,
+        recovery: {
+          assurance: "best-effort",
+          complete: false,
+          source: "rest-rebase",
+        },
+      },
+    });
+    expect(degraded.success).toBe(true);
+    expect(
+      degraded.success && degraded.data.kind === "lifecycle.changed"
+        ? isChatLifecycleOperable(degraded.data.lifecycle)
+        : false,
+    ).toBe(true);
+    expect(
+      chatUpdateSchema.safeParse({
+        kind: "lifecycle.changed",
+        conversationId: conversation.id,
+        lifecycle: {
+          status: "degraded",
+          recovery: { complete: false },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      chatUpdateSchema.safeParse({
+        kind: "lifecycle.changed",
+        conversationId: conversation.id,
+        lifecycle: {
+          status: "recovering",
+          recovery: {
+            assurance: "best-effort",
+            complete: false,
+            source: "rest-rebase",
+          },
+        },
+      }).success,
+    ).toBe(false);
     expect(
       chatUpdateSchema.safeParse({
         kind: "error.reported",
@@ -1468,10 +1516,53 @@ describe("Gateway and SessionProvider public contract", () => {
     ).toEqual({ ok: true, value: conversation });
   });
 
+  it("validates host-independent conversation rename and deletion contracts", () => {
+    expect(
+      renameConversationInputSchema.parse({
+        conversationId: conversation.id,
+        deadlineAt: requestDeadlineAt,
+        title: "  Renamed conversation  ",
+      }),
+    ).toEqual({
+      conversationId: conversation.id,
+      deadlineAt: requestDeadlineAt,
+      title: "Renamed conversation",
+    });
+    expect(
+      renameConversationResultSchema.parse({
+        ok: true,
+        value: { ...conversation, title: "Renamed conversation" },
+      }),
+    ).toMatchObject({ ok: true, value: { id: conversation.id } });
+    expect(
+      deleteConversationInputSchema.parse({
+        conversationId: conversation.id,
+        deadlineAt: requestDeadlineAt,
+      }),
+    ).toEqual({
+      conversationId: conversation.id,
+      deadlineAt: requestDeadlineAt,
+    });
+    expect(
+      deleteConversationResultSchema.parse({
+        ok: true,
+        value: { deletedConversationId: conversation.id },
+      }),
+    ).toEqual({
+      ok: true,
+      value: { deletedConversationId: conversation.id },
+    });
+  });
+
   it("requires deadlines for every asynchronous Gateway input", () => {
     const cases = [
       [listConversationsInputSchema, {}],
       [createConversationInputSchema, { title: "New conversation" }],
+      [
+        renameConversationInputSchema,
+        { conversationId: conversation.id, title: "Renamed" },
+      ],
+      [deleteConversationInputSchema, { conversationId: conversation.id }],
       [gatewayRequestOptionsSchema, {}],
       [loadConversationInputSchema, { conversationId: conversation.id }],
       [subscribeConversationInputSchema, { conversationId: conversation.id }],

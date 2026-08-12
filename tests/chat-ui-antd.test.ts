@@ -31,6 +31,15 @@ const findButtonByText = (
   return button;
 };
 
+const findElementByText = (text: string): HTMLElement => {
+  const element = [...document.body.querySelectorAll<HTMLElement>("*")].find(
+    (candidate) =>
+      candidate.children.length === 0 && candidate.textContent?.trim() === text,
+  );
+  if (element === undefined) throw new Error(`Element not found: ${text}`);
+  return element;
+};
+
 interface DomRender {
   readonly container: HTMLDivElement;
   readonly root: Root;
@@ -135,6 +144,104 @@ describe("@turingfocus/chat-ui-antd shell", () => {
     }
   });
 
+  it("offers opt-in rename and confirmed deletion actions", async () => {
+    const memory = createMemoryChatGateway();
+    const client = createChatClient({ gateway: memory.gateway });
+    const rendered = await renderInDom(
+      createElement(
+        ChatProvider,
+        { client },
+        createElement(ChatWorkspace, {
+          allowDelete: true,
+          allowRename: true,
+          getDeadlineAt: deadlineAt,
+        }),
+      ),
+    );
+
+    try {
+      await act(async () => {
+        await flushMicrotasks();
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      });
+      const originalTitle = memory.fixtures.conversation.title;
+      await act(async () => {
+        rendered.container
+          .querySelector<HTMLButtonElement>(
+            `button[aria-label="${originalTitle} actions"]`,
+          )
+          ?.click();
+        await flushMicrotasks();
+      });
+      await act(async () => {
+        findElementByText("Rename conversation").click();
+        await flushMicrotasks();
+      });
+      const renameInput = document.body.querySelector<HTMLInputElement>(
+        'input[aria-label="Conversation title"]',
+      );
+      if (renameInput === null) throw new Error("Rename input not found");
+      await act(async () => {
+        const valueSetter = Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          "value",
+        )?.set;
+        valueSetter?.call(renameInput, "Renamed in workspace");
+        renameInput.dispatchEvent(new Event("input", { bubbles: true }));
+        await flushMicrotasks();
+      });
+      const renameDialog =
+        document.body.querySelector<HTMLElement>('[role="dialog"]');
+      if (renameDialog === null) throw new Error("Rename dialog not found");
+      await act(async () => {
+        findButtonByText(renameDialog, "Rename").click();
+        await flushMicrotasks();
+      });
+      expect(rendered.container.textContent).toContain("Renamed in workspace");
+
+      await act(async () => {
+        rendered.container
+          .querySelector<HTMLButtonElement>(
+            'button[aria-label="Renamed in workspace actions"]',
+          )
+          ?.click();
+        await flushMicrotasks();
+      });
+      await act(async () => {
+        findElementByText("Delete conversation").click();
+        await flushMicrotasks();
+      });
+      const deleteDialog = [
+        ...document.body.querySelectorAll<HTMLElement>('[role="dialog"]'),
+      ].find((dialog) => dialog.textContent?.includes("Delete conversation"));
+      if (deleteDialog === undefined)
+        throw new Error("Delete dialog not found");
+      expect(deleteDialog.textContent).toContain(
+        "Delete this conversation permanently?",
+      );
+      await act(async () => {
+        findButtonByText(deleteDialog, "Delete").click();
+        await flushMicrotasks();
+      });
+      expect(rendered.container.textContent).not.toContain(
+        "Renamed in workspace",
+      );
+      expect(
+        memory.controller.calls.filter(
+          ({ operation }) => operation === "renameConversation",
+        ),
+      ).toHaveLength(1);
+      expect(
+        memory.controller.calls.filter(
+          ({ operation }) => operation === "deleteConversation",
+        ),
+      ).toHaveLength(1);
+    } finally {
+      await rendered.unmount();
+      await client.dispose({ deadlineAt: deadlineAt() });
+    }
+  });
+
   it("keeps the timeline visible and gates commands during recovery", async () => {
     const memory = createMemoryChatGateway();
     const client = createChatClient({ gateway: memory.gateway });
@@ -175,6 +282,28 @@ describe("@turingfocus/chat-ui-antd shell", () => {
         'textarea[aria-label="Message"]',
       );
       expect(composer?.disabled).toBe(true);
+
+      await act(async () => {
+        memory.controller.emitUpdateToAll({
+          kind: "lifecycle.changed",
+          conversationId,
+          lifecycle: {
+            status: "degraded",
+            generation: 2,
+            subscriptionId: "subscription-2",
+            recovery: {
+              assurance: "best-effort",
+              complete: false,
+              source: "rest-rebase",
+            },
+          },
+        });
+        await flushMicrotasks();
+      });
+      expect(rendered.container.textContent).toContain(
+        "Connected with best-effort recovery",
+      );
+      expect(composer?.disabled).toBe(false);
 
       await act(async () => {
         memory.controller.emitUpdateToAll({

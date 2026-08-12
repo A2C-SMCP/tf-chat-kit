@@ -1,4 +1,13 @@
-import { Alert, Button, Empty, Spin, Typography, theme } from "antd";
+import {
+  Alert,
+  Button,
+  Dropdown,
+  Empty,
+  Spin,
+  Typography,
+  theme,
+  type MenuProps,
+} from "antd";
 import type { CSSProperties } from "react";
 import { Virtuoso } from "react-virtuoso";
 
@@ -22,6 +31,9 @@ export interface ChatConversationListProps {
   readonly items: readonly ChatConversationListItem[];
   readonly labels?: ChatUiLabelOverrides | undefined;
   readonly loading?: boolean | undefined;
+  readonly mutatingConversationIds?: readonly string[] | undefined;
+  readonly onDelete?: ((item: ChatConversationListItem) => void) | undefined;
+  readonly onRename?: ((item: ChatConversationListItem) => void) | undefined;
   readonly onSelect: (conversationId: string) => void;
   readonly pendingConversationId?: string | undefined;
   readonly selectedConversationId?: string | undefined;
@@ -46,6 +58,9 @@ export const ChatConversationList = ({
   items,
   labels: labelOverrides,
   loading = false,
+  mutatingConversationIds = [],
+  onDelete,
+  onRename,
   onSelect,
   pendingConversationId,
   selectedConversationId,
@@ -124,6 +139,7 @@ export const ChatConversationList = ({
           itemContent={(_index, item) => {
             const selected = item.id === selectedConversationId;
             const pending = item.id === pendingConversationId;
+            const mutating = mutatingConversationIds.includes(item.id);
             const updatedAt =
               item.updatedAt === undefined
                 ? undefined
@@ -136,67 +152,120 @@ export const ChatConversationList = ({
                   padding: `${token.paddingXXS}px ${token.paddingXS}px`,
                 }}
               >
-                <Button
-                  aria-current={selected ? "true" : undefined}
-                  block
-                  disabled={item.disabled === true || loading}
-                  loading={pending}
-                  onClick={() => {
-                    onSelect(item.id);
-                  }}
+                <div
                   style={{
-                    background: selected ? token.colorPrimaryBg : undefined,
-                    height: "auto",
-                    minHeight: 48,
-                    padding: `${token.paddingXS}px ${token.paddingSM}px`,
-                    textAlign: "start",
+                    alignItems: "center",
+                    display: "flex",
+                    gap: token.marginXXS,
                   }}
-                  type="text"
                 >
-                  <span
-                    style={{
-                      alignItems: "center",
-                      display: "flex",
-                      gap: token.marginXS,
-                      justifyContent: "space-between",
-                      minWidth: 0,
-                      width: "100%",
+                  <Button
+                    aria-current={selected ? "true" : undefined}
+                    block
+                    disabled={item.disabled === true || loading || mutating}
+                    loading={pending}
+                    onClick={() => {
+                      onSelect(item.id);
                     }}
+                    style={{
+                      background: selected ? token.colorPrimaryBg : undefined,
+                      height: "auto",
+                      minHeight: 48,
+                      padding: `${token.paddingXS}px ${token.paddingSM}px`,
+                      textAlign: "start",
+                    }}
+                    type="text"
                   >
-                    <span style={{ minWidth: 0 }}>
-                      <Typography.Text
-                        ellipsis
-                        strong={selected}
-                        style={{ display: "block" }}
-                      >
-                        {item.title}
-                      </Typography.Text>
-                      {item.description === undefined ? null : (
+                    <span
+                      style={{
+                        alignItems: "center",
+                        display: "flex",
+                        gap: token.marginXS,
+                        justifyContent: "space-between",
+                        minWidth: 0,
+                        width: "100%",
+                      }}
+                    >
+                      <span style={{ minWidth: 0 }}>
                         <Typography.Text
                           ellipsis
+                          strong={selected}
+                          style={{ display: "block" }}
+                        >
+                          {item.title}
+                        </Typography.Text>
+                        {item.description === undefined ? null : (
+                          <Typography.Text
+                            ellipsis
+                            style={{
+                              display: "block",
+                              fontSize: token.fontSizeSM,
+                            }}
+                            type="secondary"
+                          >
+                            {item.description}
+                          </Typography.Text>
+                        )}
+                      </span>
+                      {updatedAt === undefined ? null : (
+                        <Typography.Text
                           style={{
-                            display: "block",
+                            flex: "0 0 auto",
                             fontSize: token.fontSizeSM,
                           }}
                           type="secondary"
                         >
-                          {item.description}
+                          {updatedAt}
                         </Typography.Text>
                       )}
                     </span>
-                    {updatedAt === undefined ? null : (
-                      <Typography.Text
-                        style={{
-                          flex: "0 0 auto",
-                          fontSize: token.fontSizeSM,
-                        }}
-                        type="secondary"
+                  </Button>
+                  {onRename === undefined && onDelete === undefined ? null : (
+                    <Dropdown
+                      menu={
+                        {
+                          items: [
+                            ...(onRename === undefined
+                              ? []
+                              : [
+                                  {
+                                    key: "rename",
+                                    label:
+                                      labels.renameConversation ??
+                                      "Rename conversation",
+                                  },
+                                ]),
+                            ...(onDelete === undefined
+                              ? []
+                              : [
+                                  {
+                                    danger: true,
+                                    key: "delete",
+                                    label:
+                                      labels.deleteConversation ??
+                                      "Delete conversation",
+                                  },
+                                ]),
+                          ],
+                          onClick: ({ key }) => {
+                            if (key === "rename") onRename?.(item);
+                            if (key === "delete") onDelete?.(item);
+                          },
+                        } satisfies MenuProps
+                      }
+                      trigger={["click"]}
+                    >
+                      <Button
+                        aria-label={`${item.title} actions`}
+                        disabled={item.disabled === true || loading}
+                        loading={mutating}
+                        type="text"
                       >
-                        {updatedAt}
-                      </Typography.Text>
-                    )}
-                  </span>
-                </Button>
+                        ⋯
+                      </Button>
+                    </Dropdown>
+                  )}
+                </div>
               </div>
             );
           }}

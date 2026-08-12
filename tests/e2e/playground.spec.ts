@@ -334,6 +334,21 @@ test("Bearer mode covers create, send, stream, interrupt, reconnect, CORS and di
     .toBe(1);
   await page.getByRole("button", { name: "重连 REST 与 Socket" }).click();
   await expect(page.locator(".playground-hero .ant-tag")).toHaveText("已连接");
+  await page.getByRole("button", { name: "重命名测试会话" }).click();
+  const renameDialog = page.getByRole("dialog", { name: "重命名测试会话" });
+  const renameInput = renameDialog.getByLabel("测试会话标题");
+  const renamedTitle = `${await renameInput.inputValue()} renamed`;
+  await renameInput.fill(renamedTitle);
+  await renameDialog.getByRole("button", { name: "确认重命名" }).click();
+  await expect(
+    page
+      .locator(".chat-stage > section > main > header")
+      .getByText(renamedTitle),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "删除测试会话" }).click();
+  const deleteDialog = page.getByRole("dialog", { name: "删除测试会话" });
+  await deleteDialog.getByRole("button", { name: "确认删除" }).click();
+  await expect(page.getByText("尚未选择会话")).toBeVisible();
 
   const browserState = await page.evaluate(() => ({
     cookie: document.cookie,
@@ -385,14 +400,14 @@ test("Bearer mode covers create, send, stream, interrupt, reconnect, CORS and di
   const state = await stateOf(request);
   expect(
     state.conversations.some((title) =>
-      /^\[tf-chat-kit playground\] \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/u.test(
-        title,
-      ),
+      title.startsWith("[tf-chat-kit playground]"),
     ),
-  ).toBe(true);
+  ).toBe(false);
   expect(state.observations).toMatchObject({
     activeSockets: 0,
     adminRequests: 0,
+    conversationDeletes: 1,
+    conversationRenames: 1,
     interrupts: 1,
     invalidOrigins: 0,
   });

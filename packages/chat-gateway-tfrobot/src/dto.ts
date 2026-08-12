@@ -4,6 +4,35 @@ const identifierSchema = z.union([
   z.number().finite(),
   z.string().trim().min(1),
 ]);
+
+interface TransportTaskIdFields {
+  readonly taskId?: number | string | null | undefined;
+  readonly task_id?: number | string | null | undefined;
+}
+
+export const getTransportTaskId = (
+  value: TransportTaskIdFields,
+): string | undefined => {
+  const taskId = value.taskId ?? value.task_id;
+  return taskId == null ? undefined : String(taskId);
+};
+
+const validateTransportTaskIdAliases = (
+  value: TransportTaskIdFields,
+  context: z.RefinementCtx,
+): void => {
+  if (
+    value.taskId != null &&
+    value.task_id != null &&
+    String(value.taskId) !== String(value.task_id)
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "taskId and task_id must identify the same task",
+      path: ["task_id"],
+    });
+  }
+};
 const nullableStringSchema = z.string().nullable().optional();
 const opaqueReasoningEntryDtoSchema = z
   .looseObject({
@@ -61,6 +90,11 @@ export const conversationPageDtoSchema = z.looseObject({
   cursor: z.string().nullable().optional(),
 });
 
+export const deleteConversationDtoSchema = z.looseObject({
+  conversationId: identifierSchema,
+  message: z.string(),
+});
+
 export const messageCreatorDtoSchema = z.looseObject({
   avatar: nullableStringSchema,
   name: nullableStringSchema,
@@ -104,19 +138,37 @@ export const historyDtoSchema = z.looseObject({
   messages: z.array(messageDtoSchema).nullable(),
 });
 
-export const statusDtoSchema = z.looseObject({
-  startedAt: z.number().finite().nonnegative().optional(),
-  taskId: identifierSchema.nullable().optional(),
-  working: z.boolean(),
-});
+export const statusDtoSchema = z
+  .looseObject({
+    startedAt: z.number().finite().nonnegative().optional(),
+    taskId: identifierSchema.nullable().optional(),
+    task_id: identifierSchema.nullable().optional(),
+    working: z.boolean(),
+  })
+  .superRefine(validateTransportTaskIdAliases);
 
-export const sendTextDtoSchema = z.looseObject({
-  taskId: identifierSchema.optional(),
-});
+export const sendTextDtoSchema = z
+  .looseObject({
+    taskId: identifierSchema.optional(),
+    task_id: identifierSchema.optional(),
+  })
+  .superRefine(validateTransportTaskIdAliases);
 
-export const interruptDtoSchema = z.looseObject({
-  taskId: identifierSchema,
-});
+export const interruptDtoSchema = z
+  .looseObject({
+    taskId: identifierSchema.optional(),
+    task_id: identifierSchema.optional(),
+  })
+  .superRefine((value, context) => {
+    validateTransportTaskIdAliases(value, context);
+    if (getTransportTaskId(value) === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "an interrupt response requires taskId or task_id",
+        path: ["taskId"],
+      });
+    }
+  });
 
 export const chatErrorEventDtoSchema = z.looseObject({
   conversationId: identifierSchema,

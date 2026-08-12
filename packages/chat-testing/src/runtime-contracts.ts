@@ -640,6 +640,44 @@ export const createRuntimeContractCases = (
       },
     ),
     runtimeCase(
+      "blocks commands while recovering and permits valid degraded recovery",
+      factory,
+      async ({ adapter, calls, deadlineAt, emitUpdate, fixtures }) => {
+        await adapter.loadConversation({
+          conversationId: fixtures.conversation.id,
+          deadlineAt: deadlineAt(),
+        });
+        emitUpdate(fixtures.recoveringLifecycleUpdate);
+        await adapter.settle();
+        const blocked = await adapter.sendText({
+          conversationId: fixtures.conversation.id,
+          text: "Blocked while recovering",
+          deadlineAt: deadlineAt(),
+        });
+        assert(
+          !blocked.ok && blocked.error.code === "conflict",
+          "Runtime must block commands while reconnect recovery is pending",
+        );
+
+        emitUpdate(fixtures.degradedLifecycleUpdate);
+        await adapter.settle();
+        const sent = await adapter.sendText({
+          conversationId: fixtures.conversation.id,
+          text: "Allowed with best-effort recovery",
+          deadlineAt: deadlineAt(),
+        });
+        assert(
+          sent.ok && sent.value.runId === fixtures.sendTextSuccess.runId,
+          "Runtime must permit commands in a valid degraded lifecycle",
+        );
+        assert(
+          calls().filter(({ operation }) => operation === "sendText").length ===
+            1,
+          "only the degraded command may reach the Gateway",
+        );
+      },
+    ),
+    runtimeCase(
       "routes text and interrupt commands through its Gateway",
       factory,
       async ({ adapter, calls, deadlineAt, fixtures }) => {

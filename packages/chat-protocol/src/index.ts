@@ -49,6 +49,8 @@ export type {
   ChatErrorSource,
   ChatLifecycle,
   ChatLifecycleStatus,
+  ChatRecoveryAssurance,
+  ChatRecoverySource,
   ChatSnapshot,
   ChatUpdate,
   Conversation,

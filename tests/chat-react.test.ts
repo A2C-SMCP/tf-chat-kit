@@ -183,14 +183,14 @@ describe("@turingfocus/chat-react", () => {
     const second = await createLoadedClient(secondMemory);
     const firstSubscriptions: ChatClientSubscription[] = [];
     const secondSubscriptions: ChatClientSubscription[] = [];
-    const firstSubscribe = first.client.subscribe.bind(first.client);
-    const secondSubscribe = second.client.subscribe.bind(second.client);
-    vi.spyOn(first.client, "subscribe").mockImplementation((listener) => {
+    const firstSubscribe = first.client.subscribeState.bind(first.client);
+    const secondSubscribe = second.client.subscribeState.bind(second.client);
+    vi.spyOn(first.client, "subscribeState").mockImplementation((listener) => {
       const subscription = firstSubscribe(listener);
       firstSubscriptions.push(subscription);
       return subscription;
     });
-    vi.spyOn(second.client, "subscribe").mockImplementation((listener) => {
+    vi.spyOn(second.client, "subscribeState").mockImplementation((listener) => {
       const subscription = secondSubscribe(listener);
       secondSubscriptions.push(subscription);
       return subscription;

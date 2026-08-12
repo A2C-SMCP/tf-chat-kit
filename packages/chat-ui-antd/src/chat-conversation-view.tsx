@@ -8,7 +8,11 @@ import {
   type CSSProperties,
 } from "react";
 
-import type { ChatError, ChatSnapshot } from "@turingfocus/chat-protocol";
+import {
+  isChatLifecycleOperable,
+  type ChatError,
+  type ChatSnapshot,
+} from "@turingfocus/chat-protocol";
 import { useChatClient, useChatSelector } from "@turingfocus/chat-react";
 
 import { ChatComposer } from "./chat-composer.js";
@@ -152,9 +156,7 @@ export const ChatConversationView = ({
     (snapshot.lifecycle.recovery?.complete === false ||
       ((snapshot.lifecycle.reconnectAttempt ?? 0) > 0 &&
         snapshot.lifecycle.recovery?.complete !== true));
-  const lifecycleOperable =
-    snapshot?.lifecycle === undefined ||
-    (snapshot.lifecycle.status === "active" && !activeRecoveryUnverified);
+  const lifecycleOperable = isChatLifecycleOperable(snapshot?.lifecycle);
   const lifecycleDisplayStatus = activeRecoveryUnverified
     ? "recovering"
     : snapshot?.lifecycle?.status;
@@ -430,7 +432,9 @@ export const ChatConversationView = ({
         run={snapshot.run}
         showInterruptButton={false}
       />
-      {snapshot.lifecycle === undefined || lifecycleOperable ? null : (
+      {snapshot.lifecycle === undefined ||
+      (snapshot.lifecycle.status === "active" &&
+        !activeRecoveryUnverified) ? null : (
         <Alert
           message={
             lifecycleDisplayStatus === undefined

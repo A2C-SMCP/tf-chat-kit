@@ -1,9 +1,11 @@
 export type MemoryGatewayOperation =
   | "answerInteraction"
   | "createConversation"
+  | "deleteConversation"
   | "interrupt"
   | "listConversations"
   | "loadConversation"
+  | "renameConversation"
   | "sendText"
   | "subscribe";
 
