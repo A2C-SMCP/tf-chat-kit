@@ -36,16 +36,26 @@ export interface TextMessageContent {
   readonly text: string;
 }
 
+/** A normalized received resource; renderers must validate its URI scheme. */
+export interface MessageResource {
+  readonly uri: string;
+  readonly mimeType?: string | undefined;
+  readonly name?: string | undefined;
+  readonly size?: number | undefined;
+}
+
 export interface MediaMessageContent {
   readonly kind: "media";
   readonly mediaType: "audio" | "image" | "video";
   readonly summary: string;
+  readonly resource?: MessageResource | undefined;
   readonly raw?: ReadonlyJsonValue | undefined;
 }
 
 export interface FileMessageContent {
   readonly kind: "file";
   readonly summary: string;
+  readonly resource?: MessageResource | undefined;
   readonly raw?: ReadonlyJsonValue | undefined;
 }
 
@@ -67,17 +77,24 @@ export interface UnknownMessageContent {
   readonly raw?: ReadonlyJsonValue | undefined;
 }
 
-/**
- * One normalized received-message variant. Multipart and attachment resource
- * contracts remain deferred; non-text variants expose only safe fallback data.
- */
-export type MessageContent =
+/** One non-container part of a normalized received message. */
+export type MessageContentPart =
   | ContactMessageContent
   | FileMessageContent
   | MediaMessageContent
   | TextMessageContent
   | UnknownMessageContent
   | UrlMessageContent;
+
+export interface MultipartMessageContent {
+  readonly kind: "multipart";
+  readonly parts: readonly MessageContentPart[];
+  readonly summary: string;
+  readonly raw?: ReadonlyJsonValue | undefined;
+}
+
+/** One normalized received-message variant. */
+export type MessageContent = MessageContentPart | MultipartMessageContent;
 
 export interface MessageAuthor {
   readonly id?: string | undefined;

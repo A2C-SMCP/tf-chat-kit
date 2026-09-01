@@ -4,7 +4,11 @@ import type {
   Conversation,
   InterruptRunInput,
   Message,
+  MessageContent,
+  MessageContentPart,
+  SendMessageInput,
   SendTextInput,
+  UploadedAttachment,
 } from "@turingfocus/chat-protocol";
 import {
   createChatClient,
@@ -18,6 +22,7 @@ import {
   createMemoryChatGateway,
   type MemoryGatewayController,
 } from "@turingfocus/chat-testing";
+import type { ChatAttachmentUploader } from "@turingfocus/chat-react";
 import type { ChatContentState } from "@turingfocus/chat-ui-antd";
 
 const requestOptions = () => ({ deadlineAt: Date.now() + 5_000 });
@@ -36,6 +41,7 @@ export interface PlaygroundState {
 }
 
 interface PlaygroundSessionBase {
+  readonly attachmentUploader: ChatAttachmentUploader;
   readonly client: ChatClient;
   readonly disposed: boolean;
   createConversation(title: string): Promise<boolean>;
@@ -78,12 +84,15 @@ const initialState: PlaygroundState = {
 };
 
 class MockPlaygroundSessionImpl implements MockPlaygroundSession {
+  readonly attachmentUploader: ChatAttachmentUploader;
   readonly client: ChatClient;
   readonly kind = "mock" as const;
   readonly #controller: MemoryGatewayController;
   #disposed = false;
   readonly #listeners = new Set<() => void>();
   #messageSequence = 0;
+  readonly #objectUrls = new Set<string>();
+  #uploadSequence = 0;
   #state: PlaygroundState = initialState;
   readonly #timers = new Set<Timer>();
   readonly #unsubscribeClient: () => void;
@@ -94,6 +103,68 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
     const memory = createMemoryChatGateway();
     const initialTimestamp = Date.now();
     this.#controller = memory.controller;
+    this.attachmentUploader = {
+      upload: (input) => {
+        if (this.#disposed) {
+          return Promise.resolve({
+            ok: false,
+            error: {
+              code: "conflict",
+              message: "Mock Playground session has been disposed",
+              retryable: false,
+            },
+          });
+        }
+        if (input.cancellation?.aborted === true) {
+          return Promise.resolve({
+            ok: false,
+            error: {
+              code: "timeout",
+              message: "Mock attachment upload was cancelled",
+              retryable: true,
+            },
+          });
+        }
+        if (Date.now() >= input.deadlineAt) {
+          return Promise.resolve({
+            ok: false,
+            error: {
+              code: "timeout",
+              message: "Mock attachment upload exceeded its deadline",
+              retryable: true,
+            },
+          });
+        }
+        if (typeof Blob === "undefined" || !(input.blob instanceof Blob)) {
+          return Promise.resolve({
+            ok: false,
+            error: {
+              code: "validation",
+              message: "Attachment content must be a browser Blob",
+              retryable: false,
+            },
+          });
+        }
+        this.#uploadSequence += 1;
+        const uri =
+          typeof URL.createObjectURL === "function"
+            ? URL.createObjectURL(input.blob)
+            : `mock-upload://attachment/${this.#uploadSequence}/${encodeURIComponent(input.fileName)}`;
+        if (uri.startsWith("blob:")) this.#objectUrls.add(uri);
+        return Promise.resolve({
+          ok: true,
+          value: {
+            uri,
+            mimeType:
+              input.mimeType?.trim() ||
+              input.blob.type ||
+              "application/octet-stream",
+            name: input.fileName,
+            size: input.blob.size,
+          },
+        });
+      },
+    };
     this.#controller.setSnapshot({
       ...memory.fixtures.initialSnapshot,
       conversation: {
@@ -371,6 +442,10 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
     this.#workspace.dispose();
     this.#unsubscribeClient();
     this.#listeners.clear();
+    if (typeof URL.revokeObjectURL === "function") {
+      for (const uri of this.#objectUrls) URL.revokeObjectURL(uri);
+    }
+    this.#objectUrls.clear();
     await this.client.dispose({ deadlineAt: Date.now() + 5_000 });
   }
 
@@ -403,6 +478,15 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
         if (result.ok) this.#handleSend(input, result.value.runId);
         return result;
       },
+      ...(gateway.sendMessage === undefined
+        ? {}
+        : {
+            sendMessage: async (input: SendMessageInput) => {
+              const result = await gateway.sendMessage!(input);
+              if (result.ok) this.#handleSend(input, result.value.runId);
+              return result;
+            },
+          }),
       interrupt: async (input) => {
         const result = await gateway.interrupt(input);
         if (result.ok) this.#handleInterrupt(input);
@@ -448,19 +532,78 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
     });
   }
 
-  #handleSend(input: SendTextInput, runId: string): void {
+  #handleSend(input: SendMessageInput | SendTextInput, runId: string): void {
     const snapshot = this.client.getSnapshot();
     if (snapshot?.conversation.id !== input.conversationId) return;
-    this.#beginStream(snapshot, input.text, runId);
+    const attachments = "attachments" in input ? (input.attachments ?? []) : [];
+    const attachmentSummary = attachments
+      .map((attachment) => attachment.name ?? attachment.uri)
+      .join("、");
+    const parts: MessageContentPart[] = [
+      ...(input.text?.trim()
+        ? [{ kind: "text" as const, text: input.text }]
+        : []),
+      ...attachments.map((attachment) => this.#attachmentContent(attachment)),
+    ];
+    const userContent: MessageContent | undefined =
+      parts.length === 0
+        ? undefined
+        : parts.length === 1
+          ? parts[0]
+          : {
+              kind: "multipart",
+              parts,
+              summary: "文本和附件",
+            };
+    this.#beginStream(
+      snapshot,
+      input.text?.trim() || `发送附件：${attachmentSummary || "未命名附件"}`,
+      runId,
+      userContent,
+    );
   }
 
-  #beginStream(snapshot: ChatSnapshot, prompt: string, runId: string): void {
+  #attachmentContent(attachment: UploadedAttachment): MessageContentPart {
+    const resource = {
+      uri: attachment.uri,
+      mimeType: attachment.mimeType,
+      ...(attachment.name === undefined ? {} : { name: attachment.name }),
+      ...(attachment.size === undefined ? {} : { size: attachment.size }),
+    };
+    const mimeType = attachment.mimeType.toLocaleLowerCase("en-US");
+    const mediaType = mimeType.startsWith("image/")
+      ? "image"
+      : mimeType.startsWith("audio/")
+        ? "audio"
+        : mimeType.startsWith("video/")
+          ? "video"
+          : undefined;
+    return mediaType === undefined
+      ? {
+          kind: "file",
+          resource,
+          summary: attachment.name ?? "文件附件",
+        }
+      : {
+          kind: "media",
+          mediaType,
+          resource,
+          summary: attachment.name ?? `${mediaType} attachment`,
+        };
+  }
+
+  #beginStream(
+    snapshot: ChatSnapshot,
+    prompt: string,
+    runId: string,
+    userContent?: MessageContent,
+  ): void {
     this.#clearTimers();
     const now = Date.now();
     const user = this.#message(
       snapshot.conversation.id,
       "user",
-      prompt,
+      userContent ?? prompt,
       snapshot.timeline.length,
     );
     const assistant = this.#message(
@@ -548,7 +691,7 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
   #message(
     conversationId: string,
     role: "assistant" | "user",
-    text: string,
+    content: MessageContent | string,
     sequence: number,
     createdAt = Date.now(),
   ): Message {
@@ -558,7 +701,8 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
       id: `playground-message-${this.#messageSequence}`,
       conversationId,
       role,
-      content: { kind: "text", text },
+      content:
+        typeof content === "string" ? { kind: "text", text: content } : content,
       createdAt,
       sequence,
     };

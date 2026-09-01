@@ -124,6 +124,54 @@ describe("@turingfocus/chat-ui-antd renderer registry", () => {
     expect(markup).toContain("[Image: tracking]");
   });
 
+  it("renders normalized image resources and blocks active URI schemes", () => {
+    const imageMessage: Message = {
+      ...textMessage,
+      id: "image-message",
+      content: {
+        kind: "multipart",
+        summary: "Text and image",
+        parts: [
+          { kind: "text", text: "Rendered caption" },
+          {
+            kind: "media",
+            mediaType: "image",
+            summary: "diagram.png",
+            resource: { uri: "https://cdn.example/diagram.png" },
+          },
+        ],
+      },
+    };
+    const markup = renderToStaticMarkup(
+      createElement(ChatTimelineItem, {
+        item: imageMessage,
+        registry: createChatRendererRegistry(),
+      }),
+    );
+    expect(markup).toContain("Rendered caption");
+    expect(markup).toContain('<img alt="diagram.png"');
+    expect(markup).toContain('src="https://cdn.example/diagram.png"');
+    expect(markup).toContain('referrerPolicy="no-referrer"');
+
+    const unsafeMarkup = renderToStaticMarkup(
+      createElement(ChatTimelineItem, {
+        item: {
+          ...imageMessage,
+          content: {
+            kind: "media",
+            mediaType: "image",
+            summary: "Blocked image",
+            resource: { uri: "javascript:alert(1)" },
+          },
+        },
+        registry: createChatRendererRegistry(),
+      }),
+    );
+    expect(unsafeMarkup).not.toContain("<img");
+    expect(unsafeMarkup).not.toContain("javascript:");
+    expect(unsafeMarkup).toContain("Blocked image");
+  });
+
   it("renders normalized Ask User history without reading raw Tool payloads", () => {
     const toolEvent: AgentEvent = {
       kind: "agent-event",

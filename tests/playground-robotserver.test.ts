@@ -175,11 +175,28 @@ const createRobotServerFixture = (
   const sockets = socketFixture();
   const requests: Request[] = [];
   let createdTitle: string | undefined;
+  let uploadedFormData: FormData | undefined;
   const fetch = vi.fn(
     async (
       input: Parameters<typeof globalThis.fetch>[0],
       init?: Parameters<typeof globalThis.fetch>[1],
     ) => {
+      const inputUrl =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      if (
+        init?.method === "POST" &&
+        new URL(inputUrl).pathname.endsWith(
+          "/v1/dashboard/remote/source/cos/upload",
+        )
+      ) {
+        uploadedFormData = init.body as FormData;
+        requests.push(new Request(input, { ...init, body: null }));
+        return envelope({ uri: "s3://playground/acceptance.txt" });
+      }
       const request = new Request(input, init);
       requests.push(request);
       const url = new URL(request.url);
@@ -246,6 +263,7 @@ const createRobotServerFixture = (
     }),
     sockets,
     title: () => createdTitle,
+    uploadedFormData: () => uploadedFormData,
   };
 };
 
@@ -481,6 +499,22 @@ describe("RobotServer Playground authenticated lifecycle", () => {
         text: "Exercise the real write path",
       });
       expect(sent).toEqual({ ok: true, value: { runId: "run-accepted" } });
+      await expect(
+        fixture.session.attachmentUploader.upload({
+          blob: new Blob(["robot attachment"], { type: "text/plain" }),
+          deadlineAt: fixture.now + 10_000,
+          fileName: "acceptance.txt",
+          mimeType: "text/plain",
+        }),
+      ).resolves.toEqual({
+        ok: true,
+        value: {
+          mimeType: "text/plain",
+          name: "acceptance.txt",
+          size: 16,
+          uri: "s3://playground/acceptance.txt",
+        },
+      });
       fixture.sockets.sockets.at(-1)!.trigger("conversation_state_changed", {
         conversationId: 43,
         state: "working",
@@ -564,7 +598,10 @@ describe("RobotServer Playground authenticated lifecycle", () => {
         expect(request.headers.get(missing)).toBeNull();
         if (
           request.method === "POST" &&
-          !new URL(request.url).pathname.endsWith("/conversations")
+          !new URL(request.url).pathname.endsWith("/conversations") &&
+          !new URL(request.url).pathname.endsWith(
+            "/v1/dashboard/remote/source/cos/upload",
+          )
         ) {
           expect(request.headers.get("Content-Type")).toBe("application/json");
         }
@@ -572,6 +609,19 @@ describe("RobotServer Playground authenticated lifecycle", () => {
       expect(
         fixture.requests.some((request) => request.url.endsWith("/interrupt")),
       ).toBe(true);
+      const uploadRequest = fixture.requests.find((request) =>
+        new URL(request.url).pathname.endsWith(
+          "/v1/dashboard/remote/source/cos/upload",
+        ),
+      );
+      expect(uploadRequest).toBeDefined();
+      const uploadBody = fixture.uploadedFormData();
+      expect(uploadBody).toBeDefined();
+      expect(uploadBody!.get("file")).toMatchObject({
+        name: "acceptance.txt",
+        size: 16,
+        type: "text/plain",
+      });
       expect(
         fixture.requests.some(
           (request) =>
@@ -624,6 +674,15 @@ describe("RobotServer Playground authenticated lifecycle", () => {
       expect(
         fixture.sockets.sockets.every((socket) => socket.disconnectCalls === 1),
       ).toBe(true);
+      const requestsAfterDispose = fixture.requests.length;
+      await expect(
+        fixture.session.attachmentUploader.upload({
+          blob: new Blob(["late"]),
+          deadlineAt: fixture.now + 10_000,
+          fileName: "late.txt",
+        }),
+      ).resolves.toMatchObject({ ok: false, error: { code: "conflict" } });
+      expect(fixture.requests).toHaveLength(requestsAfterDispose);
     },
   );
 

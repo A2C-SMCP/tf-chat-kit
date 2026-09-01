@@ -59,13 +59,67 @@ export interface ChatMessageContentProps {
   readonly message: Message;
 }
 
-export const ChatMessageContent = ({ message }: ChatMessageContentProps) =>
-  message.content.kind === "text" ? (
-    <ChatMarkdownContent>{message.content.text}</ChatMarkdownContent>
-  ) : (
+const safeImageUri = (uri: string): string | undefined => {
+  try {
+    const parsed = new URL(uri);
+    return parsed.protocol === "https:" ||
+      parsed.protocol === "http:" ||
+      parsed.protocol === "blob:"
+      ? parsed.href
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const MessageContentPartView = ({
+  content,
+}: {
+  readonly content: Exclude<Message["content"], { readonly kind: "multipart" }>;
+}) => {
+  if (content.kind === "text") {
+    return <ChatMarkdownContent>{content.text}</ChatMarkdownContent>;
+  }
+  if (content.kind === "media" && content.mediaType === "image") {
+    const source =
+      content.resource === undefined
+        ? undefined
+        : safeImageUri(content.resource.uri);
+    if (source !== undefined) {
+      return (
+        <img
+          alt={content.summary}
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          src={source}
+          style={{
+            borderRadius: 8,
+            display: "block",
+            height: "auto",
+            maxHeight: "32rem",
+            maxWidth: "min(100%, 36rem)",
+            objectFit: "contain",
+          }}
+        />
+      );
+    }
+  }
+  return (
     <Typography.Paragraph style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-      {message.content.summary}
+      {content.summary}
     </Typography.Paragraph>
+  );
+};
+
+export const ChatMessageContent = ({ message }: ChatMessageContentProps) =>
+  message.content.kind === "multipart" ? (
+    <div style={{ display: "grid", gap: 8 }}>
+      {message.content.parts.map((part, index) => (
+        <MessageContentPartView content={part} key={`${part.kind}:${index}`} />
+      ))}
+    </div>
+  ) : (
+    <MessageContentPartView content={message.content} />
   );
 
 const MessageRenderer = ({ formatTimestamp, item }: ChatRendererProps) => {

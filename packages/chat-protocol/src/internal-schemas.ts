@@ -69,33 +69,52 @@ export const conversationParser: z.ZodType<Conversation> = z.object({
   raw: rawParser.optional(),
 });
 
+const messageResourceParser = z.object({
+  uri: z.string().trim().min(1),
+  mimeType: z.string().trim().min(1).optional(),
+  name: z.string().trim().min(1).optional(),
+  size: z.number().int().nonnegative().optional(),
+});
+
+const messageContentPartParser = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("text"), text: z.string() }),
+  z.object({
+    kind: z.literal("media"),
+    mediaType: z.enum(["audio", "image", "video"]),
+    summary: z.string(),
+    resource: messageResourceParser.optional(),
+    raw: rawParser.optional(),
+  }) satisfies z.ZodType<MediaMessageContent>,
+  z.object({
+    kind: z.literal("file"),
+    summary: z.string(),
+    resource: messageResourceParser.optional(),
+    raw: rawParser.optional(),
+  }) satisfies z.ZodType<FileMessageContent>,
+  z.object({
+    kind: z.literal("contact"),
+    summary: z.string(),
+    raw: rawParser.optional(),
+  }) satisfies z.ZodType<ContactMessageContent>,
+  z.object({
+    kind: z.literal("url"),
+    summary: z.string(),
+    raw: rawParser.optional(),
+  }),
+  z.object({
+    kind: z.literal("unknown"),
+    summary: z.string(),
+    raw: rawParser.optional(),
+  }),
+]);
+
 const messageContentParser: z.ZodType<MessageContent> = z.discriminatedUnion(
   "kind",
   [
-    z.object({ kind: z.literal("text"), text: z.string() }),
+    ...messageContentPartParser.options,
     z.object({
-      kind: z.literal("media"),
-      mediaType: z.enum(["audio", "image", "video"]),
-      summary: z.string(),
-      raw: rawParser.optional(),
-    }) satisfies z.ZodType<MediaMessageContent>,
-    z.object({
-      kind: z.literal("file"),
-      summary: z.string(),
-      raw: rawParser.optional(),
-    }) satisfies z.ZodType<FileMessageContent>,
-    z.object({
-      kind: z.literal("contact"),
-      summary: z.string(),
-      raw: rawParser.optional(),
-    }) satisfies z.ZodType<ContactMessageContent>,
-    z.object({
-      kind: z.literal("url"),
-      summary: z.string(),
-      raw: rawParser.optional(),
-    }),
-    z.object({
-      kind: z.literal("unknown"),
+      kind: z.literal("multipart"),
+      parts: z.array(messageContentPartParser).min(1).max(20),
       summary: z.string(),
       raw: rawParser.optional(),
     }),

@@ -827,7 +827,30 @@ describe("normalized protocol schemas", () => {
 
   it.each([
     { kind: "text", text: "Hello" },
-    { kind: "media", mediaType: "image", summary: "Image message" },
+    {
+      kind: "media",
+      mediaType: "image",
+      summary: "Image message",
+      resource: {
+        uri: "https://cdn.example/image.png",
+        mimeType: "image/png",
+        name: "image.png",
+        size: 42,
+      },
+    },
+    {
+      kind: "multipart",
+      summary: "Text and image",
+      parts: [
+        { kind: "text", text: "Hello" },
+        {
+          kind: "media",
+          mediaType: "image",
+          summary: "Image message",
+          resource: { uri: "https://cdn.example/image.png" },
+        },
+      ],
+    },
     { kind: "file", summary: "File message" },
     { kind: "contact", summary: "Contact message" },
     { kind: "url", summary: "URL message" },
@@ -839,6 +862,26 @@ describe("normalized protocol schemas", () => {
   ])("parses normalized received-message variant $kind", (content) => {
     const parsed = messageSchema.parse({ ...message, content });
     expect(parsed.content.kind).toBe(content.kind);
+  });
+
+  it("rejects empty multipart messages and invalid received resources", () => {
+    expect(
+      messageSchema.safeParse({
+        ...message,
+        content: { kind: "multipart", parts: [], summary: "Empty" },
+      }).success,
+    ).toBe(false);
+    expect(
+      messageSchema.safeParse({
+        ...message,
+        content: {
+          kind: "media",
+          mediaType: "image",
+          summary: "Invalid image",
+          resource: { uri: "" },
+        },
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects cross-conversation snapshot, update and nested error data", () => {

@@ -27,6 +27,8 @@ import {
   type Conversation,
   type Message,
   type MessageContent,
+  type MessageContentPart,
+  type MessageResource,
   type MessageRole,
   type ReadonlyJsonValue,
   type Run,
@@ -181,16 +183,120 @@ const mapRole = (role: string): MessageRole => {
   }
 };
 
+const nonEmptyString = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
+
+const recordOf = (
+  value: unknown,
+): Readonly<Record<string, unknown>> | undefined =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
+    : undefined;
+
+const messageResource = (
+  value: unknown,
+  metadata?: unknown,
+): MessageResource | undefined => {
+  const valueRecord = recordOf(value);
+  const metadataRecord = recordOf(metadata);
+  const uri =
+    nonEmptyString(value) ??
+    nonEmptyString(valueRecord?.["url"]) ??
+    nonEmptyString(valueRecord?.["uri"]);
+  if (uri === undefined) return undefined;
+  const mimeType =
+    nonEmptyString(valueRecord?.["mimeType"]) ??
+    nonEmptyString(valueRecord?.["mime_type"]) ??
+    nonEmptyString(metadataRecord?.["mimeType"]) ??
+    nonEmptyString(metadataRecord?.["mime_type"]);
+  const name =
+    nonEmptyString(valueRecord?.["name"]) ??
+    nonEmptyString(metadataRecord?.["altText"]) ??
+    nonEmptyString(metadataRecord?.["fileName"]);
+  const sizeValue = valueRecord?.["size"];
+  const size =
+    typeof sizeValue === "number" &&
+    Number.isInteger(sizeValue) &&
+    sizeValue >= 0
+      ? sizeValue
+      : undefined;
+  return {
+    uri,
+    ...(mimeType === undefined ? {} : { mimeType }),
+    ...(name === undefined ? {} : { name }),
+    ...(size === undefined ? {} : { size }),
+  };
+};
+
+const unknownMultipartPart = (value: unknown): MessageContentPart => ({
+  kind: "unknown",
+  summary: "Unsupported multipart attachment",
+  ...optionalRaw(value),
+});
+
+const mapMultipartPart = (value: unknown): MessageContentPart => {
+  const part = recordOf(value);
+  const partType = nonEmptyString(part?.["partType"])?.toLocaleLowerCase(
+    "en-US",
+  );
+  if (partType === "text") {
+    if (typeof part?.["text"] !== "string") {
+      return unknownMultipartPart(value);
+    }
+    return {
+      kind: "text",
+      text: part["text"],
+    };
+  }
+  const mediaType =
+    partType === "image_url"
+      ? "image"
+      : partType === "audio_url"
+        ? "audio"
+        : partType === "video_url"
+          ? "video"
+          : undefined;
+  if (mediaType !== undefined) {
+    const resourceValue = part?.[`${mediaType}Url`];
+    const resource = messageResource(resourceValue);
+    if (resource === undefined) return unknownMultipartPart(value);
+    return {
+      kind: "media",
+      mediaType,
+      summary: resource.name ?? `${mediaType} attachment`,
+      resource,
+      ...optionalRaw(value),
+    };
+  }
+  if (partType === "pdf_url" || partType === "file_url") {
+    const resource = messageResource(
+      part?.[partType === "pdf_url" ? "pdfUrl" : "fileUrl"],
+    );
+    if (resource === undefined) return unknownMultipartPart(value);
+    return {
+      kind: "file",
+      summary: resource.name ?? "File attachment",
+      resource,
+      ...optionalRaw(value),
+    };
+  }
+  return unknownMultipartPart(value);
+};
+
 const mapMessageContent = (dto: MessageDto): MessageContent => {
   const type = dto.msgType.toLocaleLowerCase("en-US");
   if (type === "text" && typeof dto.content === "string") {
     return { kind: "text", text: dto.content };
   }
   if (type === "audio" || type === "image" || type === "video") {
+    const resource = messageResource(dto.content, dto.additionalKwargs);
     return {
       kind: "media",
       mediaType: type,
-      summary: summaryOf(dto.content, `${type} message`),
+      summary: resource?.name ?? summaryOf(dto.content, `${type} message`),
+      ...(resource === undefined ? {} : { resource }),
       ...optionalRaw({
         content: dto.content,
         attachments: dto.attachments,
@@ -199,15 +305,28 @@ const mapMessageContent = (dto: MessageDto): MessageContent => {
     };
   }
   if (type === "file") {
+    const resource = messageResource(dto.content, dto.additionalKwargs);
     return {
       kind: "file",
-      summary: summaryOf(dto.content, "File message"),
+      summary: resource?.name ?? summaryOf(dto.content, "File message"),
+      ...(resource === undefined ? {} : { resource }),
       ...optionalRaw({
         content: dto.content,
         attachments: dto.attachments,
         additionalKwargs: dto.additionalKwargs,
       }),
     };
+  }
+  if (type === "multipart" && Array.isArray(dto.content)) {
+    const parts = dto.content.slice(0, 20).map(mapMultipartPart);
+    if (parts.length > 0) {
+      return {
+        kind: "multipart",
+        parts,
+        summary: "Multipart message",
+        ...optionalRaw({ content: dto.content }),
+      };
+    }
   }
   if (type === "contact") {
     return {

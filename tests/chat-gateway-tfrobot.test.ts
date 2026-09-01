@@ -11,6 +11,7 @@ import {
 import {
   mapEvent,
   mapEventUpdate,
+  mapMessage,
   syntheticRunId,
 } from "../packages/chat-gateway-tfrobot/src/mapper.js";
 import {
@@ -189,6 +190,103 @@ const createSocketFixture = () => {
 };
 
 describe("TFRobotChatGateway REST boundary", () => {
+  it("normalizes received image and multipart resources without UI reading raw DTOs", () => {
+    expect(
+      mapMessage({
+        ...messageDto,
+        msgId: "image-message",
+        msgType: "image",
+        content: "https://cdn.example/image.png",
+        additionalKwargs: {
+          mimeType: "image/png",
+          altText: "diagram.png",
+        },
+      }).content,
+    ).toEqual({
+      kind: "media",
+      mediaType: "image",
+      summary: "diagram.png",
+      resource: {
+        uri: "https://cdn.example/image.png",
+        mimeType: "image/png",
+        name: "diagram.png",
+      },
+      raw: {
+        additionalKwargs: {
+          altText: "diagram.png",
+          mimeType: "image/png",
+        },
+        attachments: null,
+        content: "https://cdn.example/image.png",
+      },
+    });
+
+    expect(
+      mapMessage({
+        ...messageDto,
+        msgId: "multipart-message",
+        msgType: "multipart",
+        content: [
+          { partType: "text", text: "See diagram" },
+          {
+            partType: "image_url",
+            imageUrl: {
+              url: "https://cdn.example/diagram.webp",
+              mimeType: "image/webp",
+              name: "diagram.webp",
+            },
+          },
+        ],
+      }).content,
+    ).toMatchObject({
+      kind: "multipart",
+      parts: [
+        { kind: "text", text: "See diagram" },
+        {
+          kind: "media",
+          mediaType: "image",
+          resource: {
+            uri: "https://cdn.example/diagram.webp",
+            mimeType: "image/webp",
+            name: "diagram.webp",
+          },
+        },
+      ],
+    });
+
+    const malformedParts = [
+      { partType: "text" },
+      { partType: "text", text: 42 },
+      { partType: "image_url", imageUrl: { url: "" } },
+      { partType: "future_part", payload: "future" },
+    ];
+    const malformed = mapMessage({
+      ...messageDto,
+      msgId: "malformed-multipart-message",
+      msgType: "multipart",
+      content: malformedParts,
+    });
+    expect(malformed.content).toMatchObject({
+      kind: "multipart",
+      parts: malformedParts.map((raw) => ({
+        kind: "unknown",
+        summary: "Unsupported multipart attachment",
+        raw,
+      })),
+    });
+
+    const whitespace = mapMessage({
+      ...messageDto,
+      msgId: "whitespace-multipart-message",
+      msgType: "multipart",
+      content: [{ partType: "text", text: "  code  " }],
+    });
+    expect(whitespace.content).toMatchObject({
+      kind: "multipart",
+      parts: [{ kind: "text", text: "  code  " }],
+    });
+  });
+
   it.each([
     [{ taskId: "task-camel" }, "task-camel", true],
     [{ task_id: "task-snake" }, "task-snake", true],

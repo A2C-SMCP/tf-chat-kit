@@ -225,7 +225,10 @@ const PlaygroundWorkspace = ({
         },
       }}
     >
-      <ChatProvider client={session.client}>
+      <ChatProvider
+        attachmentUploader={session.attachmentUploader}
+        client={session.client}
+      >
         <main className="playground-page">
           <header className="playground-hero">
             <div>
