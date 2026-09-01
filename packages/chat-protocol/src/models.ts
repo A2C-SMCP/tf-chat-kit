@@ -371,6 +371,8 @@ export interface Capabilities {
   readonly loadHistory: boolean;
   /** Enables ChatGateway.sendText. */
   readonly sendText: boolean;
+  /** Enables uploaded-resource messages when the optional command exists. */
+  readonly sendAttachments?: boolean | undefined;
 }
 
 export interface TimelinePageInfo {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { ChatClient } from "@turingfocus/chat-runtime";
+import type { ChatAttachmentUploader } from "./attachment-upload.js";
 
 import {
   ChatContext,
@@ -23,24 +24,28 @@ export interface ChatClientFactory {
    * If this throws, the Provider reports the error and disposes immediately.
    */
   getDisposeOptions(): ChatClientDisposeOptions;
+  /** Optional companion capability created from the same host configuration. */
+  createAttachmentUploader?(): ChatAttachmentUploader;
 }
 
 export interface ChatProviderProps {
   readonly children?: ReactNode;
   /** A host-owned client. ChatProvider never disposes this instance. */
   readonly client: ChatClient;
+  readonly attachmentUploader?: ChatAttachmentUploader | undefined;
   /** Snapshot used by React during server rendering and hydration. */
   readonly serverSnapshot?: ChatSnapshotValue | undefined;
 }
 
 export const ChatProvider = ({
   children,
+  attachmentUploader,
   client,
   serverSnapshot = null,
 }: ChatProviderProps) => {
   const value = useMemo<ChatContextValue>(
-    () => ({ client, serverSnapshot }),
-    [client, serverSnapshot],
+    () => ({ client, serverSnapshot, attachmentUploader }),
+    [attachmentUploader, client, serverSnapshot],
   );
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
@@ -59,6 +64,7 @@ export interface OwnedChatProviderProps {
 }
 
 interface OwnedClientEntry {
+  readonly attachmentUploader?: ChatAttachmentUploader | undefined;
   readonly client: ChatClient;
   readonly factory: ChatClientFactory;
 }
@@ -89,6 +95,14 @@ const disposeOwnedClient = (
     onDisposeError(error);
   }
 
+  try {
+    void Promise.resolve(entry.attachmentUploader?.dispose?.()).catch(
+      onDisposeError,
+    );
+  } catch (error) {
+    onDisposeError(error);
+  }
+
   if (hasDisposeOptionsError) onDisposeError(disposeOptionsError);
 };
 
@@ -111,10 +125,30 @@ export const OwnedChatProvider = ({
   }, [onDisposeError]);
 
   useEffect(() => {
-    const nextEntry: OwnedClientEntry = {
-      client: factory.create(),
-      factory,
-    };
+    let client: ChatClient;
+    try {
+      client = factory.create();
+    } catch (error) {
+      onDisposeErrorRef.current(error);
+      return undefined;
+    }
+
+    let nextEntry: OwnedClientEntry;
+    try {
+      nextEntry = {
+        client,
+        factory,
+        ...(factory.createAttachmentUploader === undefined
+          ? {}
+          : { attachmentUploader: factory.createAttachmentUploader() }),
+      };
+    } catch (error) {
+      onDisposeErrorRef.current(error);
+      disposeOwnedClient({ client, factory }, (disposeError) => {
+        onDisposeErrorRef.current(disposeError);
+      });
+      return undefined;
+    }
     setEntry(nextEntry);
 
     return () => {
@@ -129,7 +163,11 @@ export const OwnedChatProvider = ({
   if (activeEntry === null) return fallback;
 
   return (
-    <ChatProvider client={activeEntry.client} serverSnapshot={serverSnapshot}>
+    <ChatProvider
+      attachmentUploader={activeEntry.attachmentUploader}
+      client={activeEntry.client}
+      serverSnapshot={serverSnapshot}
+    >
       {children}
     </ChatProvider>
   );

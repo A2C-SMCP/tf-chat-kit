@@ -13,7 +13,12 @@ import {
   type ChatError,
   type ChatSnapshot,
 } from "@turingfocus/chat-protocol";
-import { useChatClient, useChatSelector } from "@turingfocus/chat-react";
+import {
+  useChatAttachmentUploader,
+  useChatClient,
+  useChatSelector,
+  useComposerDraft,
+} from "@turingfocus/chat-react";
 
 import { ChatComposer } from "./chat-composer.js";
 import {
@@ -151,6 +156,8 @@ export const ChatConversationView = ({
     selectChatConversationViewSnapshot,
     equalChatConversationViewSnapshot,
   );
+  const attachmentUploader = useChatAttachmentUploader();
+  const composer = useComposerDraft(snapshot?.conversationId ?? "");
   const activeRecoveryUnverified =
     snapshot?.lifecycle?.status === "active" &&
     (snapshot.lifecycle.recovery?.complete === false ||
@@ -533,10 +540,27 @@ export const ChatConversationView = ({
         </div>
       )}
       <ChatComposer
+        attachmentUploader={
+          snapshot.capabilities.sendAttachments === true
+            ? attachmentUploader
+            : undefined
+        }
+        draft={composer.draft}
+        getDeadlineAt={getDeadlineAt}
         key={viewResetKey}
-        disabled={!lifecycleOperable || !snapshot.capabilities.sendText}
+        disabled={
+          !lifecycleOperable ||
+          (!snapshot.capabilities.sendText &&
+            !(
+              snapshot.capabilities.sendAttachments === true &&
+              attachmentUploader !== undefined
+            ))
+        }
         disabledReason={
-          lifecycleOperable && snapshot.capabilities.sendText
+          lifecycleOperable &&
+          (snapshot.capabilities.sendText ||
+            (snapshot.capabilities.sendAttachments === true &&
+              attachmentUploader !== undefined))
             ? undefined
             : snapshot.lifecycle !== undefined && !lifecycleOperable
               ? lifecycleDisplayStatus === undefined
@@ -558,7 +582,9 @@ export const ChatConversationView = ({
         }
         labels={labels}
         onSend={sendText}
+        onDraftChange={composer.setDraft}
         resetKey={viewResetKey}
+        textInputDisabled={!snapshot.capabilities.sendText}
       />
       <Modal
         afterOpenChange={(open) => {

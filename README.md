@@ -133,7 +133,10 @@ React 宿主通过 `ChatProvider` 注入自行持有的 `ChatClient`；该 Provi
 Ant Design 宿主默认使用 `ChatWorkspace`，由它管理会话列表、分页、创建、可选重命名/删除、当前选择、切换竞态与
 错误重试；宿主只需注入当前 Robot 对应的 `ChatClient`。需要完全自定义页面工作流时，仍可组合
 受控的 `ChatUiShell` 与 `ChatConversationView`。当前会话视图只通过 `ChatProvider` 的 hooks 和 `ChatClient`
-执行历史/实时展示、文本发送、Run 中断与受控 Ask User 回答，不读取 Gateway、SessionProvider、路由或全局 Store。
+执行历史/实时展示、文本/附件发送、Run 中断与受控 Ask User 回答，不读取 Gateway、SessionProvider、路由或全局 Store。
+默认 TFRobot factory 复用既有 endpoint、session 和 fetch 配置自动提供附件上传器，不要求宿主配置 COS
+或上传路径；自定义后端仍可通过通用 uploader 端口覆盖。超过可配置阈值的粘贴文本以紧凑草稿占位
+展示，查看、编辑、删除与发送均保留完整内容。
 Ask User 的“聊聊这个”按具体问题通过显式宿主回调交还给页面草稿流程，不冒充 Gateway answer action。
 时间轴默认虚拟化，离开底部后不会抢滚动，并通过提示返回最新消息。渲染器注册表支持宿主覆盖，
 文本内容默认按经过清洗的 GFM Markdown 渲染；未知事件和单个渲染器异常均安全降级。自定义文案通过 `labels` 注入，主题沿用宿主的 Ant Design

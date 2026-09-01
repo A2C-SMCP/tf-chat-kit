@@ -528,6 +528,7 @@ export const capabilitiesParser: z.ZodType<Capabilities> = z.object({
   liveUpdates: z.boolean(),
   loadHistory: z.boolean(),
   sendText: z.boolean(),
+  sendAttachments: z.boolean().optional(),
 });
 
 const chatLifecycleParser = z

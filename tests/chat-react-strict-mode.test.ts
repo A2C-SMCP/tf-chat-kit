@@ -17,6 +17,55 @@ import {
 } from "./support/chat-react.js";
 
 describe("@turingfocus/chat-react StrictMode", () => {
+  it("disposes a partially constructed client when uploader creation fails", async () => {
+    const { client } = await createLoadedClient();
+    const creationError = new Error("uploader construction failed");
+    const factory: ChatClientFactory = {
+      create: () => client,
+      createAttachmentUploader: () => {
+        throw creationError;
+      },
+      getDisposeOptions: () => ({ deadlineAt: deadlineAt() }),
+    };
+    const onDisposeError = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const previousActEnvironment = Reflect.get(
+      globalThis,
+      "IS_REACT_ACT_ENVIRONMENT",
+    );
+    Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+    try {
+      await act(async () => {
+        root.render(
+          createElement(OwnedChatProvider, {
+            factory,
+            fallback: createElement("span", null, "fallback"),
+            onDisposeError,
+          }),
+        );
+        await flushMicrotasks();
+      });
+      expect(client.disposed).toBe(true);
+      expect(onDisposeError).toHaveBeenCalledWith(creationError);
+      expect(container.textContent).toBe("fallback");
+    } finally {
+      await act(async () => {
+        root.unmount();
+        await flushMicrotasks();
+      });
+      if (previousActEnvironment === undefined) {
+        Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+      } else {
+        Reflect.set(
+          globalThis,
+          "IS_REACT_ACT_ENVIRONMENT",
+          previousActEnvironment,
+        );
+      }
+    }
+  });
+
   it("creates a fresh owned client when React replays effects", async () => {
     const first = await createLoadedClient();
     const secondMemory = createMemoryChatGateway();

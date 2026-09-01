@@ -329,6 +329,20 @@ try {
         extractedFiles,
         expectedFileContents: { LICENSE: approvedLicense },
       });
+      if (packedPackage.name === "@turingfocus/chat-gateway-tfrobot") {
+        const uploaderDeclaration = extractedFiles.find(
+          ({ path: filePath }) => filePath === "dist/attachment-uploader.d.ts",
+        );
+        const declarationText =
+          uploaderDeclaration?.bytes === undefined
+            ? ""
+            : new TextDecoder().decode(uploaderDeclaration.bytes);
+        if (/\bBlob\b/u.test(declarationText)) {
+          errors.push(
+            `${packedPackage.name}: public attachment uploader declaration must be DOM-free`,
+          );
+        }
+      }
       if (errors.length > 0) throw new Error(errors.join("\n"));
       await rm(extractedPackageDirectory, { recursive: true, force: true });
       await rm(extractionDirectory, { recursive: true, force: true });

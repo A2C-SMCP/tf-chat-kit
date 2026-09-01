@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 
-import { act, createElement, type ReactNode } from "react";
+import { act, createElement, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   ChatWorkspace,
+  ChatComposer,
+  type ChatComposerProps,
   ChatConversationList,
   ChatStateView,
   ChatUiShell,
@@ -14,7 +16,11 @@ import {
   type ChatCompactNavigationConfig,
   type ChatContentState,
 } from "../packages/chat-ui-antd/src/index.js";
-import { ChatProvider } from "../packages/chat-react/src/index.js";
+import {
+  ChatProvider,
+  type ChatAttachmentUploader,
+  type ComposerDraft,
+} from "../packages/chat-react/src/index.js";
 import { createChatClient } from "../packages/chat-runtime/src/index.js";
 import { createMemoryChatGateway } from "../packages/chat-testing/src/index.js";
 import { deadlineAt, flushMicrotasks } from "./support/chat-react.js";
@@ -692,6 +698,164 @@ describe("@turingfocus/chat-ui-antd shell", () => {
       expect(document.body.textContent).toContain(
         String(defaultChatUiLabels.loadingHistoryConversations),
       );
+    } finally {
+      await rendered.unmount();
+    }
+  });
+});
+
+describe("ChatComposer attachments and long text", () => {
+  const Harness = ({
+    onSend,
+    resetKey,
+    textInputDisabled,
+    uploader,
+  }: {
+    readonly onSend: ChatComposerProps["onSend"];
+    readonly resetKey?: string;
+    readonly textInputDisabled?: boolean;
+    readonly uploader?: ChatAttachmentUploader;
+  }) => {
+    const [draft, setDraft] = useState<ComposerDraft>({
+      attachments: [],
+      conversationId: "conversation-1",
+      longTexts: [],
+      revision: 0,
+      text: "",
+    });
+    return createElement(ChatComposer, {
+      attachmentUploader: uploader,
+      draft,
+      getDeadlineAt: deadlineAt,
+      longTextThreshold: 5,
+      onDraftChange: (next) =>
+        setDraft((current) => ({
+          ...current,
+          ...next,
+          revision: current.revision + 1,
+        })),
+      onSend,
+      resetKey,
+      textInputDisabled,
+    });
+  };
+
+  it("compacts a long paste but sends its complete content", async () => {
+    const onSend = vi.fn(async () => true);
+    const rendered = await renderInDom(createElement(Harness, { onSend }));
+    try {
+      const textarea = rendered.container.querySelector("textarea")!;
+      const event = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "clipboardData", {
+        value: { files: [], getData: () => "complete pasted content" },
+      });
+      await act(async () => {
+        textarea.dispatchEvent(event);
+        await flushMicrotasks();
+      });
+      expect(textarea.value).toBe("[Pasted text 1]");
+      await act(async () => {
+        findButtonByText(rendered.container, "Send").click();
+        await flushMicrotasks();
+      });
+      expect(onSend).toHaveBeenCalledWith("complete pasted content", []);
+    } finally {
+      await rendered.unmount();
+    }
+  });
+
+  it("uploads with the injected default-shaped port and sends the resource", async () => {
+    const onSend = vi.fn(async () => true);
+    const uploader: ChatAttachmentUploader = {
+      upload: vi.fn(async () => ({
+        ok: true as const,
+        value: { uri: "s3://notes", mimeType: "text/plain", name: "notes.txt" },
+      })),
+    };
+    const rendered = await renderInDom(
+      createElement(Harness, { onSend, textInputDisabled: true, uploader }),
+    );
+    try {
+      const input =
+        rendered.container.querySelector<HTMLInputElement>(
+          'input[type="file"]',
+        )!;
+      const file = new File(["notes"], "notes.txt", { type: "text/plain" });
+      Object.defineProperty(input, "files", {
+        configurable: true,
+        value: [file],
+      });
+      await act(async () => {
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        await flushMicrotasks();
+      });
+      expect(rendered.container.textContent).toContain("notes.txt");
+      await act(async () => {
+        findButtonByText(rendered.container, "Send").click();
+        await flushMicrotasks();
+      });
+      expect(onSend).toHaveBeenCalledWith("", [
+        { uri: "s3://notes", mimeType: "text/plain", name: "notes.txt" },
+      ]);
+    } finally {
+      await rendered.unmount();
+    }
+  });
+
+  it("discards an upload completion from a previous conversation reset", async () => {
+    let cancellation:
+      | Parameters<ChatAttachmentUploader["upload"]>[0]["cancellation"]
+      | undefined;
+    let resolveUpload:
+      | ((
+          result: Awaited<ReturnType<ChatAttachmentUploader["upload"]>>,
+        ) => void)
+      | undefined;
+    const uploader: ChatAttachmentUploader = {
+      upload: (input) =>
+        new Promise((resolve) => {
+          cancellation = input.cancellation;
+          resolveUpload = resolve;
+        }),
+    };
+    const onSend = vi.fn(async () => true);
+    const rendered = await renderInDom(
+      createElement(Harness, { onSend, resetKey: "first", uploader }),
+    );
+    try {
+      const input =
+        rendered.container.querySelector<HTMLInputElement>(
+          'input[type="file"]',
+        )!;
+      Object.defineProperty(input, "files", {
+        configurable: true,
+        value: [new File(["late"], "late.txt", { type: "text/plain" })],
+      });
+      await act(async () => {
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        await flushMicrotasks();
+      });
+      expect(cancellation?.aborted).toBe(false);
+      await act(async () => {
+        rendered.root.render(
+          createElement(Harness, { onSend, resetKey: "second", uploader }),
+        );
+        await flushMicrotasks();
+      });
+      expect(cancellation?.aborted).toBe(true);
+      await act(async () => {
+        resolveUpload?.({
+          ok: true,
+          value: {
+            mimeType: "text/plain",
+            name: "late.txt",
+            uri: "s3://late",
+          },
+        });
+        await flushMicrotasks();
+      });
+      expect(rendered.container.textContent).not.toContain("late.txt");
+      expect(onSend).not.toHaveBeenCalled();
     } finally {
       await rendered.unmount();
     }

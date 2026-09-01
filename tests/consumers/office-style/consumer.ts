@@ -263,6 +263,25 @@ export const runOfficeConsumerVerification = async (): Promise<void> => {
   ]);
   await act(flushMicrotasks);
   check(firstLoaded.ok && secondLoaded.ok, "both Office clients must load");
+  const attachmentSent = await firstInstance.client.sendMessage({
+    attachments: [
+      {
+        mimeType: "application/pdf",
+        name: "office-file.pdf",
+        uri: "office-host://uploaded/office-file.pdf",
+      },
+    ],
+    conversationId: first.fixtures.conversation.id,
+    deadlineAt: deadlineAt(),
+    text: "Review this Office document",
+  });
+  check(
+    attachmentSent.ok &&
+      firstInstance.gateway.controller.calls.some(
+        ({ operation }) => operation === "sendMessage",
+      ),
+    "a non-Front consumer must send a host-uploaded attachment",
+  );
   check(
     first.renderedConversationIds.includes(first.fixtures.conversation.id) &&
       second.renderedConversationIds.includes(second.fixtures.conversation.id),

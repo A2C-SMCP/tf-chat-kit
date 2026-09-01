@@ -81,6 +81,7 @@ const responseMessage = (
 
 interface RequestInput<T> {
   readonly body?: unknown;
+  readonly formData?: FormData | undefined;
   readonly conversationId?: string | undefined;
   readonly method: "DELETE" | "GET" | "PATCH" | "POST";
   readonly operation: SessionOperation;
@@ -210,15 +211,19 @@ export class TFRobotHttpClient {
       if (input.body !== undefined) {
         headers.set("Content-Type", "application/json");
       }
+      const requestBody =
+        input.formData !== undefined
+          ? input.formData
+          : input.body === undefined
+            ? undefined
+            : JSON.stringify(input.body);
       const responseOutcome = await awaitBounded(
         () =>
           this.#fetch(url, {
             method: input.method,
             headers,
             signal: controller.signal,
-            ...(input.body === undefined
-              ? {}
-              : { body: JSON.stringify(input.body) }),
+            ...(requestBody === undefined ? {} : { body: requestBody }),
           }),
         {
           deadlineAt: input.options.deadlineAt,

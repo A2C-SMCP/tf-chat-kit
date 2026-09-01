@@ -1,5 +1,22 @@
 # @turingfocus/chat-kit
 
+## 0.8.0-dev.0
+
+### Minor Changes
+
+- Add host-agnostic attachment messages, conversation-scoped composer drafts,
+  zero-extra-config TFRobot uploads, Ant Design file and long-paste interactions,
+  and non-TFRobotFront consumer coverage.
+
+### Patch Changes
+
+- Updated dependencies
+  - @turingfocus/chat-protocol@0.8.0-dev.0
+  - @turingfocus/chat-runtime@0.8.0-dev.0
+  - @turingfocus/chat-gateway-tfrobot@0.8.0-dev.0
+  - @turingfocus/chat-react@0.8.0-dev.0
+  - @turingfocus/chat-ui-antd@0.8.0-dev.0
+
 ## 0.7.0
 
 ### Minor Changes

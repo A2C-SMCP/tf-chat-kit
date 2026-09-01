@@ -114,6 +114,7 @@ export const createChatContractFixtures = (
       listConversations: true,
       liveUpdates: true,
       loadHistory: true,
+      sendAttachments: true,
       sendText: true,
     },
     pageInfo: { hasPreviousPage: false },

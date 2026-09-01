@@ -48,6 +48,7 @@ export const TFROBOT_CAPABILITIES = Object.freeze({
   listConversations: true,
   liveUpdates: true,
   loadHistory: true,
+  sendAttachments: true,
   sendText: true,
 });
 

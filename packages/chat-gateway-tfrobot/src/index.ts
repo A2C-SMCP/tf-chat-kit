@@ -4,6 +4,11 @@ export {
   TFROBOT_CAPABILITIES,
 } from "./gateway.js";
 export { createSocketIoFactory } from "./socket.js";
+export {
+  createTFRobotAttachmentUploader,
+  type TFRobotAttachmentUploader,
+  type TFRobotAttachmentUploadInput,
+} from "./attachment-uploader.js";
 export type {
   TFRobotGatewayOptions,
   TFRobotCurrentServerRebaseOptions,

@@ -61,6 +61,7 @@ export type ChatContentState =
     };
 
 export interface ChatUiLabels {
+  readonly attach: ReactNode;
   readonly askUserCancel: ReactNode;
   readonly askUserChatAboutThis: ReactNode;
   readonly askUserLabel: string;
@@ -115,7 +116,11 @@ export interface ChatUiLabels {
   readonly newMessages: ReactNode;
   readonly noConversations: ReactNode;
   readonly openEventDetail: string;
+  readonly pastedTextTitle: ReactNode;
+  readonly removeAttachment: string;
+  readonly removeLongText: string;
   readonly retry: ReactNode;
+  readonly retryUpload: string;
   readonly runStatusLabel: ReactNode;
   readonly send: ReactNode;
   readonly sending: ReactNode;

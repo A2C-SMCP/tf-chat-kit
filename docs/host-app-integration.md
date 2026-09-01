@@ -6,7 +6,7 @@
 
 - 查询和切换会话；
 - 加载历史消息并接收实时更新；
-- 发送文本、展示 Run 状态并中断可中断的 Run；
+- 发送文本或附件、无损收纳长文本粘贴、展示 Run 状态并中断可中断的 Run；
 - 在路由切换、账号切换或组件卸载时释放 HTTP、Socket 和订阅资源；
 - 继续由宿主管理登录、Token 刷新、路由、主题、国际化和平台能力。
 
@@ -160,6 +160,11 @@ export const getChatDeadlineAt = deadlineAt;
 - 内部受控宿主如果确实需要 Admin Token，可以返回 `{ kind: "admin", adminKey }`；不要把该模式用于第三方浏览器应用。
 - `messageCreatorProvider` 与认证分开，Gateway 不解析 Token 来猜用户身份。
 - `deadlineAt` 是 Unix epoch 毫秒的**绝对截止时间**，不是超时秒数；每次操作都要生成新值。
+- 默认 `createTFRobotChatClientFactory()` 会从同一组 `baseUrl`、`SessionProvider` 和 `fetch`
+  自动创建附件上传器，调用 TFRobotServer 的 `POST /v1/dashboard/remote/source/cos/upload`；宿主
+  不需要配置上传 URL、COS 或额外凭据。上传端点不可用或无权限时只影响附件，纯文本仍可发送。
+- React/UI 只看到通用 `ChatAttachmentUploader`。非 TFRobot 后端或具有平台上传策略的宿主可向
+  `ChatProvider` 传入自己的 uploader；不要在 UI 中读取 Gateway、Token 或固定 COS 路径。
 
 #### `current-server` 兼容档位
 
@@ -232,12 +237,15 @@ export function ChatRoute({ config }: { config: HostChatConfig }) {
 如果宿主在 React 树外创建并持有 `ChatClient`，改用：
 
 ```tsx
-<ChatProvider client={hostOwnedClient}>
+<ChatProvider
+  client={hostOwnedClient}
+  attachmentUploader={hostOwnedAttachmentUploader}
+>
   <HostChatWorkspace />
 </ChatProvider>
 ```
 
-此时 `ChatProvider` **不会**释放外部实例；宿主必须在对应生命周期中执行：
+此时 `ChatProvider` **不会**释放外部 client 或 uploader；宿主必须在对应生命周期中执行：
 
 ```ts
 await hostOwnedClient.dispose({ deadlineAt: Date.now() + 10_000 });

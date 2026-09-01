@@ -1,6 +1,11 @@
 import { useCallback, useContext, useMemo, useSyncExternalStore } from "react";
 
 import type { ChatClient } from "@turingfocus/chat-runtime";
+import type {
+  ComposerDraft,
+  SetComposerDraftInput,
+} from "@turingfocus/chat-runtime";
+import type { ChatAttachmentUploader } from "./attachment-upload.js";
 
 import {
   ChatContext,
@@ -35,6 +40,43 @@ const useChatSubscription = (
   );
 
 export const useChatClient = (): ChatClient => useChatContext().client;
+
+export const useChatAttachmentUploader = ():
+  ChatAttachmentUploader | undefined => useChatContext().attachmentUploader;
+
+export interface ComposerDraftBinding {
+  readonly draft: ComposerDraft;
+  readonly setDraft: (
+    input: Omit<SetComposerDraftInput, "conversationId">,
+  ) => void;
+}
+
+export const useComposerDraft = (
+  conversationId: string,
+): ComposerDraftBinding => {
+  const client = useChatClient();
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => {
+      const subscription = client.subscribeComposerDraft((draft) => {
+        if (draft.conversationId === conversationId) onStoreChange();
+      });
+      return () => subscription.dispose();
+    },
+    [client, conversationId],
+  );
+  const getSnapshot = useCallback(
+    () => client.getComposerDraft(conversationId),
+    [client, conversationId],
+  );
+  const draft = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const setDraft = useCallback(
+    (input: Omit<SetComposerDraftInput, "conversationId">) => {
+      client.setComposerDraft({ conversationId, ...input });
+    },
+    [client, conversationId],
+  );
+  return useMemo(() => ({ draft, setDraft }), [draft, setDraft]);
+};
 
 export const useChatSnapshot = (): ChatSnapshotValue => {
   const { client, serverSnapshot } = useChatContext();
