@@ -74,6 +74,13 @@ const optionalRaw = (
   return raw === undefined ? {} : { raw };
 };
 
+const toolResult = (value: unknown): ReadonlyJsonValue => {
+  const result = safeRaw(value);
+  return result === undefined
+    ? "[Tool result omitted: exceeds safe display size or structure limits]"
+    : result;
+};
+
 const extraRaw = (
   value: Record<string, unknown>,
   knownKeys: ReadonlySet<string>,
@@ -691,7 +698,7 @@ const mapToolTransition = (
   const result =
     toolReturn?.["origin"] === undefined
       ? undefined
-      : safeRaw(toolReturn["origin"]);
+      : toolResult(toolReturn["origin"]);
   const success =
     typeof meta?.["success"] === "boolean" ? meta["success"] : undefined;
   const done = typeof meta?.["done"] === "boolean" ? meta["done"] : undefined;

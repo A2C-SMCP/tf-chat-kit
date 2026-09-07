@@ -15,6 +15,7 @@ import {
   ChatRunStatus,
   ChatWorkspace,
   createChatClient,
+  createTFRobotChatGateway,
   useChatClient,
   useChatSnapshot,
   type ChatClient,
@@ -350,7 +351,68 @@ const clickButton = async (
   });
 };
 
+const verifyLargeToolHistory = async (): Promise<void> => {
+  const gateway = createTFRobotChatGateway({
+    baseUrl: "https://tauri-contract.example/",
+    serverProfile: { kind: "current-server" },
+    sessionProvider: {
+      getSession: () => ({ kind: "bearer", token: "tauri-session" }),
+    },
+    messageCreatorProvider: () => ({ uid: "tauri-user", name: "Tauri user" }),
+    fetch: async (input) =>
+      new Response(
+        JSON.stringify({
+          code: 200,
+          message: "Success",
+          data: new URL(String(input)).pathname.endsWith("/status")
+            ? { working: false }
+            : {
+                messages: [],
+                events: [
+                  {
+                    conversationId: 10,
+                    eventId: "large-tool",
+                    eventScene: "Tool",
+                    status: "success",
+                    createTimestamp: 1,
+                    content: {
+                      toolReturn: {
+                        origin: "x".repeat(551_510),
+                        meta: { success: true },
+                      },
+                    },
+                  },
+                ],
+              },
+        }),
+      ),
+  });
+  try {
+    const result = await gateway.loadConversation({
+      conversationId: "10",
+      deadlineAt: deadlineAt(),
+    });
+    check(
+      result.ok,
+      "Tauri packed Gateway must load a history containing a 551510-character tool result",
+    );
+    if (!result.ok) return;
+    const event = result.value.timeline[0];
+    check(
+      event?.kind === "agent-event" &&
+        event.eventCategory === "tool" &&
+        event.transitions[0]?.toolReturn?.success === true &&
+        event.transitions[0]?.toolReturn?.result ===
+          "[Tool result omitted: exceeds safe display size or structure limits]",
+      "oversized tool details must explain omission while preserving the successful event",
+    );
+  } finally {
+    await gateway.dispose({ deadlineAt: deadlineAt() });
+  }
+};
+
 export const runTauriConsumerVerification = async (): Promise<void> => {
+  await verifyLargeToolHistory();
   const fixture = createTauriHostFixture();
   const dom = installDomEnvironment();
   let instance: TauriRuntimeInstance | undefined;

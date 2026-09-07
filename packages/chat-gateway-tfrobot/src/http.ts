@@ -14,8 +14,10 @@ import { awaitBounded } from "./bounded.js";
 import { responseEnvelopeSchema } from "./dto.js";
 import {
   sanitizeCredentialError,
+  sanitizeCredentialPayload,
   sanitizeCredentialRaw,
   sanitizeCredentialText,
+  TransportPayloadError,
 } from "./redaction.js";
 import { isValidTFRobotSession } from "./types.js";
 import type { TFRobotGatewayOptions, TFRobotSession } from "./types.js";
@@ -239,7 +241,6 @@ export class TFRobotHttpClient {
       }
       if (responseOutcome.kind === "error") throw responseOutcome.reason;
       const response = responseOutcome.value;
-      let payload: unknown;
       const payloadOutcome = await awaitBounded(() => response.json(), {
         deadlineAt: input.options.deadlineAt,
         now: this.#now,
@@ -251,18 +252,8 @@ export class TFRobotHttpClient {
       ) {
         return this.#interruptedResult(errorConversationId);
       }
-      if (payloadOutcome.kind === "error") {
-        payload = undefined;
-      } else {
-        try {
-          payload = sanitizeCredentialRaw(
-            payloadOutcome.value,
-            credentialValues,
-          );
-        } catch {
-          payload = undefined;
-        }
-      }
+      const payload: unknown =
+        payloadOutcome.kind === "error" ? undefined : payloadOutcome.value;
       if (!response.ok) {
         const error = chatErrorSchema.parse({
           code: statusErrorCode(response.status),
@@ -302,7 +293,9 @@ export class TFRobotHttpClient {
           }),
         };
       }
-      const parsed = input.schema.safeParse(envelope.data.data);
+      const parsed = input.schema.safeParse(
+        sanitizeCredentialPayload(envelope.data.data, credentialValues),
+      );
       if (!parsed.success) {
         return {
           ok: false,
@@ -333,6 +326,19 @@ export class TFRobotHttpClient {
       }
       return { ok: true, value: parsed.data };
     } catch (reason) {
+      if (reason instanceof TransportPayloadError) {
+        return {
+          ok: false,
+          error: chatErrorSchema.parse({
+            code: "validation",
+            message: reason.message,
+            retryable: false,
+            ...(errorConversationId === undefined
+              ? {}
+              : { conversationId: errorConversationId }),
+          }),
+        };
+      }
       const injectedError = chatErrorSchema.safeParse(reason);
       if (injectedError.success) {
         return {

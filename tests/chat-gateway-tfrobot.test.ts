@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { createChatClient } from "../packages/chat-runtime/src/index.js";
+import {
+  createChatContractFixtures,
+  createMemoryChatGateway,
+} from "../packages/chat-testing/src/index.js";
+
 import {
   createTFRobotChatGateway,
   type TFRobotSession,
@@ -190,6 +196,216 @@ const createSocketFixture = () => {
 };
 
 describe("TFRobotChatGateway REST boundary", () => {
+  it.each([
+    { label: "missing", payload: undefined },
+    { label: "null", payload: null },
+    { label: "over-budget", payload: Array(100_001).fill(null) },
+  ])(
+    "preserves unknown-event fallback with $label payload and keeps known events strict",
+    async ({ payload }) => {
+      const socketFixture = createSocketFixture();
+      const updates: ChatUpdate[] = [];
+      const errors: ChatError[] = [];
+      const gateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        sessionProvider: sessionProvider(),
+        socketFactory: socketFixture.factory,
+      });
+      try {
+        await gateway.subscribe(
+          { conversationId: "42", deadlineAt: deadline() },
+          {
+            next: (update) => updates.push(update),
+            error: (error) => errors.push(error),
+          },
+        );
+        const socket = socketFixture.sockets[0]!;
+        socket.trigger("future_event", payload);
+        expect(
+          updates.filter((update) => update.kind === "timeline.upsert"),
+        ).toMatchObject([
+          {
+            item: {
+              kind: "unknown-event",
+              originalType: "future_event",
+              conversationId: "42",
+            },
+          },
+        ]);
+        expect(errors).toEqual([]);
+        socket.trigger("chat_event");
+        expect(errors).toHaveLength(1);
+        expect(errors[0]?.code).toBe("validation");
+        socket.trigger("chat_message", messageDto);
+        expect(
+          updates.filter((update) => update.kind === "timeline.upsert"),
+        ).toHaveLength(2);
+      } finally {
+        await gateway.dispose({ deadlineAt: deadline() });
+      }
+    },
+  );
+
+  it.each([
+    { length: 100, count: 1, omitted: false },
+    { length: 262_144, count: 1, omitted: false },
+    { length: 262_145, count: 1, omitted: true },
+    { length: 551_510, count: 1, omitted: true },
+    { length: 220_000, count: 6, omitted: false },
+  ])(
+    "loads and streams tool results of $length characters across $count events",
+    async ({ length, count, omitted }) => {
+      const socketFixture = createSocketFixture();
+      const updates: ChatUpdate[] = [];
+      const errors: ChatError[] = [];
+      const origin = "x".repeat(length);
+      const events = Array.from({ length: count }, (_, index) => ({
+        ...eventDto,
+        eventId: `large-tool-${index}`,
+        eventScene: "Tool",
+        content: {
+          toolCall: { functionCall: { name: "Read", parameters: {} } },
+          toolReturn: { origin, meta: { success: true, done: true } },
+        },
+      }));
+      const gateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        sessionProvider: sessionProvider(),
+        socketFactory: socketFixture.factory,
+        fetch: async (input) =>
+          new URL(String(input)).pathname.endsWith("/status")
+            ? envelope({ working: false })
+            : envelope({ messages: [messageDto], events, cursor: "older" }),
+      });
+      try {
+        const loaded = await gateway.loadConversation({
+          conversationId: "42",
+          deadlineAt: deadline(),
+        });
+        expect(loaded.ok).toBe(true);
+        if (!loaded.ok) return;
+        expect(loaded.value.timeline).toHaveLength(count + 1);
+        const expectedResult = omitted
+          ? "[Tool result omitted: exceeds safe display size or structure limits]"
+          : origin;
+        const historyEvents = loaded.value.timeline.filter(
+          (item) => item.kind === "agent-event",
+        );
+        expect(historyEvents).toHaveLength(count);
+        for (const event of historyEvents) {
+          expect(event).toMatchObject({
+            eventCategory: "tool",
+            status: "success",
+            transitions: [
+              {
+                toolReturn: {
+                  result: expectedResult,
+                  success: true,
+                  done: true,
+                },
+              },
+            ],
+          });
+        }
+        const paged = await gateway.loadConversation({
+          conversationId: "42",
+          previousCursor: "older",
+          deadlineAt: deadline(),
+        });
+        expect(paged).toEqual(loaded);
+        const subscribed = await gateway.subscribe(
+          { conversationId: "42", deadlineAt: deadline() },
+          {
+            next: (update) => updates.push(update),
+            error: (error) => errors.push(error),
+          },
+        );
+        expect(subscribed.ok).toBe(true);
+        for (const event of events)
+          socketFixture.sockets[0]!.trigger("chat_event", event);
+        const realtime = updates.filter(
+          (update) => update.kind === "event.transition.upsert",
+        );
+        expect(realtime).toHaveLength(count);
+        for (const update of realtime) {
+          expect(update.event.transition).toMatchObject({
+            toolReturn: { result: expectedResult, success: true, done: true },
+          });
+        }
+        expect(errors).toEqual([]);
+        expect(JSON.stringify(loaded)).not.toContain("message-secret");
+        await gateway.dispose({ deadlineAt: deadline() });
+        const before = updates.length;
+        socketFixture.sockets[0]!.trigger("chat_event", events[0]);
+        expect(updates).toHaveLength(before);
+      } finally {
+        await gateway.dispose({ deadlineAt: deadline() });
+      }
+    },
+  );
+
+  it("shows a bounded explanation for aggregate tool result limits and preserves status", () => {
+    const origin = Array.from({ length: 5 }, () => "x".repeat(262_144));
+    const mapped = mapEvent({
+      ...eventDto,
+      eventScene: "Tool",
+      content: {
+        toolReturn: { origin, meta: { success: true } },
+      },
+    });
+    expect(mapped).toMatchObject({
+      eventCategory: "tool",
+      transitions: [
+        {
+          toolReturn: {
+            result:
+              "[Tool result omitted: exceeds safe display size or structure limits]",
+            success: true,
+          },
+        },
+      ],
+    });
+  });
+
+  it("reports Socket structural limits accurately and continues with the next event", async () => {
+    const socketFixture = createSocketFixture();
+    const errors: ChatError[] = [];
+    const updates: ChatUpdate[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+      socketFactory: socketFixture.factory,
+    });
+    try {
+      await gateway.subscribe(
+        { conversationId: "42", deadlineAt: deadline() },
+        {
+          next: (update) => updates.push(update),
+          error: (error) => errors.push(error),
+        },
+      );
+      socketFixture.sockets[0]!.trigger("chat_event", {
+        ...eventDto,
+        extra: Array(100_001).fill(null),
+      });
+      expect(errors).toMatchObject([
+        {
+          code: "validation",
+          message: "TFRobot payload exceeds transport node limit (100000)",
+        },
+      ]);
+      socketFixture.sockets[0]!.trigger("chat_event", eventDto);
+      expect(
+        updates.filter((update) => update.kind === "event.transition.upsert"),
+      ).toHaveLength(1);
+    } finally {
+      await gateway.dispose({ deadlineAt: deadline() });
+    }
+  });
+
   it("normalizes received image and multipart resources without UI reading raw DTOs", () => {
     expect(
       mapMessage({
@@ -2399,6 +2615,79 @@ describe("TFRobotChatGateway current-server profile", () => {
     kind: "current-server" as const,
     rebase: { deadlineMs: 1_000, maxItems: 10, maxPages: 2, pageSize: 5 },
   };
+
+  it("opens large history through Runtime and keeps rebase and duplicate delivery consistent", async () => {
+    const largeEvent = {
+      ...eventDto,
+      eventScene: "Tool",
+      content: {
+        toolReturn: { origin: "x".repeat(551_510), meta: { success: true } },
+      },
+    };
+    const history = {
+      messages: [messageDto],
+      events: [largeEvent],
+      cursor: null,
+    };
+    const fixture = createCurrentServerFixture({
+      history: [history, history, history],
+    });
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/",
+      messageCreatorProvider,
+      serverProfile: currentServerProfile,
+      sessionProvider: fixture.sessionProvider,
+      fetch: fixture.fetch,
+      socketFactory: fixture.socketFactory,
+    });
+    const client = createChatClient({ gateway });
+    try {
+      const loaded = await client.loadConversation({
+        conversationId: "42",
+        deadlineAt: deadline(),
+      });
+      expect(loaded.ok).toBe(true);
+      if (!loaded.ok) return;
+      expect(loaded.value.timeline).toHaveLength(2);
+      const memory = createMemoryChatGateway({
+        fixtures: {
+          ...createChatContractFixtures({ conversationId: "42" }),
+          initialSnapshot: loaded.value,
+        },
+      });
+      const memoryClient = createChatClient({ gateway: memory.gateway });
+      try {
+        const memoryLoaded = await memoryClient.loadConversation({
+          conversationId: "42",
+          deadlineAt: deadline(),
+        });
+        expect(memoryLoaded.ok).toBe(true);
+        expect(memoryClient.getSnapshot()?.timeline).toEqual(
+          client.getSnapshot()?.timeline,
+        );
+      } finally {
+        await memoryClient.dispose({ deadlineAt: deadline() });
+      }
+      fixture.socket.trigger("chat_event", largeEvent);
+      const afterRealtime = client.getSnapshot()?.timeline;
+      expect(afterRealtime).toHaveLength(2);
+      expect(afterRealtime).toMatchObject(loaded.value.timeline);
+      fixture.socket.trigger("chat_event", largeEvent);
+      expect(client.getSnapshot()?.timeline).toEqual(afterRealtime);
+      fixture.socket.forceDisconnect();
+      fixture.socket.connect();
+      await vi.waitFor(() =>
+        expect(client.getSnapshot()?.lifecycle).toMatchObject({
+          status: "degraded",
+          recovery: { complete: false, source: "rest-rebase" },
+        }),
+      );
+      expect(client.getSnapshot()?.timeline).toEqual(afterRealtime);
+      expect(client.getSnapshot()?.activeErrors ?? []).toEqual([]);
+    } finally {
+      await client.dispose({ deadlineAt: deadline() });
+    }
+  });
 
   it("preflights with the Socket session and treats an empty ACK as degraded", async () => {
     const fixture = createCurrentServerFixture();

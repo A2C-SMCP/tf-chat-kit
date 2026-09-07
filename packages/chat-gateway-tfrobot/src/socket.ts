@@ -36,8 +36,10 @@ import {
 } from "./mapper.js";
 import {
   sanitizeCredentialError,
+  sanitizeCredentialPayload,
   sanitizeCredentialRaw,
   sanitizeCredentialText,
+  TransportPayloadError,
 } from "./redaction.js";
 import { isValidTFRobotSession, resolveTFRobotServerProfile } from "./types.js";
 import type { StatusDto } from "./dto.js";
@@ -754,13 +756,8 @@ export class TFRobotSocketClient {
       else pendingNotifications.push({ kind: "error", error });
       diagnose(error);
     };
-    const sanitizePayload = (payload: unknown): unknown => {
-      try {
-        return sanitizeCredentialRaw(payload, credentialValues);
-      } catch {
-        return undefined;
-      }
-    };
+    const sanitizePayload = (payload: unknown): unknown =>
+      sanitizeCredentialPayload(payload, credentialValues);
     const next = (update: Parameters<GatewayObserver["next"]>[0]): void => {
       if (!active.active) return;
       const updateConversationId =
@@ -795,8 +792,23 @@ export class TFRobotSocketClient {
     };
     publishUpdate = next;
     const dispatchRealtime = (action: () => void): void => {
-      if (active.acceptingEvents) action();
-      else if (joinPending) pendingRealtimeActions.push(action);
+      const guardedAction = (): void => {
+        try {
+          action();
+        } catch (reason) {
+          if (!(reason instanceof TransportPayloadError)) throw reason;
+          report(
+            this.#error(
+              "validation",
+              reason.message,
+              false,
+              errorConversationId(),
+            ),
+          );
+        }
+      };
+      if (active.acceptingEvents) guardedAction();
+      else if (joinPending) pendingRealtimeActions.push(guardedAction);
     };
     const flushRealtime = (): void => {
       for (const action of pendingRealtimeActions.splice(0)) action();
@@ -874,11 +886,13 @@ export class TFRobotSocketClient {
       let update: Parameters<GatewayObserver["next"]>[0];
       try {
         update = map();
-      } catch {
+      } catch (reason) {
         report(
           this.#error(
             "validation",
-            invalidMessage,
+            reason instanceof TransportPayloadError
+              ? reason.message
+              : invalidMessage,
             false,
             errorConversationId(),
           ),
@@ -1650,10 +1664,29 @@ export class TFRobotSocketClient {
       dispatchRealtime(() => {
         if (KNOWN_EVENTS.has(eventName)) return;
         if (belongsToForeignConversation(payload, conversationId)) return;
+        // An unknown event needs only its name/time to remain visible. Its
+        // optional payload must not turn a safe fallback into a stream error.
+        let safePayload: unknown;
+        if (payload !== undefined) {
+          try {
+            safePayload = sanitizePayload(payload);
+          } catch (reason) {
+            diagnose(
+              this.#error(
+                "validation",
+                reason instanceof TransportPayloadError
+                  ? reason.message
+                  : "Unknown TFRobot Socket payload could not be retained",
+                false,
+                errorConversationId(),
+              ),
+            );
+          }
+        }
         mapAndNext("Unknown TFRobot Socket event could not be normalized", () =>
           mapUnknownSocketEvent(
             sanitizeCredentialText(eventName, credentialValues),
-            sanitizePayload(payload),
+            safePayload,
             errorConversationId(),
             this.#now(),
           ),
@@ -1922,7 +1955,7 @@ export class TFRobotSocketClient {
         credentialValues,
       );
       const safeStatus = statusDtoSchema.parse(
-        sanitizeCredentialRaw(result.value, credentialValues),
+        sanitizeCredentialPayload(result.value, credentialValues),
       );
       const run = mapRun(updateConversationId, safeStatus);
       const previous = this.#runs.get(conversationId);
