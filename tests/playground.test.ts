@@ -116,6 +116,30 @@ describe("private Chat Kit playground", () => {
       conversations: [{ id: "conversation-contract" }],
       selectedConversationId: "conversation-contract",
     });
+    const uploaded = await session.attachmentUploader.upload({
+      blob: new Blob(["mock image bytes"], { type: "image/png" }),
+      deadlineAt: Date.now() + 1_000,
+      fileName: "acceptance.png",
+      mimeType: "image/png",
+    });
+    expect(uploaded).toEqual({
+      ok: true,
+      value: {
+        mimeType: "image/png",
+        name: "acceptance.png",
+        size: 16,
+        uri: expect.stringMatching(/^(?:blob:|mock-upload:\/\/attachment\/)/u),
+      },
+    });
+    if (!uploaded.ok) throw new Error("Mock upload unexpectedly failed");
+    await expect(
+      session.attachmentUploader.upload({
+        blob: new Blob(["cancelled"]),
+        deadlineAt: Date.now() + 1_000,
+        fileName: "cancelled.txt",
+        cancellation: { aborted: true, subscribe: () => () => undefined },
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "timeout" } });
 
     const beforeHistory = session.client.getSnapshot()!.timeline;
     await session.loadHistory();
@@ -198,10 +222,37 @@ describe("private Chat Kit playground", () => {
       connected: true,
       contentState: { kind: "ready" },
     });
+    await expect(
+      session.client.sendMessage({
+        attachments: [uploaded.value],
+        conversationId: "conversation-contract",
+        deadlineAt: Date.now() + 1_000,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(session.client.getSnapshot()?.timeline).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          content: {
+            kind: "media",
+            mediaType: "image",
+            resource: uploaded.value,
+            summary: "acceptance.png",
+          },
+          role: "user",
+        }),
+      ]),
+    );
 
     await session.dispose();
     expect(session.disposed).toBe(true);
     expect(session.client.disposed).toBe(true);
+    await expect(
+      session.attachmentUploader.upload({
+        blob: new Blob(["late"]),
+        deadlineAt: Date.now() + 1_000,
+        fileName: "late.txt",
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "conflict" } });
   });
 
   it("renders the real page and disposes replaced and unmounted instances", async () => {
@@ -217,6 +268,12 @@ describe("private Chat Kit playground", () => {
     const root = createRoot(container);
     let mounted = true;
     const previous = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+    const createObjectUrl = vi
+      .spyOn(URL, "createObjectURL")
+      .mockReturnValue("blob:https://playground.local/page-image");
+    const revokeObjectUrl = vi
+      .spyOn(URL, "revokeObjectURL")
+      .mockImplementation(() => undefined);
     Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
 
     try {
@@ -244,6 +301,11 @@ describe("private Chat Kit playground", () => {
       }
 
       expect(container.textContent).toContain("事件详情模式");
+      expect(
+        [...container.querySelectorAll("button")].some(
+          (button) => button.textContent === "上传附件",
+        ),
+      ).toBe(true);
       const splitMode = [
         ...container.querySelectorAll<HTMLElement>(".ant-segmented-item"),
       ].find((item) => item.textContent === "双栏");
@@ -319,6 +381,46 @@ describe("private Chat Kit playground", () => {
       const active = sessions.at(-1)!;
       const clientListener = vi.fn();
       const clientSubscription = active.client.subscribe(clientListener);
+      const fileInput =
+        container.querySelector<HTMLInputElement>('input[type="file"]');
+      expect(fileInput).not.toBeNull();
+      const imageFile = Object.assign(
+        new Blob(["page image"], { type: "image/png" }),
+        { lastModified: Date.now(), name: "page-image.png" },
+      ) as File;
+      Object.defineProperty(fileInput!, "files", {
+        configurable: true,
+        value: [imageFile],
+      });
+      await act(async () => {
+        fileInput!.dispatchEvent(new Event("change", { bubbles: true }));
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => {
+        expect(container.textContent).toContain("page-image.png");
+        expect(
+          [...container.querySelectorAll("button")].find(
+            (button) =>
+              button.textContent?.replaceAll(/\s/gu, "") === "发送" &&
+              !button.disabled,
+          ),
+          container.textContent ?? "",
+        ).toBeDefined();
+      });
+      const sendImage = [...container.querySelectorAll("button")].find(
+        (button) =>
+          button.textContent?.replaceAll(/\s/gu, "") === "发送" &&
+          !button.disabled,
+      );
+      await act(async () => {
+        sendImage!.click();
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => {
+        expect(
+          container.querySelector('img[alt="page-image.png"]'),
+        ).not.toBeNull();
+      });
       await act(async () => active.startStreaming());
 
       const replace = [...container.querySelectorAll("button")].find(
@@ -381,6 +483,8 @@ describe("private Chat Kit playground", () => {
       if (mounted) {
         await act(async () => root.unmount());
       }
+      createObjectUrl.mockRestore();
+      revokeObjectUrl.mockRestore();
       container.remove();
       if (previous === undefined) {
         Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT");

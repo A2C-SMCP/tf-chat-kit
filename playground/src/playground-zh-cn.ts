@@ -1,6 +1,7 @@
 import type { ChatUiLabelOverrides } from "@turingfocus/chat-ui-antd";
 
 export const playgroundChatLabels: ChatUiLabelOverrides = Object.freeze({
+  attach: "上传附件",
   askUserCancel: "取消",
   askUserChatAboutThis: "聊聊这个问题",
   askUserLabel: "需要用户输入",
@@ -42,6 +43,7 @@ export const playgroundChatLabels: ChatUiLabelOverrides = Object.freeze({
   noHistoryConversations: "暂无历史会话",
   openEventDetail: "打开事件详情",
   retry: "重试",
+  removeAttachment: "移除附件",
   runStatusLabel: "运行状态",
   send: "发送",
   sending: "发送中",

@@ -161,6 +161,9 @@ export const createHostChatClientFactory = (
       onCreate(client);
       return client;
     },
+    ...(factory.createAttachmentUploader === undefined
+      ? {}
+      : { createAttachmentUploader: factory.createAttachmentUploader }),
     getDisposeOptions: factory.getDisposeOptions,
   };
 };

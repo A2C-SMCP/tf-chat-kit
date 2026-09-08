@@ -11,7 +11,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { ChatSnapshot } from "../packages/chat-protocol/src/index.js";
-import { ChatProvider } from "../packages/chat-react/src/index.js";
+import {
+  ChatProvider,
+  ChatDocumentSourceProvider,
+} from "../packages/chat-react/src/index.js";
 import {
   ChatConversationView,
   type AskUserChatAboutThisRequest,
@@ -850,6 +853,42 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
     }
   });
 
+  it("keeps edits made while the default composer send is in flight", async () => {
+    const { client, memory } = await createLoadedClient();
+    const sendHold = memory.controller.holdNext("sendText");
+    const rendered = await renderInDom(
+      createElement(
+        ChatProvider,
+        { client },
+        createElement(ChatConversationView, { getDeadlineAt: deadlineAt }),
+      ),
+    );
+
+    try {
+      await setComposerText(rendered.container, "submitted revision");
+      await clickButton(rendered.container, "Send");
+      await sendHold.started;
+      await setComposerText(rendered.container, "new unsent revision");
+      sendHold.release();
+      await act(async () => {
+        await sendHold.completed;
+        await flushMicrotasks();
+      });
+      expect(
+        rendered.container.querySelector<HTMLTextAreaElement>(
+          'textarea[aria-label="Message"]',
+        )?.value,
+      ).toBe("new unsent revision");
+      expect(
+        memory.controller.calls.find((call) => call.operation === "sendText"),
+      ).toMatchObject({ input: { text: "submitted revision" } });
+    } finally {
+      sendHold.release();
+      await rendered.unmount();
+      await client.dispose({ deadlineAt: deadlineAt() });
+    }
+  });
+
   it("ignores a held send failure after switching A to B and back to A", async () => {
     const { client, memory } = await createLoadedClient();
     const sendHold = memory.controller.holdNext("sendText");
@@ -1306,4 +1345,115 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
       await client.dispose({ deadlineAt: deadlineAt() });
     }
   });
+
+  it("allows an attachment-only turn when text sending is unavailable", async () => {
+    const { client, memory } = await createLoadedClient();
+    memory.controller.emitUpdateToAll({
+      kind: "capabilities.replace",
+      conversationId: memory.fixtures.conversation.id,
+      capabilities: {
+        ...memory.fixtures.initialSnapshot.capabilities,
+        sendAttachments: true,
+        sendText: false,
+      },
+    });
+    const uploader = {
+      upload: vi.fn(async () => ({
+        ok: true as const,
+        value: {
+          mimeType: "application/pdf",
+          name: "attachment.pdf",
+          uri: "s3://attachment",
+        },
+      })),
+    };
+    const rendered = await renderInDom(
+      createElement(
+        ChatProvider,
+        { attachmentUploader: uploader, client },
+        createElement(ChatConversationView, { getDeadlineAt: deadlineAt }),
+      ),
+    );
+    try {
+      const input =
+        rendered.container.querySelector<HTMLInputElement>(
+          'input[type="file"]',
+        );
+      if (input === null) throw new Error("Attachment input not found");
+      Object.defineProperty(input, "files", {
+        configurable: true,
+        value: [
+          new File(["attachment"], "attachment.pdf", {
+            type: "application/pdf",
+          }),
+        ],
+      });
+      await act(async () => {
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        await flushMicrotasks();
+      });
+      expect(
+        rendered.container.querySelector<HTMLTextAreaElement>(
+          'textarea[aria-label="Message"]',
+        )?.disabled,
+      ).toBe(true);
+      await clickButton(rendered.container, "Send");
+      expect(
+        memory.controller.calls.find(
+          (call) => call.operation === "sendMessage",
+        ),
+      ).toMatchObject({
+        input: {
+          attachments: [{ uri: "s3://attachment" }],
+          text: "",
+        },
+      });
+    } finally {
+      await rendered.unmount();
+      await client.dispose({ deadlineAt: deadlineAt() });
+    }
+  });
+});
+
+it("selects a host document from the default composer and sends its complete authorized text (#69)", async () => {
+  const { client, memory } = await createLoadedClient();
+  const content = "authorized document ".repeat(1_000);
+  const rendered = await renderInDom(
+    createElement(
+      ChatProvider,
+      { client },
+      createElement(
+        ChatDocumentSourceProvider,
+        {
+          source: { list: () => [{ id: "doc", title: "Handbook", content }] },
+        },
+        createElement(ChatConversationView, { getDeadlineAt: deadlineAt }),
+      ),
+    ),
+  );
+  try {
+    await clickButton(rendered.container, "References");
+    await clickButton(rendered.container, "Load references");
+    await clickButton(rendered.container, "Handbook");
+    expect(
+      client.getComposerDraft(memory.fixtures.conversation.id).longTexts,
+    ).toHaveLength(1);
+    await clickButton(rendered.container, "Send");
+    const sent = memory.controller.calls.find(
+      (call) =>
+        call.operation === "sendMessage" || call.operation === "sendText",
+    );
+    expect({
+      calls: memory.controller.calls.map((call) => call.operation),
+      errors: [...rendered.container.querySelectorAll(".ant-alert")].map(
+        (node) => node.textContent,
+      ),
+    }).toEqual(
+      expect.objectContaining({ calls: expect.arrayContaining(["sendText"]) }),
+    );
+    expect(sent).toMatchObject({ input: { text: `Handbook\n${content}` } });
+  } finally {
+    await rendered.unmount();
+    await client.dispose({ deadlineAt: deadlineAt() });
+  }
 });

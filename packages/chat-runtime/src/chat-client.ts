@@ -9,6 +9,7 @@ import {
   isGatewayOperationSupported,
   listConversationsInputSchema,
   renameConversationInputSchema,
+  sendMessageInputSchema,
   type AnswerInteractionInput,
   type AnswerInteractionSuccess,
   type ChatError,
@@ -31,6 +32,8 @@ import {
   type RenameConversationInput,
   type SendTextInput,
   type SendTextSuccess,
+  type SendMessageInput,
+  type SendMessageSuccess,
 } from "@turingfocus/chat-protocol";
 
 import {
@@ -55,6 +58,15 @@ import {
   type SnapshotSubscription,
 } from "./snapshot-store.js";
 import { mergeHistoryTimeline } from "./timeline.js";
+import {
+  areComposerLongTextsValid,
+  emptyComposerDraft,
+  rebaseComposerLongTexts,
+  resolveComposerDraftText,
+  type ComposerDraft,
+  type ComposerDraftListener,
+  type SetComposerDraftInput,
+} from "./composer-draft.js";
 
 export interface ChatClientOptions {
   /** The instance-owned transport port. ChatClient disposes it on shutdown. */
@@ -167,6 +179,16 @@ export class ChatClient {
   #generation = 0;
   #gatewaySubscription: GatewaySubscription | undefined;
   readonly #interactionAnswersInFlight = new Set<string>();
+  readonly #composerDrafts = new Map<string, ComposerDraft>();
+  readonly #composerListeners = new Set<ComposerDraftListener>();
+  readonly #composerSendsInFlight = new Map<
+    string,
+    Promise<GatewayResult<SendMessageSuccess>>
+  >();
+  readonly #messageSendsInFlight = new Map<
+    string,
+    Promise<GatewayResult<SendMessageSuccess>>
+  >();
   readonly #retiredInteractionIdentities = new Set<string>();
   readonly #supersededInteractionAnswers = new Set<string>();
   #historyRequestId = 0;
@@ -202,6 +224,107 @@ export class ChatClient {
   /** Subscribes to active snapshot state, including `null` after deletion. */
   subscribeState(listener: ChatSnapshotStateListener): ChatClientSubscription {
     return this.#snapshotStore.subscribeState(listener);
+  }
+
+  getComposerDraft(conversationId: string): ComposerDraft {
+    const existing = this.#composerDrafts.get(conversationId);
+    if (existing !== undefined) return existing;
+    const empty = emptyComposerDraft(conversationId);
+    if (!this.#disposed) this.#composerDrafts.set(conversationId, empty);
+    return empty;
+  }
+
+  setComposerDraft(input: SetComposerDraftInput): ComposerDraft {
+    if (this.#disposed) return this.getComposerDraft(input.conversationId);
+    const current = this.getComposerDraft(input.conversationId);
+    const nextText = input.text ?? current.text;
+    const nextLongTexts =
+      input.longTexts ??
+      rebaseComposerLongTexts(current.text, nextText, current.longTexts);
+    if (!areComposerLongTextsValid(nextText, nextLongTexts)) {
+      throw new TypeError("Composer long-text anchors are invalid");
+    }
+    const next = cloneImmutable({
+      conversationId: input.conversationId,
+      text: nextText,
+      attachments: input.attachments ?? current.attachments,
+      longTexts: nextLongTexts,
+      revision: current.revision + 1,
+    });
+    this.#composerDrafts.set(input.conversationId, next);
+    for (const listener of this.#composerListeners) {
+      try {
+        listener(next);
+      } catch (cause) {
+        this.#reportUnhandledError({ cause, source: "listener" });
+      }
+    }
+    return next;
+  }
+
+  subscribeComposerDraft(
+    listener: ComposerDraftListener,
+  ): ChatClientSubscription {
+    if (this.#disposed) return { closed: true, dispose: () => undefined };
+    this.#composerListeners.add(listener);
+    let active = true;
+    return {
+      get closed() {
+        return !active;
+      },
+      dispose: () => {
+        if (!active) return;
+        active = false;
+        this.#composerListeners.delete(listener);
+      },
+    };
+  }
+
+  async sendComposerDraft(
+    input: GatewayRequestOptions & {
+      readonly conversationId: string;
+      readonly clientMessageId?: string | undefined;
+    },
+  ): Promise<GatewayResult<SendMessageSuccess>> {
+    const inFlightKey =
+      input.clientMessageId === undefined
+        ? undefined
+        : `${input.conversationId.length}:${input.conversationId}:${input.clientMessageId}`;
+    if (inFlightKey !== undefined) {
+      const existing = this.#composerSendsInFlight.get(inFlightKey);
+      if (existing !== undefined) return existing;
+    }
+    const draft = this.getComposerDraft(input.conversationId);
+    const operation = (async (): Promise<GatewayResult<SendMessageSuccess>> => {
+      const result = await this.sendMessage({
+        conversationId: input.conversationId,
+        deadlineAt: input.deadlineAt,
+        text: resolveComposerDraftText(draft),
+        attachments: draft.attachments,
+        ...(input.clientMessageId === undefined
+          ? {}
+          : { clientMessageId: input.clientMessageId }),
+      });
+      if (result.ok && this.getComposerDraft(input.conversationId) === draft) {
+        this.setComposerDraft({
+          conversationId: input.conversationId,
+          text: "",
+          attachments: [],
+          longTexts: [],
+        });
+      }
+      return result;
+    })();
+    if (inFlightKey !== undefined) {
+      this.#composerSendsInFlight.set(inFlightKey, operation);
+      const clearInFlight = (): void => {
+        if (this.#composerSendsInFlight.get(inFlightKey) === operation) {
+          this.#composerSendsInFlight.delete(inFlightKey);
+        }
+      };
+      void operation.then(clearInFlight, clearInFlight);
+    }
+    return operation;
   }
 
   /**
@@ -368,6 +491,18 @@ export class ChatClient {
         "Gateway deleted a different conversation",
         parsed.data.conversationId,
       );
+    }
+    if (result.ok) {
+      this.#composerDrafts.delete(parsed.data.conversationId);
+      const sendKeyPrefix = `${parsed.data.conversationId.length}:${parsed.data.conversationId}:`;
+      for (const key of this.#composerSendsInFlight.keys()) {
+        if (key.startsWith(sendKeyPrefix))
+          this.#composerSendsInFlight.delete(key);
+      }
+      for (const key of this.#messageSendsInFlight.keys()) {
+        if (key.startsWith(sendKeyPrefix))
+          this.#messageSendsInFlight.delete(key);
+      }
     }
     if (
       result.ok &&
@@ -585,6 +720,75 @@ export class ChatClient {
     return result;
   }
 
+  async sendMessage(
+    input: SendMessageInput,
+  ): Promise<GatewayResult<SendMessageSuccess>> {
+    const parsed = sendMessageInputSchema.safeParse(input);
+    if (!parsed.success) {
+      return runtimeFailure(
+        "validation",
+        "Message input is invalid",
+        typeof input.conversationId === "string"
+          ? input.conversationId
+          : undefined,
+      );
+    }
+    const command = parsed.data;
+    const attachments = command.attachments ?? [];
+    if (attachments.length === 0) {
+      return this.sendText({
+        conversationId: command.conversationId,
+        deadlineAt: command.deadlineAt,
+        text: command.text ?? "",
+        ...(command.clientMessageId === undefined
+          ? {}
+          : { clientMessageId: command.clientMessageId }),
+      });
+    }
+
+    const state = this.#activeState(command.conversationId);
+    if (!state.ok) return state;
+    if (
+      !isGatewayOperationSupported(
+        state.value.capabilities,
+        "sendAttachments",
+      ) ||
+      this.#gateway.sendMessage === undefined
+    ) {
+      return runtimeFailure(
+        "unsupported",
+        "Attachment sending is unavailable",
+        command.conversationId,
+      );
+    }
+
+    const inFlightKey =
+      command.clientMessageId === undefined
+        ? undefined
+        : `${command.conversationId.length}:${command.conversationId}:${command.clientMessageId}`;
+    if (inFlightKey !== undefined) {
+      const existing = this.#messageSendsInFlight.get(inFlightKey);
+      if (existing !== undefined) return existing;
+    }
+    const generation = this.#generation;
+    const operation = (async (): Promise<GatewayResult<SendMessageSuccess>> => {
+      const result = await this.#gateway.sendMessage!(command);
+      if (!result.ok && !this.#disposed)
+        this.#reportError(result.error, generation, "command");
+      return result;
+    })();
+    if (inFlightKey !== undefined) {
+      this.#messageSendsInFlight.set(inFlightKey, operation);
+      const clearInFlight = (): void => {
+        if (this.#messageSendsInFlight.get(inFlightKey) === operation) {
+          this.#messageSendsInFlight.delete(inFlightKey);
+        }
+      };
+      void operation.then(clearInFlight, clearInFlight);
+    }
+    return operation;
+  }
+
   async answerInteraction(
     input: AnswerInteractionInput,
   ): Promise<GatewayResult<AnswerInteractionSuccess>> {
@@ -769,6 +973,10 @@ export class ChatClient {
     this.#interactionAnswersInFlight.clear();
     this.#retiredInteractionIdentities.clear();
     this.#supersededInteractionAnswers.clear();
+    this.#composerSendsInFlight.clear();
+    this.#messageSendsInFlight.clear();
+    this.#composerDrafts.clear();
+    this.#composerListeners.clear();
     this.#loadRequestId += 1;
     this.#pendingLoadConversationId = undefined;
     this.#pendingLoadConversationOverride = undefined;

@@ -91,7 +91,7 @@ pnpm pack:workspace
 
 `pnpm dev:playground` 会在 `http://localhost:3000` 启动仓库私有演示应用。Mock 模式直接组合
 正式 Runtime、React、Ant Design UI 与 Memory Gateway，提供会话创建/重命名/删除/切换、历史、流式回复、
-中断、错误、断线和重连场景。RobotServer 模式使用全中文单列表单，填写 RobotServer 服务地址、
+中断、错误、断线和重连场景。新增“能力演示”入口提供工具呈现、媒体资源、Markdown、长结果导航和文档引用五组可交互示例，详见 [Playground 验收说明](tests/e2e/acceptance.md#issue-58-capability-demonstrations)。RobotServer 模式使用全中文单列表单，填写 RobotServer 服务地址、
 Namespace 与 Robot ID 后，Playground 会推导 API 域名和 Socket namespace/path，并由仅存在于本地
 Vite 开发服务中的同源代理为聊天请求注入 RobotServer 路由头。鉴权可使用管理员密码、Admin Token
 或用户 Token；管理员密码只用于调用 `/v1/auth/login` 换取短期 Admin Token，不会进入聊天会话。
@@ -133,7 +133,10 @@ React 宿主通过 `ChatProvider` 注入自行持有的 `ChatClient`；该 Provi
 Ant Design 宿主默认使用 `ChatWorkspace`，由它管理会话列表、分页、创建、可选重命名/删除、当前选择、切换竞态与
 错误重试；宿主只需注入当前 Robot 对应的 `ChatClient`。需要完全自定义页面工作流时，仍可组合
 受控的 `ChatUiShell` 与 `ChatConversationView`。当前会话视图只通过 `ChatProvider` 的 hooks 和 `ChatClient`
-执行历史/实时展示、文本发送、Run 中断与受控 Ask User 回答，不读取 Gateway、SessionProvider、路由或全局 Store。
+执行历史/实时展示、文本/附件发送、Run 中断与受控 Ask User 回答，不读取 Gateway、SessionProvider、路由或全局 Store。
+默认 TFRobot factory 复用既有 endpoint、session 和 fetch 配置自动提供附件上传器，不要求宿主配置 COS
+或上传路径；自定义后端仍可通过通用 uploader 端口覆盖。超过可配置阈值的粘贴文本以紧凑草稿占位
+展示，查看、编辑、删除与发送均保留完整内容。
 Ask User 的“聊聊这个”按具体问题通过显式宿主回调交还给页面草稿流程，不冒充 Gateway answer action。
 时间轴默认虚拟化，离开底部后不会抢滚动，并通过提示返回最新消息。渲染器注册表支持宿主覆盖，
 文本内容默认按经过清洗的 GFM Markdown 渲染；未知事件和单个渲染器异常均安全降级。自定义文案通过 `labels` 注入，主题沿用宿主的 Ant Design

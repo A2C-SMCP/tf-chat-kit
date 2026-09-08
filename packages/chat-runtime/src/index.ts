@@ -20,3 +20,33 @@ export {
   type CreateWorkspaceConversationInput,
   type RenameWorkspaceConversationInput,
 } from "./conversation-workspace.js";
+export {
+  emptyComposerDraft,
+  rebaseComposerLongTexts,
+  resolveComposerDraftText,
+  type ComposerDraft,
+  type ComposerDraftListener,
+  type ComposerLongText,
+  type ComposerTextEdit,
+  type SetComposerDraftInput,
+} from "./composer-draft.js";
+export type {
+  GatewayRequestOptions,
+  GatewayResult,
+  UploadCancellationSignal,
+  UploadedAttachment,
+} from "@turingfocus/chat-protocol";
+
+export type {
+  ChatResourcePort,
+  ChatResourceRequest,
+  ChatResourcePurpose,
+  ChatResolvedResource,
+  MessageResource,
+} from "@turingfocus/chat-protocol";
+
+export {
+  appendComposerReference,
+  type ChatDocumentReference,
+  type ChatDocumentSource,
+} from "./references.js";

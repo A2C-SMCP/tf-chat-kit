@@ -21,6 +21,8 @@ import {
   type RenameConversationInput,
   type SendTextInput,
   type SendTextSuccess,
+  type SendMessageInput,
+  type SendMessageSuccess,
   type SubscribeConversationInput,
 } from "@turingfocus/chat-protocol";
 
@@ -37,6 +39,7 @@ import {
   statusDtoSchema,
 } from "./dto.js";
 import { TFRobotHttpClient } from "./http.js";
+import { buildTFRobotOutboundMessage } from "./outbound-message.js";
 import {
   mapConversation,
   mapEventUpdate,
@@ -454,6 +457,59 @@ export class TFRobotChatGateway implements ChatGateway {
       : result;
   }
 
+  async sendMessage(
+    input: SendMessageInput,
+  ): Promise<GatewayResult<SendMessageSuccess>> {
+    const disposed = this.#disposedResult<SendMessageSuccess>();
+    if (disposed !== undefined) return disposed;
+    if ((input.attachments?.length ?? 0) === 0) {
+      return this.sendText({
+        conversationId: input.conversationId,
+        deadlineAt: input.deadlineAt,
+        text: input.text ?? "",
+        ...(input.clientMessageId === undefined
+          ? {}
+          : { clientMessageId: input.clientMessageId }),
+      });
+    }
+    const creator = await this.#resolveMessageCreator(input);
+    const creatorDeadline = this.#deadlineResult<SendMessageSuccess>(input);
+    if (creatorDeadline !== undefined) return creatorDeadline;
+    if (!creator.ok) return creator;
+    const transportConversationId =
+      this.#transportConversationIds.get(input.conversationId) ??
+      input.conversationId;
+    const body = {
+      ...buildTFRobotOutboundMessage(
+        input,
+        creator.value,
+        transportConversationId,
+      ),
+      msgId: input.clientMessageId ?? null,
+    };
+    const result = await this.#http.request({
+      method: "POST",
+      path: conversationPath(input.conversationId, "messages"),
+      operation: "send",
+      options: input,
+      conversationId: input.conversationId,
+      body,
+      schema: sendTextDtoSchema,
+    });
+    const requestDeadline = this.#deadlineResult<SendMessageSuccess>(input);
+    if (requestDeadline !== undefined) return requestDeadline;
+    return result.ok
+      ? {
+          ok: true,
+          value: {
+            runId:
+              getTransportTaskId(result.value) ??
+              syntheticRunId(input.conversationId),
+          },
+        }
+      : result;
+  }
+
   async interrupt(
     input: InterruptRunInput,
   ): Promise<GatewayResult<InterruptRunSuccess>> {
@@ -714,7 +770,7 @@ export class TFRobotChatGateway implements ChatGateway {
   }
 
   async #resolveMessageCreator(
-    input: SendTextInput,
+    input: GatewayRequestOptions & { readonly conversationId: string },
   ): Promise<GatewayResult<TFRobotMessageCreator>> {
     if (isGatewayDeadlineExceeded(input, this.#now())) {
       return {

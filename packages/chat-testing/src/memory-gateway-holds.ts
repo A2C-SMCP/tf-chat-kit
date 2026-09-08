@@ -7,6 +7,7 @@ export type MemoryGatewayOperation =
   | "loadConversation"
   | "renameConversation"
   | "sendText"
+  | "sendMessage"
   | "subscribe";
 
 export type MemoryGatewayHoldPoint =

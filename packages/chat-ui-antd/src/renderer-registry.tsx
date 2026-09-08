@@ -15,6 +15,7 @@ import {
   UnknownEventRenderer,
   getEventSummary,
 } from "./event-renderers.js";
+import { ChatResourceView } from "./resource-content.js";
 import { ChatMarkdownContent } from "./markdown-content.js";
 
 export type ChatRendererKey =
@@ -59,13 +60,59 @@ export interface ChatMessageContentProps {
   readonly message: Message;
 }
 
-export const ChatMessageContent = ({ message }: ChatMessageContentProps) =>
-  message.content.kind === "text" ? (
-    <ChatMarkdownContent>{message.content.text}</ChatMarkdownContent>
-  ) : (
+const MessageContentPartView = ({
+  content,
+}: {
+  readonly content: Exclude<Message["content"], { readonly kind: "multipart" }>;
+}) => {
+  if (content.kind === "text") {
+    return <ChatMarkdownContent>{content.text}</ChatMarkdownContent>;
+  }
+  if (
+    (content.kind === "media" ||
+      content.kind === "file" ||
+      content.kind === "url") &&
+    content.resource !== undefined
+  ) {
+    return (
+      <ChatResourceView
+        resource={content.resource}
+        kind={content.kind === "media" ? content.mediaType : "file"}
+        label={content.summary}
+      />
+    );
+  }
+  if (content.kind === "contact")
+    return (
+      <div aria-label="Contact card">
+        {content.avatar === undefined ? null : (
+          <ChatResourceView
+            resource={content.avatar}
+            kind="image"
+            label={content.displayName ?? content.summary}
+          />
+        )}
+        <Typography.Text>
+          {content.displayName ?? content.summary}
+        </Typography.Text>
+      </div>
+    );
+  return (
     <Typography.Paragraph style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-      {message.content.summary}
+      {content.summary}
     </Typography.Paragraph>
+  );
+};
+
+export const ChatMessageContent = ({ message }: ChatMessageContentProps) =>
+  message.content.kind === "multipart" ? (
+    <div style={{ display: "grid", gap: 8 }}>
+      {message.content.parts.map((part, index) => (
+        <MessageContentPartView content={part} key={`${part.kind}:${index}`} />
+      ))}
+    </div>
+  ) : (
+    <MessageContentPartView content={message.content} />
   );
 
 const MessageRenderer = ({ formatTimestamp, item }: ChatRendererProps) => {

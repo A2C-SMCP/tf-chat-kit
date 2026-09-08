@@ -63,7 +63,10 @@ export type {
   Message,
   MessageAuthor,
   MessageContent,
+  MessageContentPart,
+  MessageResource,
   MessageRole,
+  MultipartMessageContent,
   Run,
   RunId,
   RunStatus,
@@ -88,3 +91,11 @@ export type {
   ProtocolValidationPathSegment,
   RuntimeSchema,
 } from "./schema.js";
+
+export {
+  toolPresentationSchema,
+  toolAttachmentSchema,
+} from "./presentation.js";
+export type { ToolPresentation, ToolAttachment } from "./presentation.js";
+
+export * from "./resources.js";

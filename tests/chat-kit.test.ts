@@ -68,15 +68,18 @@ describe("@turingfocus/chat-kit facade", () => {
 
     const first = factory.create();
     const second = factory.create();
+    const uploader = factory.createAttachmentUploader?.();
     expect(first).not.toBe(second);
     expect(factory.getDisposeOptions()).toEqual({ deadlineAt: 10_001 });
     expect(factory.getDisposeOptions()).toEqual({ deadlineAt: 10_002 });
     expect(fixture.identityReads()).toBe(0);
     expect(fixture.sessionReads()).toBe(0);
+    expect(uploader).toBeDefined();
 
     await first.dispose({ deadlineAt: Date.now() + 1_000 });
     expect(first.disposed).toBe(true);
     expect(second.disposed).toBe(false);
     await second.dispose({ deadlineAt: Date.now() + 1_000 });
+    await uploader?.dispose?.();
   });
 });

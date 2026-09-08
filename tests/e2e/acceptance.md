@@ -46,3 +46,36 @@ manual compatibility target and is never required by CI.
 | Existing custom renderer, virtual timeline, tail follow, send and interrupt behavior remains intact    | Existing UI, virtualization and scroll suites remain gates; Mock and Bearer browser scenarios still send, stream and interrupt.     |
 | Mock and approximate RobotServer Playground modes use public package components                        | Mock and Bearer Playwright scenarios select package-default event rows and switch between split and Modal modes.                    |
 | Front-style and Tauri-style consumers can adopt the public API without host-owned internals            | Source-level Front-style suite mounts split mode; the packed Tauri consumer selects a row and opens event detail.                   |
+
+## Issue #58 capability demonstrations
+
+Start `pnpm dev:playground`, open `http://localhost:3000`, and use the **能力演示**
+buttons in Mock mode. Switching scenarios replaces the current local demo timeline and cancels
+pending mock streaming; the input draft remains. **重建实例** resets the demo and its private-resource
+failure simulation. RobotServer mode does not expose these mock fixtures or document/resource ports.
+
+| Scenario         | Browser acceptance                                                                                                              |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| 工具呈现         | Browser screenshot, Preview syntax, Editor readonly diff, Shell ANSI output, actual Download bytes; previous/next navigation    |
+| 媒体与资源       | Local WAV and WebM playback advances currentTime; private image fails once and succeeds on Retry; contact/file/URL cards        |
+| Markdown 与复制  | GFM table, local private image and exact second-block clipboard text                                                            |
+| 长结果与事件导航 | Full received result expansion, both transition tabs, follow latest vs manual selection; 390px modal and no horizontal overflow |
+| 文档引用         | Injected source selection, reference draft placeholder, sending both original text paragraphs through Runtime                   |
+
+Run `TF_CHAT_PLAYGROUND_PORT=3001 pnpm test:e2e` while keeping the manual playground on port 3000.
+The four added tests live in `capability-scenarios.spec.ts`; screenshots are written under `test-results/`
+for tool detail, media, references and mobile inspection. They exercise real Chromium media playback,
+clipboard and download APIs, with no route interception or external data. This is local browser
+acceptance, not a production RobotServer or real-host UAT claim.
+
+All demo assets in `playground/public/demo/` are repository-authored synthetic samples: the SVG and
+report contain no production data; WAV is a 440Hz sine tone; WebM is an FFmpeg testsrc2 pattern.
+Recreate media with `ffmpeg -f lavfi -i 'sine=frequency=440:duration=2' -ar 16000 tone.wav` and
+`ffmpeg -f lavfi -i 'testsrc2=size=320x180:rate=12:duration=3' -c:v libvpx -b:v 90k -an clip.webm`.
+The mock resource port is a local URI mapping demonstration; it does not authenticate a real account.
+
+Acceptance run (2026-09-08): all 9 Playwright tests passed (4 new, 5 existing), plus 5 Playground
+component tests, typecheck, lint, formatting and playground production build. Desktop and mobile
+screenshots were visually inspected. Isolated review of the 11 follow-up files: **APPROVE**.
+Non-blocking follow-ups: explicit draft-preservation/stream-cancellation tests, and clearing the active
+scenario highlight when changing conversations.

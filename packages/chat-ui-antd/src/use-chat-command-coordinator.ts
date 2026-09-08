@@ -11,6 +11,7 @@ import type {
   AskUserInteractionAnswer,
   ChatError,
   Run,
+  UploadedAttachment,
 } from "@turingfocus/chat-protocol";
 import type { ChatProviderProps } from "@turingfocus/chat-react";
 
@@ -80,7 +81,10 @@ interface UseChatCommandCoordinatorResult {
   ) => Promise<boolean>;
   readonly dismissFailure: (command: ChatUiCommand) => void;
   readonly interrupt: () => Promise<boolean>;
-  readonly sendText: (text: string) => Promise<boolean>;
+  readonly sendText: (
+    text: string,
+    attachments?: readonly UploadedAttachment[],
+  ) => Promise<boolean>;
   readonly viewResetKey: string;
   readonly visibleCommandFailures: readonly ChatUiCommandFailure[];
   readonly visibleSnapshotError: ChatError | undefined;
@@ -367,33 +371,29 @@ export const useChatCommandCoordinator = ({
     });
   }, []);
 
-  const sendText = useCallback(
-    async (text: string): Promise<boolean> => {
-      if (conversationId === null) return false;
-      const request = beginRequest("sendText", conversationId);
-      let result: Awaited<ReturnType<ChatClient["sendText"]>> | undefined;
-      try {
-        result = await client.sendText({
-          conversationId,
-          deadlineAt: getDeadlineAt(),
-          text,
-        });
-      } catch {
-        return reportFailure(request, unexpectedCommandError(conversationId));
-      }
-      if (!result.ok) return reportFailure(request, result.error);
-      clearFailure(request);
-      return true;
-    },
-    [
-      beginRequest,
-      clearFailure,
-      client,
-      conversationId,
-      getDeadlineAt,
-      reportFailure,
-    ],
-  );
+  const sendText = useCallback(async (): Promise<boolean> => {
+    if (conversationId === null) return false;
+    const request = beginRequest("sendText", conversationId);
+    let result: Awaited<ReturnType<ChatClient["sendText"]>> | undefined;
+    try {
+      result = await client.sendComposerDraft({
+        conversationId,
+        deadlineAt: getDeadlineAt(),
+      });
+    } catch {
+      return reportFailure(request, unexpectedCommandError(conversationId));
+    }
+    if (!result.ok) return reportFailure(request, result.error);
+    clearFailure(request);
+    return true;
+  }, [
+    beginRequest,
+    clearFailure,
+    client,
+    conversationId,
+    getDeadlineAt,
+    reportFailure,
+  ]);
 
   const answerInteraction = useCallback(
     async (answer: AskUserInteractionAnswer): Promise<boolean> => {

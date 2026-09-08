@@ -7,7 +7,10 @@ import {
   type ConversationWorkspaceSnapshot,
 } from "@turingfocus/chat-runtime";
 import {
+  createTFRobotAttachmentUploader,
   createTFRobotChatGateway,
+  type TFRobotAttachmentUploader,
+  type TFRobotGatewayOptions,
   type TFRobotSession,
   type TFRobotSocketFactory,
 } from "@turingfocus/chat-gateway-tfrobot";
@@ -266,6 +269,7 @@ const stateForError = (
 };
 
 class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContract {
+  readonly attachmentUploader: TFRobotAttachmentUploader;
   readonly client: ChatClient;
   readonly kind = "robotserver" as const;
   #disposed = false;
@@ -293,7 +297,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
     dependencies: RobotServerSessionDependencies,
   ) {
     this.#now = dependencies.now ?? Date.now;
-    const gateway = createTFRobotChatGateway({
+    const gatewayOptions: TFRobotGatewayOptions = {
       baseUrl: config.httpBaseUrl,
       fetch: dependencies.fetch,
       messageCreatorProvider: () => config.creator,
@@ -309,7 +313,9 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
       socketFactory: dependencies.socketFactory,
       socketNamespaceUrl: config.socketNamespaceUrl,
       socketPath: config.socketPath,
-    });
+    };
+    const gateway = createTFRobotChatGateway(gatewayOptions);
+    this.attachmentUploader = createTFRobotAttachmentUploader(gatewayOptions);
     this.client = createChatClient({ gateway });
     this.#workspace = createConversationWorkspaceController({
       client: this.client,
@@ -577,6 +583,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
     this.#workspace.dispose();
     this.#unsubscribeClient();
     this.#listeners.clear();
+    this.attachmentUploader.dispose();
     await this.client.dispose({ deadlineAt: this.#now() + REQUEST_TIMEOUT_MS });
   }
 

@@ -1,4 +1,8 @@
 import { z } from "zod/v4";
+import {
+  toolPresentationParser,
+  toolAttachmentParser,
+} from "./presentation.js";
 
 import {
   ASK_USER_MAX_ANSWER_VALUES,
@@ -69,33 +73,55 @@ export const conversationParser: z.ZodType<Conversation> = z.object({
   raw: rawParser.optional(),
 });
 
+const messageResourceParser = z.object({
+  uri: z.string().trim().min(1),
+  mimeType: z.string().trim().min(1).optional(),
+  name: z.string().trim().min(1).optional(),
+  size: z.number().int().nonnegative().optional(),
+});
+
+const messageContentPartParser = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("text"), text: z.string() }),
+  z.object({
+    kind: z.literal("media"),
+    mediaType: z.enum(["audio", "image", "video"]),
+    summary: z.string(),
+    resource: messageResourceParser.optional(),
+    raw: rawParser.optional(),
+  }) satisfies z.ZodType<MediaMessageContent>,
+  z.object({
+    kind: z.literal("file"),
+    summary: z.string(),
+    resource: messageResourceParser.optional(),
+    raw: rawParser.optional(),
+  }) satisfies z.ZodType<FileMessageContent>,
+  z.object({
+    kind: z.literal("contact"),
+    displayName: z.string().optional(),
+    avatar: messageResourceParser.optional(),
+    summary: z.string(),
+    raw: rawParser.optional(),
+  }) satisfies z.ZodType<ContactMessageContent>,
+  z.object({
+    kind: z.literal("url"),
+    resource: messageResourceParser.optional(),
+    summary: z.string(),
+    raw: rawParser.optional(),
+  }),
+  z.object({
+    kind: z.literal("unknown"),
+    summary: z.string(),
+    raw: rawParser.optional(),
+  }),
+]);
+
 const messageContentParser: z.ZodType<MessageContent> = z.discriminatedUnion(
   "kind",
   [
-    z.object({ kind: z.literal("text"), text: z.string() }),
+    ...messageContentPartParser.options,
     z.object({
-      kind: z.literal("media"),
-      mediaType: z.enum(["audio", "image", "video"]),
-      summary: z.string(),
-      raw: rawParser.optional(),
-    }) satisfies z.ZodType<MediaMessageContent>,
-    z.object({
-      kind: z.literal("file"),
-      summary: z.string(),
-      raw: rawParser.optional(),
-    }) satisfies z.ZodType<FileMessageContent>,
-    z.object({
-      kind: z.literal("contact"),
-      summary: z.string(),
-      raw: rawParser.optional(),
-    }) satisfies z.ZodType<ContactMessageContent>,
-    z.object({
-      kind: z.literal("url"),
-      summary: z.string(),
-      raw: rawParser.optional(),
-    }),
-    z.object({
-      kind: z.literal("unknown"),
+      kind: z.literal("multipart"),
+      parts: z.array(messageContentPartParser).min(1).max(20),
       summary: z.string(),
       raw: rawParser.optional(),
     }),
@@ -169,6 +195,7 @@ const agentEventStatusParser = z.enum([
 ]);
 
 const agentEventTransitionParser: z.ZodType<AgentEventTransition> = z.object({
+  content: rawParser.optional(),
   id: idParser,
   status: agentEventStatusParser,
   occurredAt: timestampParser,
@@ -188,6 +215,8 @@ const toolCallParser: z.ZodType<ToolCall> = z.object({
 
 const toolReturnParser = z
   .object({
+    presentation: toolPresentationParser.optional(),
+    attachments: z.array(toolAttachmentParser).max(100).optional(),
     result: rawParser.optional(),
     success: z.boolean().optional(),
     done: z.boolean().optional(),
@@ -195,6 +224,8 @@ const toolReturnParser = z
   })
   .refine(
     (toolReturn) =>
+      toolReturn.presentation !== undefined ||
+      (toolReturn.attachments?.length ?? 0) > 0 ||
       toolReturn.result !== undefined ||
       toolReturn.success !== undefined ||
       toolReturn.done !== undefined ||
@@ -360,6 +391,7 @@ const toolEventTransitionParser: z.ZodType<ToolEventTransition> = z
     summary: z.string().optional(),
     error: chatErrorParser.optional(),
     raw: rawParser.optional(),
+    content: rawParser.optional(),
     toolCall: toolCallParser.optional(),
     toolReturn: toolReturnParser.optional(),
     interaction: askUserInteractionResultParser.optional(),
@@ -528,6 +560,7 @@ export const capabilitiesParser: z.ZodType<Capabilities> = z.object({
   liveUpdates: z.boolean(),
   loadHistory: z.boolean(),
   sendText: z.boolean(),
+  sendAttachments: z.boolean().optional(),
 });
 
 const chatLifecycleParser = z

@@ -105,6 +105,7 @@ export type GatewayOperation =
   | "interrupt"
   | "listConversations"
   | "loadHistory"
+  | "sendAttachments"
   | "sendText"
   | "subscribe";
 
@@ -134,6 +135,8 @@ export const isGatewayOperationSupported = (
       return capabilities.loadHistory;
     case "sendText":
       return capabilities.sendText;
+    case "sendAttachments":
+      return capabilities.sendAttachments === true;
     case "subscribe":
       return capabilities.liveUpdates;
   }
@@ -160,6 +163,30 @@ export interface SendTextSuccess {
   /** ID of the run started by the accepted message. */
   readonly runId: RunId;
 }
+
+/** A resource already uploaded by a host or transport adapter. */
+export interface UploadedAttachment {
+  readonly uri: string;
+  readonly mimeType: string;
+  readonly name?: string | undefined;
+  readonly size?: number | undefined;
+}
+
+/** DOM-free cooperative cancellation port for attachment upload adapters. */
+export interface UploadCancellationSignal {
+  readonly aborted: boolean;
+  subscribe(listener: () => void): () => void;
+}
+
+/** One atomic user turn containing text, uploaded resources, or both. */
+export interface SendMessageInput extends GatewayRequestOptions {
+  readonly conversationId: ConversationId;
+  readonly text?: string | undefined;
+  readonly attachments?: readonly UploadedAttachment[] | undefined;
+  readonly clientMessageId?: string | undefined;
+}
+
+export type SendMessageSuccess = SendTextSuccess;
 
 export interface InterruptRunInput extends GatewayRequestOptions {
   readonly conversationId: ConversationId;
@@ -236,6 +263,10 @@ export interface ChatGateway {
     observer: GatewayObserver,
   ): MaybePromise<GatewayResult<GatewaySubscription>>;
   sendText(input: SendTextInput): Promise<GatewayResult<SendTextSuccess>>;
+  /** Optional for adapters that support uploaded-resource messages. */
+  sendMessage?(
+    input: SendMessageInput,
+  ): Promise<GatewayResult<SendMessageSuccess>>;
   interrupt(
     input: InterruptRunInput,
   ): Promise<GatewayResult<InterruptRunSuccess>>;
@@ -343,6 +374,30 @@ const sendTextSuccessParser: z.ZodType<SendTextSuccess> = z.object({
   runId: z.string().min(1),
 });
 
+const uploadedAttachmentParser: z.ZodType<UploadedAttachment> = z.object({
+  uri: z.string().trim().min(1),
+  mimeType: z.string().trim().min(1),
+  name: z.string().trim().min(1).optional(),
+  size: z.number().int().nonnegative().optional(),
+});
+
+const sendMessageInputParser: z.ZodType<SendMessageInput> = z
+  .object({
+    conversationId: z.string().min(1),
+    text: z.string().optional(),
+    attachments: z.array(uploadedAttachmentParser).max(20).optional(),
+    clientMessageId: z.string().min(1).optional(),
+    deadlineAt: deadlineParser,
+  })
+  .superRefine((input, context) => {
+    if (
+      (input.text?.length ?? 0) === 0 &&
+      (input.attachments?.length ?? 0) === 0
+    ) {
+      context.addIssue({ code: "custom", message: "message content is empty" });
+    }
+  });
+
 const interruptRunInputParser: z.ZodType<InterruptRunInput> = z.object({
   conversationId: z.string().min(1),
   runId: z.string().min(1).optional(),
@@ -427,6 +482,15 @@ export const subscribeConversationInputSchema = createRuntimeSchema(
 );
 export const sendTextInputSchema = createRuntimeSchema(sendTextInputParser);
 export const sendTextResultSchema = createRuntimeSchema(
+  gatewayResultParser(sendTextSuccessParser),
+);
+export const uploadedAttachmentSchema = createRuntimeSchema(
+  uploadedAttachmentParser,
+);
+export const sendMessageInputSchema = createRuntimeSchema(
+  sendMessageInputParser,
+);
+export const sendMessageResultSchema = createRuntimeSchema(
   gatewayResultParser(sendTextSuccessParser),
 );
 export const interruptRunInputSchema = createRuntimeSchema(

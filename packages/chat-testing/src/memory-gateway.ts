@@ -20,6 +20,8 @@ import {
   renameConversationResultSchema,
   sendTextInputSchema,
   sendTextResultSchema,
+  sendMessageInputSchema,
+  sendMessageResultSchema,
   subscribeConversationInputSchema,
   type ChatError,
   type AnswerInteractionInput,
@@ -43,6 +45,8 @@ import {
   type RenameConversationInput,
   type SendTextInput,
   type SendTextSuccess,
+  type SendMessageInput,
+  type SendMessageSuccess,
   type SubscribeConversationInput,
 } from "@turingfocus/chat-protocol";
 
@@ -93,6 +97,7 @@ export type MemoryGatewayCall =
       readonly input: RenameConversationInput;
     }
   | { readonly operation: "sendText"; readonly input: SendTextInput }
+  | { readonly operation: "sendMessage"; readonly input: SendMessageInput }
   | {
       readonly operation: "subscribe";
       readonly input: SubscribeConversationInput;
@@ -227,6 +232,7 @@ class MemoryChatGateway implements ChatGateway {
   #interruptResult: GatewayResult<InterruptRunSuccess>;
   #scriptedConversationPage: ConversationPage | undefined;
   #sendTextResult: GatewayResult<SendTextSuccess>;
+  #sendMessageResult: GatewayResult<SendMessageSuccess>;
 
   constructor(
     options: MemoryChatGatewayOptions,
@@ -241,6 +247,10 @@ class MemoryChatGateway implements ChatGateway {
       value: fixtures.answerInteractionSuccess,
     });
     this.#sendTextResult = sendTextResultSchema.parse({
+      ok: true,
+      value: fixtures.sendTextSuccess,
+    });
+    this.#sendMessageResult = sendMessageResultSchema.parse({
       ok: true,
       value: fixtures.sendTextSuccess,
     });
@@ -739,6 +749,27 @@ class MemoryChatGateway implements ChatGateway {
       return unsupported("Text sending is unavailable");
     }
     return this.#sendTextResult;
+  }
+
+  async sendMessage(
+    input: SendMessageInput,
+  ): Promise<GatewayResult<SendMessageSuccess>> {
+    const parsedInput = sendMessageInputSchema.parse(input);
+    this.#record({ operation: "sendMessage", input: parsedInput });
+    const guarded = this.#guard<SendMessageSuccess>("sendMessage", parsedInput);
+    if (guarded !== undefined) return guarded;
+    const held = await this.#waitForOperation("sendMessage", parsedInput);
+    if (held?.failure !== undefined) return held.failure;
+    const settled = this.#settledGuard<SendMessageSuccess>(parsedInput);
+    if (settled !== undefined) return settled;
+    const snapshot = this.#snapshotFor(parsedInput.conversationId);
+    if (snapshot === undefined) return notFound(parsedInput.conversationId);
+    if (
+      !isGatewayOperationSupported(snapshot.capabilities, "sendAttachments")
+    ) {
+      return unsupported("Attachment sending is unavailable");
+    }
+    return this.#sendMessageResult;
   }
 
   async interrupt(

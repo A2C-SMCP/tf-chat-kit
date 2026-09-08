@@ -1,6 +1,7 @@
 import type { ChatUiLabelOverrides, ChatUiLabels } from "./types.js";
 
 export const defaultChatUiLabels: ChatUiLabels = Object.freeze({
+  attach: "Attach",
   askUserCancel: "Cancel",
   askUserChatAboutThis: "Chat about this",
   askUserLabel: "User input requested",
@@ -51,7 +52,11 @@ export const defaultChatUiLabels: ChatUiLabels = Object.freeze({
   newMessages: "new messages",
   noConversations: "No conversations",
   openEventDetail: "Open event details",
+  pastedTextTitle: "Pasted text",
+  removeAttachment: "Remove attachment",
+  removeLongText: "Remove pasted text",
   retry: "Try again",
+  retryUpload: "Retry upload",
   runStatusLabel: "Run",
   send: "Send",
   sending: "Sending",

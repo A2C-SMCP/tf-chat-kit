@@ -14,7 +14,11 @@ import type {
 import { AskUserInteractionResultView } from "./ask-user-interaction.js";
 import type { ChatRendererProps } from "./renderer-registry.js";
 
-const TOOL_RESULT_CHARACTER_LIMIT = 4_000;
+import { ChatResourceView } from "./resource-content.js";
+import { ToolPresentationView } from "./tool-presentation.js";
+
+import { ValueInspector, serializeInspectionValue } from "./value-inspector.js";
+import { ChatMarkdownContent } from "./markdown-content.js";
 
 const statusColor = (
   status: string,
@@ -40,23 +44,20 @@ export const getEventSummary = (item: TimelineItem): string => {
       : item.content.summary;
   }
   if (item.kind === "unknown-event") return item.summary;
+  if (item.eventCategory === "tool") {
+    const call = latestToolField(item, (transition) => transition.toolCall);
+    const presentation = latestToolField(
+      item,
+      (transition) => transition.toolReturn?.presentation,
+    );
+    if (call !== undefined)
+      return `${presentation?.kind ?? "Tool"}: ${call.name} ${call.arguments === undefined ? "" : serializeInspectionValue(call.arguments).slice(0, 160)}`;
+  }
   return (
     item.summary ??
     item.transitions.at(-1)?.summary ??
     `${item.eventType} (${item.status})`
   );
-};
-
-const formatBoundedValue = (value: unknown): string => {
-  let serialized: string;
-  try {
-    serialized =
-      typeof value === "string" ? value : JSON.stringify(value, null, 2);
-  } catch {
-    serialized = "[Value could not be serialized]";
-  }
-  if (serialized.length <= TOOL_RESULT_CHARACTER_LIMIT) return serialized;
-  return `${serialized.slice(0, TOOL_RESULT_CHARACTER_LIMIT)}\n[Result truncated]`;
 };
 
 const EventCompactRow = ({
@@ -132,11 +133,22 @@ const TransitionContent = ({
 }) => (
   <Space direction="vertical" size="small" style={{ width: "100%" }}>
     {transition.error === undefined ? null : (
-      <Alert message={transition.error.message} showIcon type="error" />
+      <Alert
+        message={
+          <ChatMarkdownContent>{transition.error.message}</ChatMarkdownContent>
+        }
+        showIcon
+        type="error"
+      />
     )}
     <Typography.Paragraph style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-      {transition.summary ?? `Transition ${transition.status}`}
+      <ChatMarkdownContent>
+        {transition.summary ?? `Transition ${transition.status}`}
+      </ChatMarkdownContent>
     </Typography.Paragraph>
+    {transition.content === undefined ? null : (
+      <ValueInspector value={transition.content} />
+    )}
   </Space>
 );
 
@@ -186,7 +198,7 @@ const AgentEventDetail = ({
         ) : null}
         {item.summary === undefined ? null : (
           <Typography.Paragraph style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-            {item.summary}
+            <ChatMarkdownContent>{item.summary}</ChatMarkdownContent>
           </Typography.Paragraph>
         )}
         {item.transitions.length > 1 ? (
@@ -222,34 +234,45 @@ const ToolTransitionContent = ({
 }) => (
   <Space direction="vertical" size="small" style={{ width: "100%" }}>
     {transition.error === undefined ? null : (
-      <Alert message={transition.error.message} showIcon type="error" />
+      <Alert
+        message={
+          <ChatMarkdownContent>{transition.error.message}</ChatMarkdownContent>
+        }
+        showIcon
+        type="error"
+      />
     )}
     {transition.summary === undefined ? null : (
       <Typography.Paragraph style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-        {transition.summary}
+        <ChatMarkdownContent>{transition.summary}</ChatMarkdownContent>
       </Typography.Paragraph>
     )}
     {transition.toolCall === undefined ? null : (
       <>
         <Typography.Text strong>{transition.toolCall.name}</Typography.Text>
         {transition.toolCall.arguments === undefined ? null : (
-          <Typography.Paragraph
-            code
-            style={{ margin: 0, whiteSpace: "pre-wrap" }}
-          >
-            {formatBoundedValue(transition.toolCall.arguments)}
-          </Typography.Paragraph>
+          <ValueInspector value={transition.toolCall.arguments} />
         )}
       </>
     )}
-    {transition.toolReturn?.result === undefined ? null : (
-      <Typography.Paragraph
-        code
-        style={{ margin: 0, overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}
-      >
-        {formatBoundedValue(transition.toolReturn.result)}
-      </Typography.Paragraph>
+    {transition.toolReturn?.presentation === undefined ? null : (
+      <ToolPresentationView presentation={transition.toolReturn.presentation} />
     )}
+    {transition.toolReturn?.result === undefined ||
+    transition.toolReturn.presentation !== undefined ? null : (
+      <ValueInspector value={transition.toolReturn.result} />
+    )}
+    {transition.toolReturn?.attachments?.map((attachment, index) => (
+      <ChatResourceView
+        key={index}
+        resource={attachment.resource}
+        kind={attachment.kind === "image" ? "image" : "file"}
+        label={
+          attachment.resource.name ??
+          `${attachment.kind} attachment ${index + 1}`
+        }
+      />
+    ))}
     {transition.toolReturn === undefined ||
     (transition.toolReturn.success === undefined &&
       transition.toolReturn.done === undefined) ? null : (
@@ -418,7 +441,7 @@ export const UnknownEventRenderer = ({
           <Typography.Paragraph
             style={{ marginBottom: 4, whiteSpace: "pre-wrap" }}
           >
-            {item.summary}
+            <ChatMarkdownContent>{item.summary}</ChatMarkdownContent>
           </Typography.Paragraph>
           <Typography.Text type="secondary">
             {formatTimestamp(item.createdAt)}

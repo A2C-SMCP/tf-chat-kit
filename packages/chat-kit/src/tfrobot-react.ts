@@ -2,6 +2,7 @@ import type {
   ChatClientDisposeOptions,
   ChatClientFactory,
 } from "@turingfocus/chat-react";
+import { createTFRobotAttachmentUploader } from "@turingfocus/chat-gateway-tfrobot";
 
 import {
   createTFRobotChatClient,
@@ -23,6 +24,8 @@ export const createTFRobotChatClientFactory = (
   const { getDisposeOptions, ...clientOptions } = options;
   return Object.freeze({
     create: () => createTFRobotChatClient(clientOptions),
+    createAttachmentUploader: () =>
+      createTFRobotAttachmentUploader(clientOptions),
     getDisposeOptions,
   });
 };

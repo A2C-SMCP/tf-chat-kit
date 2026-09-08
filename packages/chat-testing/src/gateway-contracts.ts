@@ -14,6 +14,7 @@ import type {
   MaybePromise,
   RenameConversationInput,
   SendTextInput,
+  SendMessageInput,
   SubscribeConversationInput,
 } from "@turingfocus/chat-protocol";
 import { createGatewayDeadlineExceededError } from "@turingfocus/chat-protocol";
@@ -47,6 +48,7 @@ export type GatewayContractOperation =
   | "loadConversation"
   | "renameConversation"
   | "sendText"
+  | "sendMessage"
   | "subscribe";
 
 export type GatewayContractHoldPoint =
@@ -79,6 +81,7 @@ export type GatewayContractCall =
       readonly input: RenameConversationInput;
     }
   | { readonly operation: "sendText"; readonly input: SendTextInput }
+  | { readonly operation: "sendMessage"; readonly input: SendMessageInput }
   | {
       readonly operation: "subscribe";
       readonly input: SubscribeConversationInput;

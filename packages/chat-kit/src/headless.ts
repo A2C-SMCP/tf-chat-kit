@@ -39,10 +39,18 @@ export type {
   LoadConversationInput,
   MaybePromise,
   Message,
+  MessageContent,
+  MessageContentPart,
+  MessageResource,
+  MultipartMessageContent,
+  MediaMessageContent,
   RenameConversationInput,
   Run,
   SendTextInput,
   SendTextSuccess,
+  SendMessageInput,
+  SendMessageSuccess,
+  UploadedAttachment,
   SessionInvalidation,
   SessionProvider,
   SessionRequest,
@@ -55,6 +63,8 @@ export {
   createChatClient,
   createConversationWorkspaceController,
   orderConversationsByUpdatedAt,
+  rebaseComposerLongTexts,
+  resolveComposerDraftText,
   type ChatClientOptions,
   type ChatClientSubscription,
   type ChatClientUnhandledError,
@@ -67,15 +77,23 @@ export {
   type ConversationWorkspaceSnapshot,
   type ConversationWorkspaceSubscription,
   type CreateWorkspaceConversationInput,
+  type ComposerDraft,
+  type ComposerDraftListener,
+  type ComposerLongText,
+  type ComposerTextEdit,
   type RenameWorkspaceConversationInput,
+  type SetComposerDraftInput,
 } from "@turingfocus/chat-runtime";
 
 export {
   TFRobotChatGateway,
   createSocketIoFactory,
   createTFRobotChatGateway,
+  createTFRobotAttachmentUploader,
   TFROBOT_CAPABILITIES,
   type TFRobotGatewayOptions,
+  type TFRobotAttachmentUploader,
+  type TFRobotAttachmentUploadInput,
   type TFRobotCurrentServerRebaseOptions,
   type TFRobotMessageCreator,
   type TFRobotMessageCreatorProvider,
@@ -89,3 +107,18 @@ export {
   type TFRobotSocketFactoryInput,
   type TFRobotSocketListener,
 } from "@turingfocus/chat-gateway-tfrobot";
+
+export {
+  type ChatResourcePort,
+  type ChatResourceRequest,
+  type ChatResourcePurpose,
+  type ChatResolvedResource,
+  type ToolPresentation,
+  type ToolAttachment,
+} from "@turingfocus/chat-protocol";
+
+export {
+  appendComposerReference,
+  type ChatDocumentReference,
+  type ChatDocumentSource,
+} from "@turingfocus/chat-runtime";

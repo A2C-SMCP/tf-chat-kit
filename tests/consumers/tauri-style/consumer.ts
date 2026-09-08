@@ -11,10 +11,19 @@ import { createRoot, type Root } from "react-dom/client";
 import { ConfigProvider } from "antd";
 
 import {
+  ChatProvider,
+  ChatResourceProvider,
+  ChatDocumentSourceProvider,
+  ChatTimelineItem,
+  createChatRendererRegistry,
+  appendComposerReference,
+  type ChatResourcePort,
+  type TimelineItem,
   OwnedChatProvider,
   ChatRunStatus,
   ChatWorkspace,
   createChatClient,
+  createTFRobotChatGateway,
   useChatClient,
   useChatSnapshot,
   type ChatClient,
@@ -350,7 +359,198 @@ const clickButton = async (
   });
 };
 
+const verifyLargeToolHistory = async (): Promise<void> => {
+  const gateway = createTFRobotChatGateway({
+    baseUrl: "https://tauri-contract.example/",
+    serverProfile: { kind: "current-server" },
+    sessionProvider: {
+      getSession: () => ({ kind: "bearer", token: "tauri-session" }),
+    },
+    messageCreatorProvider: () => ({ uid: "tauri-user", name: "Tauri user" }),
+    fetch: async (input) =>
+      new Response(
+        JSON.stringify({
+          code: 200,
+          message: "Success",
+          data: new URL(String(input)).pathname.endsWith("/status")
+            ? { working: false }
+            : {
+                messages: [],
+                events: [
+                  {
+                    conversationId: 10,
+                    eventId: "large-tool",
+                    eventScene: "Tool",
+                    status: "success",
+                    createTimestamp: 1,
+                    content: {
+                      toolReturn: {
+                        origin: "x".repeat(551_510),
+                        meta: { success: true },
+                      },
+                    },
+                  },
+                ],
+              },
+        }),
+      ),
+  });
+  try {
+    const result = await gateway.loadConversation({
+      conversationId: "10",
+      deadlineAt: deadlineAt(),
+    });
+    check(
+      result.ok,
+      "Tauri packed Gateway must load a history containing a 551510-character tool result",
+    );
+    if (!result.ok) return;
+    const event = result.value.timeline[0];
+    check(
+      event?.kind === "agent-event" &&
+        event.eventCategory === "tool" &&
+        event.transitions[0]?.toolReturn?.success === true &&
+        event.transitions[0]?.toolReturn?.result ===
+          "[Tool result omitted: exceeds safe display size or structure limits]",
+      "oversized tool details must explain omission while preserving the successful event",
+    );
+  } finally {
+    await gateway.dispose({ deadlineAt: deadlineAt() });
+  }
+};
+
+const verifyIndependentParityConsumer = async (): Promise<void> => {
+  const dom = installDomEnvironment();
+  const memory = createMemoryChatGateway();
+  const client = createChatClient({ gateway: memory.gateway });
+  let releases = 0;
+  const resources: ChatResourcePort = {
+    resolve: ({ resource }) => ({
+      url: resource.uri.startsWith("s3:")
+        ? "https://example.test/screenshot.png"
+        : resource.uri,
+      dispose: () => {
+        releases += 1;
+      },
+    }),
+  };
+  try {
+    await client.loadConversation({
+      conversationId: memory.fixtures.conversation.id,
+      deadlineAt: deadlineAt(),
+    });
+    const item: TimelineItem = {
+      kind: "agent-event",
+      id: "packed-browser",
+      conversationId: memory.fixtures.conversation.id,
+      eventCategory: "tool",
+      eventType: "Tool",
+      status: "success",
+      createdAt: 1,
+      transitions: [
+        {
+          id: "one",
+          status: "success",
+          occurredAt: 1,
+          toolReturn: {
+            result: "retained origin",
+            presentation: {
+              kind: "browser",
+              markdown: "# Independent browser result",
+              image: { uri: "s3://private/screenshot" },
+            },
+          },
+        },
+      ],
+    };
+    memory.controller.emitUpdateToAll({
+      kind: "timeline.upsert",
+      conversationId: item.conversationId,
+      item,
+    });
+    const runtimeItem = client
+      .getSnapshot()
+      ?.timeline.find((entry) => entry.id === item.id);
+    check(
+      runtimeItem !== undefined,
+      "Packed Runtime lost standard presentation",
+    );
+    if (runtimeItem === undefined) return;
+    await act(async () => {
+      dom.root.render(
+        createElement(
+          ChatProvider,
+          { client },
+          createElement(
+            ChatResourceProvider,
+            { port: resources, scope: "account-a" },
+            createElement(
+              ChatDocumentSourceProvider,
+              {
+                source: {
+                  list: () => [
+                    {
+                      id: "doc",
+                      title: "Handbook",
+                      content: "Authorized full text",
+                    },
+                  ],
+                },
+              },
+              createElement(ChatTimelineItem, {
+                item: runtimeItem,
+                registry: createChatRendererRegistry(),
+              }),
+            ),
+          ),
+        ),
+      );
+      await flushMicrotasks();
+    });
+    check(
+      dom.container.textContent?.includes("Independent browser result"),
+      "Packed default Browser renderer failed",
+    );
+    check(
+      dom.container.querySelector("img")?.getAttribute("src") ===
+        "https://example.test/screenshot.png",
+      "Packed private resource resolver failed",
+    );
+    const current = client.getComposerDraft(item.conversationId);
+    client.setComposerDraft({
+      conversationId: item.conversationId,
+      ...appendComposerReference(
+        current,
+        { id: "doc", title: "Handbook", content: "Authorized full text" },
+        "packed-reference",
+      ),
+    });
+    await client.sendComposerDraft({
+      conversationId: item.conversationId,
+      deadlineAt: deadlineAt(),
+    });
+    check(
+      memory.controller.calls.some(
+        (call) =>
+          call.operation === "sendText" &&
+          call.input.text === "Handbook\nAuthorized full text",
+      ),
+      "Packed reference did not expand before sending",
+    );
+  } finally {
+    await act(async () => {
+      dom.root.unmount();
+      await flushMicrotasks();
+    });
+    await client.dispose({ deadlineAt: deadlineAt() });
+    dom.cleanup();
+  }
+  check(releases > 0, "Packed resource lease was not disposed");
+};
+
 export const runTauriConsumerVerification = async (): Promise<void> => {
+  await verifyIndependentParityConsumer();
+  await verifyLargeToolHistory();
   const fixture = createTauriHostFixture();
   const dom = installDomEnvironment();
   let instance: TauriRuntimeInstance | undefined;

@@ -154,6 +154,45 @@ Socket cleanup. New Playground automation may rename and delete only a
 conversation whose title retains the reserved prefix, and deletes only the
 exact ID created by that run.
 
+## Large tool history (TFCK-43)
+
+The 2026-09-07 report concerns Kit 0.7.0 in a Tauri host using `current-server`.
+A valid history response contained a 551,510-character `toolReturn.origin`;
+applying the diagnostic raw sanitizer to the entire response rejected it before
+business DTO validation. The deployed Server commit was not captured.
+
+Transport JSON is now redacted independently of diagnostic retention. HTTP
+validates the envelope before redacting and validating its business data; Socket
+events use the same credential redaction. Normal business strings and pages are
+not subject to the raw per-string or aggregate character budget. Transport
+traversal has a separate 100,000-node / depth-64 guard; failures identify the
+transport structure limit rather than claiming the response envelope is invalid.
+These guards do not constitute a network response-byte limit.
+Unknown Socket events retain their safe fallback even when their optional payload
+is absent or cannot be retained; payload failures go to diagnostics without
+turning the unknown event into a conversation error.
+
+The public Protocol raw contract remains unchanged (262,144 characters per
+string, 1,048,576 total key/string characters, 10,000 nodes, depth 32). A tool
+result that cannot fit its safe display representation becomes
+`[Tool result omitted: exceeds safe display size or structure limits]`; event
+identity, status, success/done flags and neighboring messages remain available.
+Optional diagnostic raw is still omitted when it cannot fit. No extra request,
+polling, public API, package dependency or host-side configuration is required.
+
+Repository regressions cover the reported size, exact limit boundaries,
+aggregate pages larger than the raw budget, pagination, realtime delivery,
+current-server preflight/rebase, Runtime duplicate handling, Memory Gateway
+equivalence, credential redaction, error classification and disposal. The Tauri
+packed consumer also loads the reported-size fixture through the public facade.
+Run `pnpm check` on Node 24 for these tests and packed consumers. Synthetic
+fixtures contain no production conversation text or credentials.
+
+The Server source baseline remains `develop@2a97c8f4`. Real production conversation
+10 has not been revalidated by this change; the reported deployed Server version
+and Trace ID remain unknown. Real-host package upgrades and legacy-path rollout
+remain host-owned, and no host source or Feature Flag is changed.
+
 ## Open production gates
 
 TFRS-297 remains open. At the frozen Server baseline, `/chat` checks

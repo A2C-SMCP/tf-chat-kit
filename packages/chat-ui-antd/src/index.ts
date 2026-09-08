@@ -65,3 +65,8 @@ export type {
   ChatUiLabels,
   ChatUiSlotStyles,
 } from "./types.js";
+
+export {
+  ChatResourceView,
+  type ChatResourceViewProps,
+} from "./resource-content.js";

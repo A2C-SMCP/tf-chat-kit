@@ -16,6 +16,8 @@ import {
 import { createRuntimeSchema } from "./internal-runtime-schema.js";
 import type { ReadonlyJsonValue } from "./raw.js";
 
+import type { ToolPresentation, ToolAttachment } from "./presentation.js";
+
 export type ConversationId = string;
 export type TimelineItemId = string;
 export type RunId = string;
@@ -36,26 +38,39 @@ export interface TextMessageContent {
   readonly text: string;
 }
 
+/** A normalized received resource; renderers must validate its URI scheme. */
+export interface MessageResource {
+  readonly uri: string;
+  readonly mimeType?: string | undefined;
+  readonly name?: string | undefined;
+  readonly size?: number | undefined;
+}
+
 export interface MediaMessageContent {
   readonly kind: "media";
   readonly mediaType: "audio" | "image" | "video";
   readonly summary: string;
+  readonly resource?: MessageResource | undefined;
   readonly raw?: ReadonlyJsonValue | undefined;
 }
 
 export interface FileMessageContent {
   readonly kind: "file";
   readonly summary: string;
+  readonly resource?: MessageResource | undefined;
   readonly raw?: ReadonlyJsonValue | undefined;
 }
 
 export interface ContactMessageContent {
+  readonly displayName?: string | undefined;
+  readonly avatar?: MessageResource | undefined;
   readonly kind: "contact";
   readonly summary: string;
   readonly raw?: ReadonlyJsonValue | undefined;
 }
 
 export interface UrlMessageContent {
+  readonly resource?: MessageResource | undefined;
   readonly kind: "url";
   readonly summary: string;
   readonly raw?: ReadonlyJsonValue | undefined;
@@ -67,17 +82,24 @@ export interface UnknownMessageContent {
   readonly raw?: ReadonlyJsonValue | undefined;
 }
 
-/**
- * One normalized received-message variant. Multipart and attachment resource
- * contracts remain deferred; non-text variants expose only safe fallback data.
- */
-export type MessageContent =
+/** One non-container part of a normalized received message. */
+export type MessageContentPart =
   | ContactMessageContent
   | FileMessageContent
   | MediaMessageContent
   | TextMessageContent
   | UnknownMessageContent
   | UrlMessageContent;
+
+export interface MultipartMessageContent {
+  readonly kind: "multipart";
+  readonly parts: readonly MessageContentPart[];
+  readonly summary: string;
+  readonly raw?: ReadonlyJsonValue | undefined;
+}
+
+/** One normalized received-message variant. */
+export type MessageContent = MessageContentPart | MultipartMessageContent;
 
 export interface MessageAuthor {
   readonly id?: string | undefined;
@@ -105,6 +127,7 @@ export type AgentEventStatus =
   "aborted" | "failed" | "running" | "success" | "timeout" | "unknown";
 
 export interface AgentEventTransition {
+  readonly content?: ReadonlyJsonValue | undefined;
   /** Gateway-normalized stable ID; duplicate delivery must reuse the same ID. */
   readonly id: string;
   readonly status: AgentEventStatus;
@@ -125,6 +148,8 @@ export interface ToolCall {
 }
 
 interface ToolReturnFields {
+  readonly presentation?: ToolPresentation | undefined;
+  readonly attachments?: readonly ToolAttachment[] | undefined;
   readonly result?: ReadonlyJsonValue | undefined;
   readonly success?: boolean | undefined;
   readonly done?: boolean | undefined;
@@ -133,6 +158,10 @@ interface ToolReturnFields {
 
 /** A normalized Tool return must preserve at least one meaningful field. */
 export type ToolReturn =
+  | (ToolReturnFields & { readonly presentation: ToolPresentation })
+  | (ToolReturnFields & {
+      readonly attachments: readonly [ToolAttachment, ...ToolAttachment[]];
+    })
   | (ToolReturnFields & { readonly result: ReadonlyJsonValue })
   | (ToolReturnFields & { readonly success: boolean })
   | (ToolReturnFields & { readonly done: boolean })
@@ -371,6 +400,8 @@ export interface Capabilities {
   readonly loadHistory: boolean;
   /** Enables ChatGateway.sendText. */
   readonly sendText: boolean;
+  /** Enables uploaded-resource messages when the optional command exists. */
+  readonly sendAttachments?: boolean | undefined;
 }
 
 export interface TimelinePageInfo {

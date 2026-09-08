@@ -13,7 +13,13 @@ import {
   type ChatError,
   type ChatSnapshot,
 } from "@turingfocus/chat-protocol";
-import { useChatClient, useChatSelector } from "@turingfocus/chat-react";
+import {
+  useChatEventNavigation,
+  useChatAttachmentUploader,
+  useChatClient,
+  useChatSelector,
+  useComposerDraft,
+} from "@turingfocus/chat-react";
 
 import { ChatComposer } from "./chat-composer.js";
 import {
@@ -151,6 +157,8 @@ export const ChatConversationView = ({
     selectChatConversationViewSnapshot,
     equalChatConversationViewSnapshot,
   );
+  const attachmentUploader = useChatAttachmentUploader();
+  const composer = useComposerDraft(snapshot?.conversationId ?? "");
   const activeRecoveryUnverified =
     snapshot?.lifecycle?.status === "active" &&
     (snapshot.lifecycle.recovery?.complete === false ||
@@ -266,22 +274,49 @@ export const ChatConversationView = ({
     [controlledSelectedEventId, onSelectedEventChange],
   );
 
+  const navigationScope = useMemo(
+    () => ({ client, currentConversationId }),
+    [client, currentConversationId],
+  );
+  const navigationEvents = useMemo(
+    () => snapshot?.timeline.filter(isChatEventItem) ?? [],
+    [snapshot?.timeline],
+  );
+  const navigationSelect = useCallback(
+    (id: string | null) =>
+      updateSelection(
+        id,
+        navigationEvents.find((item) => item.id === id) ?? null,
+      ),
+    [navigationEvents, updateSelection],
+  );
+  const navigation = useChatEventNavigation({
+    eventIds: navigationEvents.map((item) => item.id),
+    selectedEventId,
+    onSelect: navigationSelect,
+    scope: navigationScope,
+  });
+
+  const previousClientRef = useRef(client);
   const previousConversationIdRef = useRef<string | null>(
     currentConversationId,
   );
   useEffect(() => {
+    const clientChanged = previousClientRef.current !== client;
+    previousClientRef.current = client;
     const previousConversationId = previousConversationIdRef.current;
     previousConversationIdRef.current = currentConversationId;
     if (
-      previousConversationId === null ||
-      previousConversationId === currentConversationId
+      !clientChanged &&
+      (previousConversationId === null ||
+        previousConversationId === currentConversationId)
     ) {
       return;
     }
     lastTriggerRef.current = null;
     setModalOpen(false);
     if (selectedEventId !== null) updateSelection(null, null);
-  }, [currentConversationId, selectedEventId, updateSelection]);
+  }, [client, currentConversationId, selectedEventId, updateSelection]);
 
   useEffect(() => {
     if (
@@ -331,11 +366,12 @@ export const ChatConversationView = ({
 
   const selectEvent = useCallback(
     (item: ChatEventItem, trigger: HTMLElement) => {
+      navigation.pause();
       lastTriggerRef.current = trigger;
       updateSelection(item.id, item);
       setModalOpen(resolvedEventDetailMode === "modal");
     },
-    [resolvedEventDetailMode, updateSelection],
+    [resolvedEventDetailMode, updateSelection, navigation],
   );
 
   const changeEventDetailMode = useCallback(
@@ -493,6 +529,53 @@ export const ChatConversationView = ({
           value={requestedEventDetailMode}
         />
       </div>
+      <nav
+        aria-label="Event navigation"
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          gap: 8,
+          padding: 8,
+        }}
+      >
+        <button
+          type="button"
+          disabled={!navigation.canPrevious}
+          onClick={() => navigation.select(navigation.index - 1)}
+        >
+          Previous event
+        </button>
+        <input
+          type="range"
+          aria-label="Event index"
+          min={0}
+          max={Math.max(0, navigation.count - 1)}
+          value={Math.max(0, navigation.index)}
+          disabled={navigation.count === 0}
+          onChange={(event) =>
+            navigation.select(Number(event.currentTarget.value))
+          }
+        />
+        <span aria-live="polite">
+          {navigation.index + 1} / {navigation.count}
+        </span>
+        <button
+          type="button"
+          disabled={!navigation.canNext}
+          onClick={() => navigation.select(navigation.index + 1)}
+        >
+          Next event
+        </button>
+        <button
+          type="button"
+          disabled={navigation.count === 0}
+          aria-pressed={navigation.mode === "follow-latest"}
+          onClick={navigation.followLatest}
+        >
+          Follow latest
+        </button>
+      </nav>
       <div
         data-chat-event-layout={resolvedEventDetailMode}
         ref={layoutRef}
@@ -533,10 +616,27 @@ export const ChatConversationView = ({
         </div>
       )}
       <ChatComposer
+        attachmentUploader={
+          snapshot.capabilities.sendAttachments === true
+            ? attachmentUploader
+            : undefined
+        }
+        draft={composer.draft}
+        getDeadlineAt={getDeadlineAt}
         key={viewResetKey}
-        disabled={!lifecycleOperable || !snapshot.capabilities.sendText}
+        disabled={
+          !lifecycleOperable ||
+          (!snapshot.capabilities.sendText &&
+            !(
+              snapshot.capabilities.sendAttachments === true &&
+              attachmentUploader !== undefined
+            ))
+        }
         disabledReason={
-          lifecycleOperable && snapshot.capabilities.sendText
+          lifecycleOperable &&
+          (snapshot.capabilities.sendText ||
+            (snapshot.capabilities.sendAttachments === true &&
+              attachmentUploader !== undefined))
             ? undefined
             : snapshot.lifecycle !== undefined && !lifecycleOperable
               ? lifecycleDisplayStatus === undefined
@@ -558,7 +658,9 @@ export const ChatConversationView = ({
         }
         labels={labels}
         onSend={sendText}
+        onDraftChange={composer.setDraft}
         resetKey={viewResetKey}
+        textInputDisabled={!snapshot.capabilities.sendText}
       />
       <Modal
         afterOpenChange={(open) => {
