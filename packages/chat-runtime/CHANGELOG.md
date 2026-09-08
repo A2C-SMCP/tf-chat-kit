@@ -1,5 +1,22 @@
 # @turingfocus/chat-runtime
 
+## 0.8.0
+
+### Minor Changes
+
+- a83c4e3: Add host-agnostic attachment messages, conversation-scoped composer drafts,
+  zero-extra-config TFRobot uploads, Ant Design file and long-paste interactions,
+  and non-TFRobotFront consumer coverage.
+- 358dd28: Add normalized tool presentations, host-injected resource and document ports, media and Markdown
+  display, read-only code and terminal details, local event navigation and received-result inspection.
+  Preserve existing transport and Ask User contracts and validate independent packed consumers.
+
+### Patch Changes
+
+- Updated dependencies [a83c4e3]
+- Updated dependencies [358dd28]
+  - @turingfocus/chat-protocol@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes
