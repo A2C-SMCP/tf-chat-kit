@@ -11,7 +11,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { ChatSnapshot } from "../packages/chat-protocol/src/index.js";
-import { ChatProvider } from "../packages/chat-react/src/index.js";
+import {
+  ChatProvider,
+  ChatDocumentSourceProvider,
+} from "../packages/chat-react/src/index.js";
 import {
   ChatConversationView,
   type AskUserChatAboutThisRequest,
@@ -1410,4 +1413,47 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
       await client.dispose({ deadlineAt: deadlineAt() });
     }
   });
+});
+
+it("selects a host document from the default composer and sends its complete authorized text (#69)", async () => {
+  const { client, memory } = await createLoadedClient();
+  const content = "authorized document ".repeat(1_000);
+  const rendered = await renderInDom(
+    createElement(
+      ChatProvider,
+      { client },
+      createElement(
+        ChatDocumentSourceProvider,
+        {
+          source: { list: () => [{ id: "doc", title: "Handbook", content }] },
+        },
+        createElement(ChatConversationView, { getDeadlineAt: deadlineAt }),
+      ),
+    ),
+  );
+  try {
+    await clickButton(rendered.container, "References");
+    await clickButton(rendered.container, "Load references");
+    await clickButton(rendered.container, "Handbook");
+    expect(
+      client.getComposerDraft(memory.fixtures.conversation.id).longTexts,
+    ).toHaveLength(1);
+    await clickButton(rendered.container, "Send");
+    const sent = memory.controller.calls.find(
+      (call) =>
+        call.operation === "sendMessage" || call.operation === "sendText",
+    );
+    expect({
+      calls: memory.controller.calls.map((call) => call.operation),
+      errors: [...rendered.container.querySelectorAll(".ant-alert")].map(
+        (node) => node.textContent,
+      ),
+    }).toEqual(
+      expect.objectContaining({ calls: expect.arrayContaining(["sendText"]) }),
+    );
+    expect(sent).toMatchObject({ input: { text: `Handbook\n${content}` } });
+  } finally {
+    await rendered.unmount();
+    await client.dispose({ deadlineAt: deadlineAt() });
+  }
 });

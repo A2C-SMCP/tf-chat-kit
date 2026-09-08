@@ -11,6 +11,14 @@ import { createRoot, type Root } from "react-dom/client";
 import { ConfigProvider } from "antd";
 
 import {
+  ChatProvider,
+  ChatResourceProvider,
+  ChatDocumentSourceProvider,
+  ChatTimelineItem,
+  createChatRendererRegistry,
+  appendComposerReference,
+  type ChatResourcePort,
+  type TimelineItem,
   OwnedChatProvider,
   ChatRunStatus,
   ChatWorkspace,
@@ -411,7 +419,137 @@ const verifyLargeToolHistory = async (): Promise<void> => {
   }
 };
 
+const verifyIndependentParityConsumer = async (): Promise<void> => {
+  const dom = installDomEnvironment();
+  const memory = createMemoryChatGateway();
+  const client = createChatClient({ gateway: memory.gateway });
+  let releases = 0;
+  const resources: ChatResourcePort = {
+    resolve: ({ resource }) => ({
+      url: resource.uri.startsWith("s3:")
+        ? "https://example.test/screenshot.png"
+        : resource.uri,
+      dispose: () => {
+        releases += 1;
+      },
+    }),
+  };
+  try {
+    await client.loadConversation({
+      conversationId: memory.fixtures.conversation.id,
+      deadlineAt: deadlineAt(),
+    });
+    const item: TimelineItem = {
+      kind: "agent-event",
+      id: "packed-browser",
+      conversationId: memory.fixtures.conversation.id,
+      eventCategory: "tool",
+      eventType: "Tool",
+      status: "success",
+      createdAt: 1,
+      transitions: [
+        {
+          id: "one",
+          status: "success",
+          occurredAt: 1,
+          toolReturn: {
+            result: "retained origin",
+            presentation: {
+              kind: "browser",
+              markdown: "# Independent browser result",
+              image: { uri: "s3://private/screenshot" },
+            },
+          },
+        },
+      ],
+    };
+    memory.controller.emitUpdateToAll({
+      kind: "timeline.upsert",
+      conversationId: item.conversationId,
+      item,
+    });
+    const runtimeItem = client
+      .getSnapshot()
+      ?.timeline.find((entry) => entry.id === item.id);
+    check(
+      runtimeItem !== undefined,
+      "Packed Runtime lost standard presentation",
+    );
+    if (runtimeItem === undefined) return;
+    await act(async () => {
+      dom.root.render(
+        createElement(
+          ChatProvider,
+          { client },
+          createElement(
+            ChatResourceProvider,
+            { port: resources, scope: "account-a" },
+            createElement(
+              ChatDocumentSourceProvider,
+              {
+                source: {
+                  list: () => [
+                    {
+                      id: "doc",
+                      title: "Handbook",
+                      content: "Authorized full text",
+                    },
+                  ],
+                },
+              },
+              createElement(ChatTimelineItem, {
+                item: runtimeItem,
+                registry: createChatRendererRegistry(),
+              }),
+            ),
+          ),
+        ),
+      );
+      await flushMicrotasks();
+    });
+    check(
+      dom.container.textContent?.includes("Independent browser result"),
+      "Packed default Browser renderer failed",
+    );
+    check(
+      dom.container.querySelector("img")?.getAttribute("src") ===
+        "https://example.test/screenshot.png",
+      "Packed private resource resolver failed",
+    );
+    const current = client.getComposerDraft(item.conversationId);
+    client.setComposerDraft({
+      conversationId: item.conversationId,
+      ...appendComposerReference(
+        current,
+        { id: "doc", title: "Handbook", content: "Authorized full text" },
+        "packed-reference",
+      ),
+    });
+    await client.sendComposerDraft({
+      conversationId: item.conversationId,
+      deadlineAt: deadlineAt(),
+    });
+    check(
+      memory.controller.calls.some(
+        (call) =>
+          call.operation === "sendText" &&
+          call.input.text === "Handbook\nAuthorized full text",
+      ),
+      "Packed reference did not expand before sending",
+    );
+  } finally {
+    await act(async () => {
+      dom.root.unmount();
+      await flushMicrotasks();
+    });
+    await client.dispose({ deadlineAt: deadlineAt() });
+    dom.cleanup();
+  }
+  check(releases > 0, "Packed resource lease was not disposed");
+};
+
 export const runTauriConsumerVerification = async (): Promise<void> => {
+  await verifyIndependentParityConsumer();
   await verifyLargeToolHistory();
   const fixture = createTauriHostFixture();
   const dom = installDomEnvironment();

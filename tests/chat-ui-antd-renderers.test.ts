@@ -91,7 +91,7 @@ const renderInDom = async (node: ReactNode): Promise<DomRender> => {
 };
 
 describe("@turingfocus/chat-ui-antd renderer registry", () => {
-  it("renders GFM Markdown while dropping raw HTML, active URLs, and images", () => {
+  it("renders GFM and resource images while dropping raw HTML and active URLs", () => {
     const maliciousMessage: Message = {
       ...textMessage,
       content: {
@@ -120,8 +120,8 @@ describe("@turingfocus/chat-ui-antd renderer registry", () => {
     expect(markup).toContain("<table>");
     expect(markup).not.toContain("<script");
     expect(markup).not.toContain("javascript:");
-    expect(markup).not.toContain("<img");
-    expect(markup).toContain("[Image: tracking]");
+    expect(markup).toContain('alt="tracking"');
+    expect(markup).toContain('referrerPolicy="no-referrer"');
   });
 
   it("renders normalized image resources and blocks active URI schemes", () => {
@@ -149,7 +149,7 @@ describe("@turingfocus/chat-ui-antd renderer registry", () => {
       }),
     );
     expect(markup).toContain("Rendered caption");
-    expect(markup).toContain('<img alt="diagram.png"');
+    expect(markup).toContain('alt="diagram.png"');
     expect(markup).toContain('src="https://cdn.example/diagram.png"');
     expect(markup).toContain('referrerPolicy="no-referrer"');
 

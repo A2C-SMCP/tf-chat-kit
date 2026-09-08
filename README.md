@@ -91,7 +91,7 @@ pnpm pack:workspace
 
 `pnpm dev:playground` 会在 `http://localhost:3000` 启动仓库私有演示应用。Mock 模式直接组合
 正式 Runtime、React、Ant Design UI 与 Memory Gateway，提供会话创建/重命名/删除/切换、历史、流式回复、
-中断、错误、断线和重连场景。RobotServer 模式使用全中文单列表单，填写 RobotServer 服务地址、
+中断、错误、断线和重连场景。新增“能力演示”入口提供工具呈现、媒体资源、Markdown、长结果导航和文档引用五组可交互示例，详见 [Playground 验收说明](tests/e2e/acceptance.md#issue-58-capability-demonstrations)。RobotServer 模式使用全中文单列表单，填写 RobotServer 服务地址、
 Namespace 与 Robot ID 后，Playground 会推导 API 域名和 Socket namespace/path，并由仅存在于本地
 Vite 开发服务中的同源代理为聊天请求注入 RobotServer 路由头。鉴权可使用管理员密码、Admin Token
 或用户 Token；管理员密码只用于调用 `/v1/auth/login` 换取短期 Admin Token，不会进入聊天会话。

@@ -110,7 +110,9 @@ const socketRejection = async (auth: Record<string, string>) =>
   });
 
 const composerSendButton = (page: Page) =>
-  page.getByLabel("消息").locator("..").getByRole("button");
+  page
+    .locator('[data-chat-composer=""]')
+    .getByRole("button", { name: /发\s*送(?:中)?$/ });
 
 test.beforeEach(async ({ request }) => {
   await request.post(`${ROBOTSERVER}/__test/reset`);
@@ -136,6 +138,7 @@ test("Mock mode renders and exercises the formal Runtime scenarios", async ({
   );
   await expect(eventLayout).toHaveAttribute("data-chat-event-layout", "split");
   await expect(splitHandle).toHaveAttribute("aria-valuenow", "56");
+  await splitHandle.scrollIntoViewIfNeeded();
   const layoutBox = await eventLayout.boundingBox();
   const handleBox = await splitHandle.boundingBox();
   if (layoutBox === null || handleBox === null) {

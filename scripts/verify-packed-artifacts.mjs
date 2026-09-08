@@ -488,9 +488,10 @@ try {
       sourceFiles: {
         "index.ts": [
           'import { createElement } from "react";',
-          'import { ChatProvider, useConversationWorkspace, useChatSelector, type ChatClient, type ChatSnapshot } from "@turingfocus/chat-kit/react";',
+          'import { ChatProvider, ChatResourceProvider, useChatResource, ChatDocumentSourceProvider, useChatEventNavigation, useConversationWorkspace, useChatSelector, type ChatClient, type ChatSnapshot } from "@turingfocus/chat-kit/react";',
           "",
           'if (typeof useConversationWorkspace !== "function") throw new Error("React facade workspace hook is unavailable");',
+          'if ([ChatResourceProvider, useChatResource, ChatDocumentSourceProvider, useChatEventNavigation].some(value => typeof value !== "function")) throw new Error("React parity facade unavailable");',
           "",
           "const ConversationTitle = () =>",
           '  createElement("span", null, useChatSelector((snapshot: ChatSnapshot | null) => snapshot?.conversation.title ?? ""));',
@@ -536,10 +537,15 @@ try {
       packageNames: ["@turingfocus/chat-kit"],
       sourceFiles: {
         "index.ts": [
-          'import { createConversationWorkspaceController, createTFRobotChatClient, type SessionProvider, type TFRobotSession } from "@turingfocus/chat-kit/headless";',
+          'import { appendComposerReference, resolveComposerDraftText, createConversationWorkspaceController, createTFRobotChatClient, type ChatResourcePort, type SessionProvider, type TFRobotSession } from "@turingfocus/chat-kit/headless";',
           "",
           'if (typeof createConversationWorkspaceController !== "function") throw new Error("Headless facade workspace controller is unavailable");',
           "",
+          'const resourcePort: ChatResourcePort = { download: ({ resource, signal }) => { if (signal.aborted || resource.uri !== "private:report") throw new Error("Invalid headless resource operation"); } };',
+          'await resourcePort.download?.({ resource: { uri: "private:report" }, purpose: "download", signal: { aborted: false, subscribe: () => () => undefined } });',
+          'const draft = { conversationId: "headless", text: "", revision: 0, longTexts: [], attachments: [] };',
+          'const referenced = appendComposerReference(draft, { id: "doc", title: "Guide", content: "Full text" }, "reference");',
+          'if (resolveComposerDraftText({ ...draft, ...referenced }) !== "Guide\\nFull text") throw new Error("Headless reference expansion failed");',
           "let sessionReads = 0;",
           "const sessionProvider: SessionProvider<TFRobotSession> = {",
           '  getSession: () => { sessionReads += 1; return { kind: "bearer", token: "headless-facade-token" }; },',

@@ -1,3 +1,8 @@
+import {
+  createCapabilityTimeline,
+  createDemoPorts,
+  type CapabilityScenario,
+} from "./capability-scenarios.js";
 import type {
   ChatGateway,
   ChatSnapshot,
@@ -61,6 +66,8 @@ interface PlaygroundSessionBase {
 
 export interface MockPlaygroundSession extends PlaygroundSessionBase {
   readonly kind: "mock";
+  readonly demoPorts: ReturnType<typeof createDemoPorts>;
+  showCapability(scenario: CapabilityScenario, append?: boolean): void;
   disconnect(): void;
   emitServerError(): void;
   startStreaming(): void;
@@ -87,6 +94,8 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
   readonly attachmentUploader: ChatAttachmentUploader;
   readonly client: ChatClient;
   readonly kind = "mock" as const;
+  readonly demoPorts = createDemoPorts();
+  #capabilitySequence = 0;
   readonly #controller: MemoryGatewayController;
   #disposed = false;
   readonly #listeners = new Set<() => void>();
@@ -371,6 +380,27 @@ class MockPlaygroundSessionImpl implements MockPlaygroundSession {
       status: result.ok
         ? "已通过 Runtime 加载确定性的历史记录。"
         : result.error.message,
+    });
+  }
+
+  showCapability(scenario: CapabilityScenario, append = false): void {
+    const snapshot = this.client.getSnapshot();
+    if (snapshot === null || this.#disposed || !this.#state.connected) return;
+    this.#clearTimers();
+    const timeline = createCapabilityTimeline(
+      scenario,
+      snapshot.conversation.id,
+      `demo-${++this.#capabilitySequence}`,
+    );
+    this.#replaceSnapshot({
+      ...snapshot,
+      run: null,
+      timeline: append ? [...snapshot.timeline, ...timeline] : timeline,
+    });
+    this.#setState({
+      status: append
+        ? "已追加一个检查事件。"
+        : "演示已载入，可在下方直接操作。",
     });
   }
 

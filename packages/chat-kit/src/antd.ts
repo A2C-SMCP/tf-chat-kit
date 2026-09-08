@@ -57,3 +57,8 @@ export {
   type ConversationListError,
   type ResolvedChatEventDetailMode,
 } from "@turingfocus/chat-ui-antd";
+
+export {
+  ChatResourceView,
+  type ChatResourceViewProps,
+} from "@turingfocus/chat-ui-antd";

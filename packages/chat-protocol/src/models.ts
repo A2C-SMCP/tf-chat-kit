@@ -16,6 +16,8 @@ import {
 import { createRuntimeSchema } from "./internal-runtime-schema.js";
 import type { ReadonlyJsonValue } from "./raw.js";
 
+import type { ToolPresentation, ToolAttachment } from "./presentation.js";
+
 export type ConversationId = string;
 export type TimelineItemId = string;
 export type RunId = string;
@@ -60,12 +62,15 @@ export interface FileMessageContent {
 }
 
 export interface ContactMessageContent {
+  readonly displayName?: string | undefined;
+  readonly avatar?: MessageResource | undefined;
   readonly kind: "contact";
   readonly summary: string;
   readonly raw?: ReadonlyJsonValue | undefined;
 }
 
 export interface UrlMessageContent {
+  readonly resource?: MessageResource | undefined;
   readonly kind: "url";
   readonly summary: string;
   readonly raw?: ReadonlyJsonValue | undefined;
@@ -122,6 +127,7 @@ export type AgentEventStatus =
   "aborted" | "failed" | "running" | "success" | "timeout" | "unknown";
 
 export interface AgentEventTransition {
+  readonly content?: ReadonlyJsonValue | undefined;
   /** Gateway-normalized stable ID; duplicate delivery must reuse the same ID. */
   readonly id: string;
   readonly status: AgentEventStatus;
@@ -142,6 +148,8 @@ export interface ToolCall {
 }
 
 interface ToolReturnFields {
+  readonly presentation?: ToolPresentation | undefined;
+  readonly attachments?: readonly ToolAttachment[] | undefined;
   readonly result?: ReadonlyJsonValue | undefined;
   readonly success?: boolean | undefined;
   readonly done?: boolean | undefined;
@@ -150,6 +158,10 @@ interface ToolReturnFields {
 
 /** A normalized Tool return must preserve at least one meaningful field. */
 export type ToolReturn =
+  | (ToolReturnFields & { readonly presentation: ToolPresentation })
+  | (ToolReturnFields & {
+      readonly attachments: readonly [ToolAttachment, ...ToolAttachment[]];
+    })
   | (ToolReturnFields & { readonly result: ReadonlyJsonValue })
   | (ToolReturnFields & { readonly success: boolean })
   | (ToolReturnFields & { readonly done: boolean })

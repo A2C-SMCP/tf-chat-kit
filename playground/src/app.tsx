@@ -1,4 +1,8 @@
 import {
+  capabilityScenarios,
+  type CapabilityScenario,
+} from "./capability-scenarios.js";
+import {
   Button,
   ConfigProvider,
   Input,
@@ -17,7 +21,12 @@ import {
 } from "react";
 
 import type { ChatSnapshot } from "@turingfocus/chat-protocol";
-import { ChatProvider, useChatSelector } from "@turingfocus/chat-react";
+import {
+  ChatDocumentSourceProvider,
+  ChatResourceProvider,
+  ChatProvider,
+  useChatSelector,
+} from "@turingfocus/chat-react";
 import {
   ChatConversationView,
   ChatUiShell,
@@ -101,6 +110,8 @@ const PlaygroundWorkspace = ({
     session.getState,
     session.getState,
   );
+  const [activeCapability, setActiveCapability] =
+    useState<CapabilityScenario>();
   const [conversationHistoryOpen, setConversationHistoryOpen] = useState(false);
   const [createConversationOpen, setCreateConversationOpen] = useState(false);
   const [creatingConversation, setCreatingConversation] = useState(false);
@@ -122,6 +133,7 @@ const PlaygroundWorkspace = ({
   }, []);
 
   useEffect(() => {
+    setActiveCapability(undefined);
     sessionGeneration.current += 1;
     createInFlight.current = false;
     setConversationHistoryOpen(false);
@@ -229,204 +241,280 @@ const PlaygroundWorkspace = ({
         attachmentUploader={session.attachmentUploader}
         client={session.client}
       >
-        <main className="playground-page">
-          <header className="playground-hero">
-            <div>
-              <Typography.Text className="eyebrow">
-                {session.kind === "mock"
-                  ? "本地私有应用 · 内存网关"
-                  : "本地私有应用 · TFROBOT 网关"}
-              </Typography.Text>
-              <Typography.Title level={2}>Chat Kit 调试台</Typography.Title>
-              <Typography.Paragraph>
-                {session.kind === "mock"
-                  ? "无需 RobotServer 或宿主应用源码，即可调试正式 Runtime、React 绑定和 Ant Design 界面。"
-                  : "使用已配置的 RobotServer 调试正式 Runtime、TFRobot Gateway 和 Ant Design 界面。"}
-              </Typography.Paragraph>
-            </div>
-            <Space wrap>
-              <Tag color={state.connected ? "success" : "error"}>
-                {state.connected ? "已连接" : "已断开"}
-              </Tag>
-              <Button disabled={session.kind === "mock"} onClick={onChooseMock}>
-                Mock 模式
-              </Button>
-              <Button onClick={onChooseRobotServer}>
-                {session.kind === "robotserver"
-                  ? "重新配置 RobotServer"
-                  : "RobotServer 模式"}
-              </Button>
-              {onReplace === undefined ? null : (
-                <Button onClick={onReplace}>重建实例</Button>
-              )}
-            </Space>
-          </header>
-
-          <section
-            aria-label={
-              session.kind === "mock" ? "Mock 场景" : "RobotServer 操作"
+        <ChatResourceProvider
+          port={
+            session.kind === "mock" ? session.demoPorts.resources : undefined
+          }
+          scope={session}
+        >
+          <ChatDocumentSourceProvider
+            source={
+              session.kind === "mock" ? session.demoPorts.documents : undefined
             }
-            className="scenario-panel"
+            scope={session}
           >
-            <div className="scenario-heading">
-              <div>
-                <Typography.Title level={4}>
-                  {session.kind === "mock" ? "Mock 场景" : "RobotServer 操作"}
-                </Typography.Title>
-                <Typography.Text type="secondary">
-                  {session.kind === "mock"
-                    ? "每次状态变化均由内存网关发出。"
-                    : "所有读写与 Socket 订阅都使用当前内存中的凭据。"}
-                </Typography.Text>
-              </div>
-              <Typography.Text aria-live="polite" className="scenario-status">
-                {state.status}
-              </Typography.Text>
-            </div>
-            <Space wrap>
-              <Button onClick={() => void session.loadHistory()}>
-                加载更早消息
-              </Button>
-              {session.kind === "mock" ? (
-                <>
-                  <Button onClick={() => session.startStreaming()}>
-                    流式回复
-                  </Button>
-                  <Button onClick={() => session.emitServerError()}>
-                    服务端错误
-                  </Button>
+            <main className="playground-page">
+              <header className="playground-hero">
+                <div>
+                  <Typography.Text className="eyebrow">
+                    {session.kind === "mock"
+                      ? "本地私有应用 · 内存网关"
+                      : "本地私有应用 · TFROBOT 网关"}
+                  </Typography.Text>
+                  <Typography.Title level={2}>Chat Kit 调试台</Typography.Title>
+                  <Typography.Paragraph>
+                    {session.kind === "mock"
+                      ? "无需 RobotServer 或宿主应用源码，即可调试正式 Runtime、React 绑定和 Ant Design 界面。"
+                      : "使用已配置的 RobotServer 调试正式 Runtime、TFRobot Gateway 和 Ant Design 界面。"}
+                  </Typography.Paragraph>
+                </div>
+                <Space wrap>
+                  <Tag color={state.connected ? "success" : "error"}>
+                    {state.connected ? "已连接" : "已断开"}
+                  </Tag>
                   <Button
-                    disabled={!state.connected}
-                    onClick={() => session.disconnect()}
+                    disabled={session.kind === "mock"}
+                    onClick={onChooseMock}
                   >
-                    断开连接
+                    Mock 模式
                   </Button>
-                  <Button
-                    disabled={state.connected}
-                    onClick={() => void session.reconnect()}
+                  <Button onClick={onChooseRobotServer}>
+                    {session.kind === "robotserver"
+                      ? "重新配置 RobotServer"
+                      : "RobotServer 模式"}
+                  </Button>
+                  {onReplace === undefined ? null : (
+                    <Button onClick={onReplace}>重建实例</Button>
+                  )}
+                </Space>
+              </header>
+
+              <section
+                aria-label={
+                  session.kind === "mock" ? "Mock 场景" : "RobotServer 操作"
+                }
+                className="scenario-panel"
+              >
+                <div className="scenario-heading">
+                  <div>
+                    <Typography.Title level={4}>
+                      {session.kind === "mock"
+                        ? "Mock 场景"
+                        : "RobotServer 操作"}
+                    </Typography.Title>
+                    <Typography.Text type="secondary">
+                      {session.kind === "mock"
+                        ? "每次状态变化均由内存网关发出。"
+                        : "所有读写与 Socket 订阅都使用当前内存中的凭据。"}
+                    </Typography.Text>
+                  </div>
+                  <Typography.Text
+                    aria-live="polite"
+                    className="scenario-status"
                   >
-                    重新连接
+                    {state.status}
+                  </Typography.Text>
+                </div>
+                <Space wrap>
+                  <Button onClick={() => void session.loadHistory()}>
+                    加载更早消息
                   </Button>
-                </>
-              ) : (
-                <>
-                  <Button onClick={() => void session.refresh()}>
-                    刷新会话
-                  </Button>
-                  <Button onClick={() => void session.reconnect()}>
-                    重连 REST 与 Socket
-                  </Button>
-                  {canManageRobotServerTestConversation ? (
+                  {session.kind === "mock" ? (
                     <>
-                      <Button
-                        onClick={() => {
-                          setRenameTitle(selectedConversation?.title ?? "");
-                          setRenameConversationOpen(true);
-                        }}
-                      >
-                        重命名测试会话
+                      <Button onClick={() => session.startStreaming()}>
+                        流式回复
+                      </Button>
+                      <Button onClick={() => session.emitServerError()}>
+                        服务端错误
                       </Button>
                       <Button
-                        danger
-                        onClick={() => setDeleteConversationOpen(true)}
+                        disabled={!state.connected}
+                        onClick={() => session.disconnect()}
                       >
-                        删除测试会话
+                        断开连接
+                      </Button>
+                      <Button
+                        disabled={state.connected}
+                        onClick={() => void session.reconnect()}
+                      >
+                        重新连接
                       </Button>
                     </>
-                  ) : null}
-                </>
-              )}
-            </Space>
-          </section>
+                  ) : (
+                    <>
+                      <Button onClick={() => void session.refresh()}>
+                        刷新会话
+                      </Button>
+                      <Button onClick={() => void session.reconnect()}>
+                        重连 REST 与 Socket
+                      </Button>
+                      {canManageRobotServerTestConversation ? (
+                        <>
+                          <Button
+                            onClick={() => {
+                              setRenameTitle(selectedConversation?.title ?? "");
+                              setRenameConversationOpen(true);
+                            }}
+                          >
+                            重命名测试会话
+                          </Button>
+                          <Button
+                            danger
+                            onClick={() => setDeleteConversationOpen(true)}
+                          >
+                            删除测试会话
+                          </Button>
+                        </>
+                      ) : null}
+                    </>
+                  )}
+                </Space>
+              </section>
 
-          <section className="chat-stage">
-            <ChatUiShell
-              compactNavigation={compactNavigation}
-              contentState={state.contentState}
-              conversationListLoading={false}
-              conversations={[]}
-              labels={playgroundChatLabels}
-              navigationMode="compact"
-              onConversationSelect={(conversationId) =>
-                void session.selectConversation(conversationId)
-              }
-              pendingConversationId={state.pendingConversationId}
-              selectedConversationId={state.selectedConversationId}
-              sidebarTitle="会话列表"
-            >
-              <PlaygroundConversation
-                eventDetailSplitRatio={eventDetailSplitRatio}
-                onEventDetailSplitRatioChange={changeEventDetailSplitRatio}
-              />
-            </ChatUiShell>
-          </section>
-          <Modal
-            cancelButtonProps={{ disabled: creatingConversation }}
-            cancelText="取消"
-            closable={!creatingConversation}
-            confirmLoading={creatingConversation}
-            keyboard={!creatingConversation}
-            maskClosable={!creatingConversation}
-            okButtonProps={{
-              disabled: session.kind === "mock" && title.trim().length === 0,
-            }}
-            okText="确认新建"
-            onCancel={() => setCreateConversationOpen(false)}
-            onOk={() => void createConversation()}
-            open={createConversationOpen}
-            title="新建会话"
-          >
-            {session.kind === "mock" ? (
-              <Input
-                aria-label="新会话标题"
-                autoFocus
-                disabled={creatingConversation}
-                onChange={(event) => setTitle(event.target.value)}
-                onPressEnter={() => void createConversation()}
-                value={title}
-              />
-            ) : (
-              <Typography.Paragraph style={{ marginBottom: 0 }}>
-                将创建一个带当前时间标识的 Playground
-                测试会话；正常结束时会按精确 ID 自动清理。
-              </Typography.Paragraph>
-            )}
-          </Modal>
-          <Modal
-            cancelText="取消"
-            confirmLoading={renamingConversation}
-            okButtonProps={{
-              disabled: !renameTitle
-                .trim()
-                .startsWith(ROBOTSERVER_TEST_CONVERSATION_PREFIX),
-            }}
-            okText="确认重命名"
-            onCancel={() => setRenameConversationOpen(false)}
-            onOk={() => void renameSelectedConversation()}
-            open={renameConversationOpen}
-            title="重命名测试会话"
-          >
-            <Input
-              aria-label="测试会话标题"
-              disabled={renamingConversation}
-              onChange={(event) => setRenameTitle(event.target.value)}
-              onPressEnter={() => void renameSelectedConversation()}
-              value={renameTitle}
-            />
-          </Modal>
-          <Modal
-            cancelText="取消"
-            confirmLoading={deletingConversation}
-            okButtonProps={{ danger: true }}
-            okText="确认删除"
-            onCancel={() => setDeleteConversationOpen(false)}
-            onOk={() => void deleteSelectedConversation()}
-            open={deleteConversationOpen}
-            title="删除测试会话"
-          >
-            仅删除当前带 {ROBOTSERVER_TEST_CONVERSATION_PREFIX} 前缀的测试会话。
-          </Modal>
-        </main>
+              {session.kind === "mock" && (
+                <section className="scenario-panel" aria-label="能力演示">
+                  <div>
+                    <Typography.Title level={4} style={{ margin: 0 }}>
+                      能力演示
+                    </Typography.Title>
+                    <Typography.Text type="secondary">
+                      选择一组示例替换当前演示记录。输入草稿仍保留；“重建实例”可恢复初始状态。
+                    </Typography.Text>
+                  </div>
+                  <Space wrap>
+                    {capabilityScenarios.map((scenario) => (
+                      <Button
+                        key={scenario.id}
+                        type={
+                          activeCapability === scenario.id
+                            ? "primary"
+                            : "default"
+                        }
+                        disabled={!state.connected}
+                        onClick={() => {
+                          session.showCapability(scenario.id);
+                          setActiveCapability(scenario.id);
+                        }}
+                      >
+                        {scenario.title}
+                      </Button>
+                    ))}
+                  </Space>
+                  {activeCapability && (
+                    <Typography.Paragraph
+                      style={{ margin: 0 }}
+                      aria-live="polite"
+                    >
+                      {
+                        capabilityScenarios.find(
+                          ({ id }) => id === activeCapability,
+                        )?.hint
+                      }
+                    </Typography.Paragraph>
+                  )}
+                  {activeCapability === "inspection" && (
+                    <Button
+                      disabled={!state.connected}
+                      onClick={() => session.showCapability("inspection", true)}
+                    >
+                      追加事件
+                    </Button>
+                  )}
+                </section>
+              )}
+
+              <section className="chat-stage">
+                <ChatUiShell
+                  compactNavigation={compactNavigation}
+                  contentState={state.contentState}
+                  conversationListLoading={false}
+                  conversations={[]}
+                  labels={playgroundChatLabels}
+                  navigationMode="compact"
+                  onConversationSelect={(conversationId) =>
+                    void session.selectConversation(conversationId)
+                  }
+                  pendingConversationId={state.pendingConversationId}
+                  selectedConversationId={state.selectedConversationId}
+                  sidebarTitle="会话列表"
+                >
+                  <PlaygroundConversation
+                    eventDetailSplitRatio={eventDetailSplitRatio}
+                    onEventDetailSplitRatioChange={changeEventDetailSplitRatio}
+                  />
+                </ChatUiShell>
+              </section>
+              <Modal
+                cancelButtonProps={{ disabled: creatingConversation }}
+                cancelText="取消"
+                closable={!creatingConversation}
+                confirmLoading={creatingConversation}
+                keyboard={!creatingConversation}
+                maskClosable={!creatingConversation}
+                okButtonProps={{
+                  disabled:
+                    session.kind === "mock" && title.trim().length === 0,
+                }}
+                okText="确认新建"
+                onCancel={() => setCreateConversationOpen(false)}
+                onOk={() => void createConversation()}
+                open={createConversationOpen}
+                title="新建会话"
+              >
+                {session.kind === "mock" ? (
+                  <Input
+                    aria-label="新会话标题"
+                    autoFocus
+                    disabled={creatingConversation}
+                    onChange={(event) => setTitle(event.target.value)}
+                    onPressEnter={() => void createConversation()}
+                    value={title}
+                  />
+                ) : (
+                  <Typography.Paragraph style={{ marginBottom: 0 }}>
+                    将创建一个带当前时间标识的 Playground
+                    测试会话；正常结束时会按精确 ID 自动清理。
+                  </Typography.Paragraph>
+                )}
+              </Modal>
+              <Modal
+                cancelText="取消"
+                confirmLoading={renamingConversation}
+                okButtonProps={{
+                  disabled: !renameTitle
+                    .trim()
+                    .startsWith(ROBOTSERVER_TEST_CONVERSATION_PREFIX),
+                }}
+                okText="确认重命名"
+                onCancel={() => setRenameConversationOpen(false)}
+                onOk={() => void renameSelectedConversation()}
+                open={renameConversationOpen}
+                title="重命名测试会话"
+              >
+                <Input
+                  aria-label="测试会话标题"
+                  disabled={renamingConversation}
+                  onChange={(event) => setRenameTitle(event.target.value)}
+                  onPressEnter={() => void renameSelectedConversation()}
+                  value={renameTitle}
+                />
+              </Modal>
+              <Modal
+                cancelText="取消"
+                confirmLoading={deletingConversation}
+                okButtonProps={{ danger: true }}
+                okText="确认删除"
+                onCancel={() => setDeleteConversationOpen(false)}
+                onOk={() => void deleteSelectedConversation()}
+                open={deleteConversationOpen}
+                title="删除测试会话"
+              >
+                仅删除当前带 {ROBOTSERVER_TEST_CONVERSATION_PREFIX}{" "}
+                前缀的测试会话。
+              </Modal>
+            </main>
+          </ChatDocumentSourceProvider>
+        </ChatResourceProvider>
       </ChatProvider>
     </ConfigProvider>
   );

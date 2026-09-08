@@ -1,47 +1,92 @@
 import { Typography, theme } from "antd";
-import type { ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
-import rehypeSanitize from "rehype-sanitize";
+import { isValidElement, lazy, Suspense, type ReactNode } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
+import { ChatResourceView } from "./resource-content.js";
 
 export interface ChatMarkdownContentProps {
   readonly children: string;
 }
 
-/**
- * Safe Markdown content only. Message/event chrome belongs to the caller so
- * content rendering can be reused without coupling author or status layout.
- */
-export const ChatMarkdownContent = ({
+const Code = lazy(() =>
+  import("./code-content.js").then((module) => ({
+    default: module.ChatCodeContent,
+  })),
+);
+const Paragraph = ({
   children,
-}: ChatMarkdownContentProps): ReactNode => {
+}: {
+  readonly children?: ReactNode;
+}): ReactNode => {
   const { token } = theme.useToken();
   return (
-    <ReactMarkdown
-      components={{
-        a: ({ children: linkChildren, href }) => (
-          <Typography.Link href={href} rel="noreferrer" target="_blank">
-            {linkChildren}
-          </Typography.Link>
-        ),
-        img: ({ alt }) => (
-          <Typography.Text type="secondary">
-            {alt === undefined || alt.length === 0
-              ? "[Image]"
-              : `[Image: ${alt}]`}
-          </Typography.Text>
-        ),
-        p: ({ children: paragraphChildren }) => (
-          <Typography.Paragraph style={{ marginBottom: token.marginXS }}>
-            {paragraphChildren}
-          </Typography.Paragraph>
-        ),
-      }}
-      rehypePlugins={[rehypeSanitize]}
-      remarkPlugins={[remarkGfm]}
-      skipHtml
-    >
+    <Typography.Paragraph style={{ marginBottom: token.marginXS }}>
       {children}
-    </ReactMarkdown>
+    </Typography.Paragraph>
   );
 };
+const CodeBlock = ({
+  children,
+}: {
+  readonly children?: ReactNode;
+}): ReactNode => {
+  if (
+    !isValidElement<{ children?: ReactNode; className?: string }>(children) ||
+    typeof children.props.children !== "string"
+  )
+    return <pre>{children}</pre>;
+  const code = children.props.children.replace(/\n$/, "");
+  const language = children.props.className?.match(/language-([^\s]+)/)?.[1];
+  return (
+    <Suspense fallback={<pre>{code.slice(0, 4_000)}</pre>}>
+      <Code code={code} language={language} />
+    </Suspense>
+  );
+};
+// Component identities stay stable during streaming updates.
+const components: Components = {
+  a: ({ children, href }) =>
+    href ? (
+      <ChatResourceView resource={{ uri: href }} inline>
+        {children}
+      </ChatResourceView>
+    ) : (
+      <span>{children}</span>
+    ),
+  img: ({ alt, src }) =>
+    src ? (
+      <ChatResourceView
+        resource={{ uri: src }}
+        kind="image"
+        label={alt || "Image"}
+      />
+    ) : (
+      <span>{alt || "Image unavailable"}</span>
+    ),
+  p: Paragraph,
+  pre: CodeBlock,
+};
+const schema = {
+  ...defaultSchema,
+  protocols: {
+    ...defaultSchema.protocols,
+    src: ["http", "https", "blob", "s3", "private"],
+    href: ["http", "https", "blob", "s3", "private", "mailto"],
+  },
+};
+
+/** Safe, resource-aware GFM; raw HTML remains disabled. */
+export const ChatMarkdownContent = ({
+  children,
+}: ChatMarkdownContentProps): ReactNode => (
+  <ReactMarkdown
+    components={components}
+    rehypePlugins={[[rehypeSanitize, schema]]}
+    remarkPlugins={[remarkGfm]}
+    skipHtml
+    urlTransform={(url) => url}
+  >
+    {children}
+  </ReactMarkdown>
+);

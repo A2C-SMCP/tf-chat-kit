@@ -107,3 +107,18 @@ export {
   type TFRobotSocketFactoryInput,
   type TFRobotSocketListener,
 } from "@turingfocus/chat-gateway-tfrobot";
+
+export {
+  type ChatResourcePort,
+  type ChatResourceRequest,
+  type ChatResourcePurpose,
+  type ChatResolvedResource,
+  type ToolPresentation,
+  type ToolAttachment,
+} from "@turingfocus/chat-protocol";
+
+export {
+  appendComposerReference,
+  type ChatDocumentReference,
+  type ChatDocumentSource,
+} from "@turingfocus/chat-runtime";

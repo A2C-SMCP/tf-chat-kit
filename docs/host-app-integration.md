@@ -461,7 +461,7 @@ const changeEventDetailSplitRatio = useCallback((ratio: number) => {
 
 - 虚拟化渲染时间轴；
 - 用户离开底部后不会强制抢滚动；
-- 使用经过清洗的 GFM Markdown，忽略原始 HTML，图片只显示安全占位文本；
+- 使用经过清洗的 GFM Markdown，忽略原始 HTML；图片和链接通过统一资源端口访问，私有资源由宿主解析，失败时显示可重试的安全降级；
 - 对未知事件或单个自定义渲染器异常执行安全降级；
 - 继承外层 Ant Design `ConfigProvider` 的 theme token。
 
@@ -602,3 +602,8 @@ Chat Kit 负责：
 - [宿主认证与会话边界 ADR](./adr/006-auth-and-session.md)
 - [React + Ant Design 宿主消费者验证](./baselines/tfck-11/host-consumer-validation.md)
 - [Office 与 Tauri 接入形态矩阵](./baselines/tfck-12/non-tfrobotfront-consumer-matrix.md)
+
+## 工具展示、资源与文档引用
+
+第三方独立接入的资源/引用端口、默认工具展示和导航见 [扩展接入指南](third-party-parity.md)，
+当前能力与限制见 [版本化能力矩阵](baselines/parity-58/capabilities.md)。

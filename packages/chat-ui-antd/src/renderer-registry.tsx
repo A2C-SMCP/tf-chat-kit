@@ -15,6 +15,7 @@ import {
   UnknownEventRenderer,
   getEventSummary,
 } from "./event-renderers.js";
+import { ChatResourceView } from "./resource-content.js";
 import { ChatMarkdownContent } from "./markdown-content.js";
 
 export type ChatRendererKey =
@@ -59,19 +60,6 @@ export interface ChatMessageContentProps {
   readonly message: Message;
 }
 
-const safeImageUri = (uri: string): string | undefined => {
-  try {
-    const parsed = new URL(uri);
-    return parsed.protocol === "https:" ||
-      parsed.protocol === "http:" ||
-      parsed.protocol === "blob:"
-      ? parsed.href
-      : undefined;
-  } catch {
-    return undefined;
-  }
-};
-
 const MessageContentPartView = ({
   content,
 }: {
@@ -80,30 +68,35 @@ const MessageContentPartView = ({
   if (content.kind === "text") {
     return <ChatMarkdownContent>{content.text}</ChatMarkdownContent>;
   }
-  if (content.kind === "media" && content.mediaType === "image") {
-    const source =
-      content.resource === undefined
-        ? undefined
-        : safeImageUri(content.resource.uri);
-    if (source !== undefined) {
-      return (
-        <img
-          alt={content.summary}
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          src={source}
-          style={{
-            borderRadius: 8,
-            display: "block",
-            height: "auto",
-            maxHeight: "32rem",
-            maxWidth: "min(100%, 36rem)",
-            objectFit: "contain",
-          }}
-        />
-      );
-    }
+  if (
+    (content.kind === "media" ||
+      content.kind === "file" ||
+      content.kind === "url") &&
+    content.resource !== undefined
+  ) {
+    return (
+      <ChatResourceView
+        resource={content.resource}
+        kind={content.kind === "media" ? content.mediaType : "file"}
+        label={content.summary}
+      />
+    );
   }
+  if (content.kind === "contact")
+    return (
+      <div aria-label="Contact card">
+        {content.avatar === undefined ? null : (
+          <ChatResourceView
+            resource={content.avatar}
+            kind="image"
+            label={content.displayName ?? content.summary}
+          />
+        )}
+        <Typography.Text>
+          {content.displayName ?? content.summary}
+        </Typography.Text>
+      </div>
+    );
   return (
     <Typography.Paragraph style={{ margin: 0, whiteSpace: "pre-wrap" }}>
       {content.summary}

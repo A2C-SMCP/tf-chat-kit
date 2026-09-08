@@ -1,4 +1,8 @@
 import { z } from "zod/v4";
+import {
+  toolPresentationParser,
+  toolAttachmentParser,
+} from "./presentation.js";
 
 import {
   ASK_USER_MAX_ANSWER_VALUES,
@@ -93,11 +97,14 @@ const messageContentPartParser = z.discriminatedUnion("kind", [
   }) satisfies z.ZodType<FileMessageContent>,
   z.object({
     kind: z.literal("contact"),
+    displayName: z.string().optional(),
+    avatar: messageResourceParser.optional(),
     summary: z.string(),
     raw: rawParser.optional(),
   }) satisfies z.ZodType<ContactMessageContent>,
   z.object({
     kind: z.literal("url"),
+    resource: messageResourceParser.optional(),
     summary: z.string(),
     raw: rawParser.optional(),
   }),
@@ -188,6 +195,7 @@ const agentEventStatusParser = z.enum([
 ]);
 
 const agentEventTransitionParser: z.ZodType<AgentEventTransition> = z.object({
+  content: rawParser.optional(),
   id: idParser,
   status: agentEventStatusParser,
   occurredAt: timestampParser,
@@ -207,6 +215,8 @@ const toolCallParser: z.ZodType<ToolCall> = z.object({
 
 const toolReturnParser = z
   .object({
+    presentation: toolPresentationParser.optional(),
+    attachments: z.array(toolAttachmentParser).max(100).optional(),
     result: rawParser.optional(),
     success: z.boolean().optional(),
     done: z.boolean().optional(),
@@ -214,6 +224,8 @@ const toolReturnParser = z
   })
   .refine(
     (toolReturn) =>
+      toolReturn.presentation !== undefined ||
+      (toolReturn.attachments?.length ?? 0) > 0 ||
       toolReturn.result !== undefined ||
       toolReturn.success !== undefined ||
       toolReturn.done !== undefined ||
@@ -379,6 +391,7 @@ const toolEventTransitionParser: z.ZodType<ToolEventTransition> = z
     summary: z.string().optional(),
     error: chatErrorParser.optional(),
     raw: rawParser.optional(),
+    content: rawParser.optional(),
     toolCall: toolCallParser.optional(),
     toolReturn: toolReturnParser.optional(),
     interaction: askUserInteractionResultParser.optional(),

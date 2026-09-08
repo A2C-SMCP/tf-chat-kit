@@ -35,3 +35,34 @@ export {
   rebaseComposerLongTexts,
   resolveComposerDraftText,
 } from "@turingfocus/chat-runtime";
+
+export {
+  ChatResourceProvider,
+  useChatResource,
+  useChatResourcePort,
+  type ChatResourceProviderProps,
+  type ChatResourceBinding,
+} from "./resources.js";
+
+export {
+  getSafeChatResourceUrl,
+  createResourceCancellationSignal,
+} from "./resources.js";
+
+export {
+  useChatEventNavigation,
+  type ChatEventNavigationMode,
+  type ChatEventNavigationBinding,
+  type UseChatEventNavigationOptions,
+} from "./event-navigation.js";
+
+export {
+  ChatDocumentSourceProvider,
+  useChatDocumentSource,
+  type ChatDocumentSourceProviderProps,
+} from "./document-source.js";
+export {
+  appendComposerReference,
+  type ChatDocumentReference,
+  type ChatDocumentSource,
+} from "@turingfocus/chat-runtime";

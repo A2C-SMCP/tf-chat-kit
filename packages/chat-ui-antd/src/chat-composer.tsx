@@ -1,3 +1,8 @@
+import { ChatReferencePicker } from "./reference-picker.js";
+import {
+  appendComposerReference,
+  useChatDocumentSource,
+} from "@turingfocus/chat-react";
 import { Button, Input, Modal, Space, Typography, theme } from "antd";
 import {
   useCallback,
@@ -73,6 +78,13 @@ export const ChatComposer = ({
   style,
   textInputDisabled = false,
 }: ChatComposerProps) => {
+  const { source: documentSource, scope: documentScope } =
+    useChatDocumentSource();
+  const [referencePickerOpen, setReferencePickerOpen] = useState(false);
+  useEffect(
+    () => setReferencePickerOpen(false),
+    [resetKey, documentSource, documentScope],
+  );
   const { token } = theme.useToken();
   const labels = resolveChatUiLabels(labelOverrides);
   const [draft, setDraft] = useState("");
@@ -375,6 +387,8 @@ export const ChatComposer = ({
             const pending = pendingTextEdit.current;
             pendingTextEdit.current = undefined;
             const nextText = event.target.value;
+            if (nextText.endsWith("/") && documentSource !== undefined)
+              setReferencePickerOpen(true);
             const insertedLength =
               pending === undefined
                 ? undefined
@@ -404,6 +418,16 @@ export const ChatComposer = ({
           ref={textarea}
           value={text}
         />
+        {documentSource !== undefined &&
+          controlledDraft !== undefined &&
+          onDraftChange !== undefined && (
+            <Button
+              disabled={disabled || textInputDisabled}
+              onClick={() => setReferencePickerOpen(true)}
+            >
+              References
+            </Button>
+          )}
         {attachmentUploader === undefined ? null : (
           <Button
             disabled={
@@ -492,6 +516,33 @@ export const ChatComposer = ({
           ))}
         </Space>
       )}
+      {referencePickerOpen &&
+        controlledDraft !== undefined &&
+        onDraftChange !== undefined && (
+          <ChatReferencePicker
+            key={resetKey}
+            conversationId={controlledDraft.conversationId}
+            onClose={() => setReferencePickerOpen(false)}
+            onSelect={(reference) => {
+              const current = draftSnapshot.current;
+              let anchorId: string;
+              do {
+                anchorId = `reference-${++sequence.current}`;
+              } while (current.longTexts.some((item) => item.id === anchorId));
+              updateDraft(
+                appendComposerReference(
+                  {
+                    ...current,
+                    conversationId: controlledDraft.conversationId,
+                  },
+                  reference,
+                  anchorId,
+                ),
+              );
+              setReferencePickerOpen(false);
+            }}
+          />
+        )}
       {longTexts.length === 0 ? null : (
         <Space wrap size="small" style={{ marginBlockStart: token.marginXS }}>
           {longTexts.map((item) => (

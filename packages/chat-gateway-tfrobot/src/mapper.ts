@@ -36,6 +36,8 @@ import {
   type ToolReturn,
 } from "@turingfocus/chat-protocol";
 
+import { mapToolPresentation, mapToolAttachments } from "./presentation.js";
+
 import { getTransportTaskId } from "./dto.js";
 import type {
   ConversationDto,
@@ -338,6 +340,12 @@ const mapMessageContent = (dto: MessageDto): MessageContent => {
   if (type === "contact") {
     return {
       kind: "contact",
+      ...(nonEmptyString(recordOf(dto.content)?.["name"]) === undefined
+        ? {}
+        : { displayName: nonEmptyString(recordOf(dto.content)?.["name"]) }),
+      ...(messageResource(recordOf(dto.content)?.["avatar"]) === undefined
+        ? {}
+        : { avatar: messageResource(recordOf(dto.content)?.["avatar"]) }),
       summary: summaryOf(dto.content, "Contact message"),
       ...optionalRaw({ content: dto.content }),
     };
@@ -345,6 +353,9 @@ const mapMessageContent = (dto: MessageDto): MessageContent => {
   if (type === "url") {
     return {
       kind: "url",
+      ...(messageResource(dto.content) === undefined
+        ? {}
+        : { resource: messageResource(dto.content) }),
       summary: summaryOf(dto.content, "URL message"),
       ...optionalRaw({ content: dto.content }),
     };
@@ -722,6 +733,23 @@ const mapToolTransition = (
       ...optionalRaw(toolReturn),
     };
   }
+  if (toolReturn !== undefined) {
+    const presentation = mapToolPresentation(toolReturn);
+    const attachments = mapToolAttachments(toolReturn["attachments"]);
+    const [firstAttachment, ...otherAttachments] = attachments;
+    if (presentation !== undefined) {
+      normalizedToolReturn = {
+        ...normalizedToolReturn,
+        presentation,
+        ...(attachments.length === 0 ? {} : { attachments }),
+      };
+    } else if (firstAttachment !== undefined) {
+      normalizedToolReturn = {
+        ...normalizedToolReturn,
+        attachments: [firstAttachment, ...otherAttachments],
+      };
+    }
+  }
   if (normalizedToolCall === undefined && normalizedToolReturn === undefined) {
     return undefined;
   }
@@ -752,9 +780,7 @@ export const mapEvent = (dto: EventDto): AgentEvent => {
       ? `${id}:${dto.status}:${dto.createTimestamp}`
       : asId(dto.transitionId);
   const isTool = dto.eventScene.toLocaleLowerCase("en-US") === "tool";
-  const toolTransition = isTool
-    ? mapToolTransition(dto, transitionId)
-    : undefined;
+  const toolTransition = mapToolTransition(dto, transitionId);
   if (isTool && toolTransition === undefined) {
     return agentEventSchema.parse({
       kind: "agent-event",
@@ -792,6 +818,9 @@ export const mapEvent = (dto: EventDto): AgentEvent => {
       ...(dto.transitionSequence === undefined
         ? {}
         : { sequence: dto.transitionSequence }),
+      ...(typeof dto.content === "string" || dto.content === undefined
+        ? {}
+        : { content: toolResult(dto.content) }),
       ...(typeof dto.content === "string"
         ? { summary: sanitizeDiagnosticText(dto.content) }
         : {}),

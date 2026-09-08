@@ -36,3 +36,17 @@ export type {
   UploadCancellationSignal,
   UploadedAttachment,
 } from "@turingfocus/chat-protocol";
+
+export type {
+  ChatResourcePort,
+  ChatResourceRequest,
+  ChatResourcePurpose,
+  ChatResolvedResource,
+  MessageResource,
+} from "@turingfocus/chat-protocol";
+
+export {
+  appendComposerReference,
+  type ChatDocumentReference,
+  type ChatDocumentSource,
+} from "./references.js";

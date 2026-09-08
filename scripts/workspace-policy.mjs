@@ -59,6 +59,8 @@ import { validateFacadeEntryIsolation } from "./facade-entry-policy.mjs";
  * }} WorkspaceSnapshot
  */
 const heavyRendererDependencyPatterns = [
+  /^highlight\.js$/u,
+  /^diff$/u,
   /^monaco-editor$/u,
   /^@monaco-editor\//u,
   /^xterm$/u,
