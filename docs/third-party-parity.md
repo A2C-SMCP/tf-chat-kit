@@ -94,10 +94,11 @@ The renderer receives a standard item and display mode; `null` explicitly reques
 Use `useChatResource` in a custom React renderer for the same cancellation and lease behavior, or
 call your `ChatResourcePort` directly in a non-React application. Theme uses Ant Design ConfigProvider.
 
-The conversation view offers previous/next event, an accessible index range and Follow latest.
-Manual selection pauses following. Historical prepends preserve the selected ID. A custom UI can
-use `useChatEventNavigation` with its own controlled selected ID and a scope combining client and
-conversation identity. Changing scope returns to manual mode. None of this invokes server replay.
+The conversation view opens event details when a timeline event is selected. It does not render an
+event navigation toolbar. A custom UI can use `useChatEventNavigation` for previous/next selection
+and following the latest event, with its own controlled selected ID and a scope combining client
+and conversation identity. Historical prepends preserve the selected ID. Changing scope returns
+to manual mode. None of this invokes server replay.
 
 Code blocks copy their own original text. Large received results initially show 4,000 characters and
 can be expanded/copied; highlighter/diff budgets are listed in the capability matrix. Unknown language
