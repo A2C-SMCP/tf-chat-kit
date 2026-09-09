@@ -440,6 +440,7 @@ export const ChatConversationView = ({
         <ChatEventDetailEmpty labels={labels} />
       ) : (
         <ChatEventDetail
+          labels={labels}
           formatTimestamp={formatTimestamp}
           item={selectedEvent}
           onRendererError={onRendererError}
@@ -680,6 +681,7 @@ export const ChatConversationView = ({
       >
         {selectedEvent === undefined ? null : (
           <ChatEventDetail
+            labels={labels}
             formatTimestamp={formatTimestamp}
             item={selectedEvent}
             onRendererError={onRendererError}

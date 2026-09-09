@@ -7,6 +7,9 @@ import {
   type ReactNode,
 } from "react";
 import {
+  ChatResourceError,
+  normalizeChatResourceError,
+  type ChatResourceFailure,
   type ChatResolvedResource,
   type MessageResource,
 } from "@turingfocus/chat-protocol";
@@ -17,7 +20,11 @@ import {
   createResourceCancellationSignal,
 } from "@turingfocus/chat-react";
 
+import { useResourceLabels } from "./resource-labels.js";
+import type { ChatUiLabelOverrides } from "./types.js";
+
 export interface ChatResourceViewProps {
+  readonly labels?: ChatUiLabelOverrides | undefined;
   readonly resource: MessageResource;
   readonly kind?: "image" | "audio" | "video" | "file" | undefined;
   readonly label?: string | undefined;
@@ -28,11 +35,13 @@ export interface ChatResourceViewProps {
 /** All built-in resource views share cancellation and host authorization policy. */
 export function ChatResourceView({
   resource,
+  labels: labelOverrides,
   kind = "file",
   label,
   inline = false,
   children,
 }: ChatResourceViewProps): ReactNode {
+  const labels = useResourceLabels(labelOverrides);
   const stableResource = useMemo(
     () => ({
       uri: resource.uri,
@@ -44,16 +53,16 @@ export function ChatResourceView({
   );
   const resolved = useChatResource(stableResource);
   const { port, scope, client, conversationId } = useChatResourcePort();
-  const [failed, setFailed] = useState(false);
-  const [actionError, setActionError] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [mediaError, setMediaError] = useState<ChatResourceFailure>();
+  const [actionError, setActionError] = useState<ChatResourceFailure>();
+  const [busy, setBusy] = useState<"open" | "download">();
   const operation = useRef<AbortController>();
   const completedLeases = useRef(new Set<ChatResolvedResource>());
   const media = useRef<HTMLMediaElement | null>(null);
   useEffect(() => {
-    setFailed(false);
-    setActionError(false);
-    setBusy(false);
+    setMediaError(undefined);
+    setActionError(undefined);
+    setBusy(undefined);
     const leases = completedLeases.current;
     return () => {
       operation.current?.abort();
@@ -87,13 +96,34 @@ export function ChatResourceView({
     },
     [resolved.url, port, scope, client, conversationId],
   );
-  const title = label ?? resource.name ?? "File";
+  const title =
+    label ??
+    resource.name ??
+    (kind === "file" ? labels.fileTitle : labels[kind]);
+  const displayError = mediaError ?? resolved.error;
+  const failure = displayError?.code === "cancelled" ? undefined : displayError;
+  const onMediaError = (element?: HTMLMediaElement): void => {
+    // MediaError codes are standardized; image events expose no reliable cause.
+    const code = element?.error?.code;
+    setMediaError(
+      normalizeChatResourceError({
+        code:
+          code === 1
+            ? "cancelled"
+            : code === 2
+              ? "network"
+              : code === 3 || code === 4
+                ? "unsupported"
+                : "unknown",
+      }),
+    );
+  };
   const act = async (purpose: "open" | "download"): Promise<void> => {
     operation.current?.abort();
     const controller = new AbortController();
     operation.current = controller;
-    setBusy(true);
-    setActionError(false);
+    setBusy(purpose);
+    setActionError(undefined);
     let lease: ChatResolvedResource | undefined;
     try {
       const request = {
@@ -118,7 +148,7 @@ export function ChatResourceView({
           ? { baseUrl: document.baseURI, allowMailto: inline }
           : undefined,
       );
-      if (url === undefined) throw new Error("Resource unavailable");
+      if (url === undefined) throw new ChatResourceError("unsupported");
       if (purpose === "open") {
         const anchor = document.createElement("a");
         anchor.href = url;
@@ -128,13 +158,31 @@ export function ChatResourceView({
         completedLeases.current.add(lease);
         lease = undefined;
       } else {
-        const response = await fetch(url, {
-          signal: controller.signal,
-          credentials: "omit",
-          referrerPolicy: "no-referrer",
-        });
-        if (!response.ok) throw new Error("Download failed");
-        const blob = await response.blob();
+        let blob: Blob;
+        try {
+          const response = await fetch(url, {
+            signal: controller.signal,
+            credentials: "omit",
+            referrerPolicy: "no-referrer",
+          });
+          if (!response.ok)
+            throw new ChatResourceError(
+              response.status === 401 || response.status === 403
+                ? "unauthorized"
+                : response.status === 404
+                  ? "not-found"
+                  : response.status === 410
+                    ? "expired"
+                    : response.status === 415
+                      ? "unsupported"
+                      : "unknown",
+            );
+          blob = await response.blob();
+        } catch (error) {
+          if (error instanceof TypeError)
+            throw new ChatResourceError("network");
+          throw error;
+        }
         if (controller.signal.aborted) return;
         const objectUrl = URL.createObjectURL(blob);
         // Keep the URL valid until the resource leaves this scope; navigation consumes it asynchronously.
@@ -144,18 +192,20 @@ export function ChatResourceView({
         });
         const anchor = document.createElement("a");
         anchor.href = objectUrl;
-        anchor.download = resource.name ?? "download";
+        anchor.download = resource.name ?? labels.fileTitle;
         anchor.click();
       }
-    } catch {
-      if (!controller.signal.aborted) setActionError(true);
+    } catch (error) {
+      const failure = normalizeChatResourceError(error);
+      if (!controller.signal.aborted && failure.code !== "cancelled")
+        setActionError(failure);
     } finally {
       try {
         lease?.dispose?.();
       } catch {
-        if (!controller.signal.aborted) setActionError(true);
+        // Releasing a host lease is cleanup, not a failed user action.
       } finally {
-        if (!controller.signal.aborted) setBusy(false);
+        if (!controller.signal.aborted) setBusy(undefined);
       }
     }
   };
@@ -172,7 +222,7 @@ export function ChatResourceView({
             }) ??
             "#"
           }
-          aria-disabled={busy}
+          aria-disabled={busy !== undefined}
           onClick={(event) => {
             event.preventDefault();
             if (!busy) void act("open");
@@ -180,23 +230,22 @@ export function ChatResourceView({
         >
           {children ?? title}
         </a>
-        {actionError && (
-          <span role="alert">Resource action failed. Try again.</span>
-        )}
+        {busy && <span role="status">{labels.opening}</span>}
+        {actionError && <span role="alert">{labels[actionError.code]}</span>}
       </span>
     );
   return (
     <div data-chat-resource={kind} style={{ maxWidth: "100%" }}>
       {kind === "file" ? (
         <span>{title}</span>
-      ) : resolved.url !== undefined && !failed ? (
+      ) : resolved.url !== undefined && mediaError === undefined ? (
         kind === "image" ? (
           <img
             src={resolved.url}
             alt={title}
             loading="lazy"
             referrerPolicy="no-referrer"
-            onError={() => setFailed(true)}
+            onError={() => onMediaError()}
             style={{
               maxWidth: "100%",
               maxHeight: "32rem",
@@ -211,7 +260,7 @@ export function ChatResourceView({
             controls
             preload="none"
             aria-label={title}
-            onError={() => setFailed(true)}
+            onError={(event) => onMediaError(event.currentTarget)}
           />
         ) : (
           <video
@@ -221,49 +270,55 @@ export function ChatResourceView({
             controls
             preload="none"
             aria-label={title}
-            onError={() => setFailed(true)}
+            onError={(event) => onMediaError(event.currentTarget)}
             style={{ maxWidth: "100%" }}
           />
         )
       ) : (
-        <span>
-          {title} — {resolved.status === "loading" ? "Loading" : "Unavailable"}
-        </span>
+        <span>{title}</span>
       )}
-      {(failed || resolved.status === "unavailable") && (
+      {resolved.status === "loading" && (
+        <span role="status">{labels.loading}</span>
+      )}
+      {displayError?.code === "cancelled" && <span>{labels.cancelled}</span>}
+      {failure && <span role="alert">{labels[failure.code]}</span>}
+      {failure?.retryable && (
         <button
           type="button"
           onClick={() => {
-            setFailed(false);
+            setMediaError(undefined);
             resolved.retry();
           }}
         >
-          Retry resource
+          {labels.retry}
         </button>
       )}
       {kind === "file" && (
         <button
           type="button"
-          disabled={busy}
+          disabled={busy !== undefined}
           onClick={() => {
             void act("open");
           }}
         >
-          Open
+          {labels.open}
         </button>
       )}
       <button
         type="button"
-        disabled={busy}
+        disabled={busy !== undefined}
         onClick={() => {
           void act("download");
         }}
       >
-        Download
+        {labels.download}
       </button>
-      {actionError && (
-        <span role="alert">Resource action failed. Try again.</span>
+      {busy && (
+        <span role="status">
+          {busy === "open" ? labels.opening : labels.downloading}
+        </span>
       )}
+      {actionError && <span role="alert">{labels[actionError.code]}</span>}
     </div>
   );
 }

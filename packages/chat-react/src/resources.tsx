@@ -9,6 +9,8 @@ import {
   type ReactNode,
 } from "react";
 import {
+  normalizeChatResourceError,
+  type ChatResourceFailure,
   type ChatResourcePort,
   type ChatResolvedResource,
   type MessageResource,
@@ -62,6 +64,8 @@ export function useChatResourcePort() {
 export interface ChatResourceBinding {
   readonly url?: string | undefined;
   readonly status: "loading" | "ready" | "unavailable";
+  /** Cancelled outcomes are neutral, not failures to display. */
+  readonly error?: ChatResourceFailure | undefined;
   retry(): void;
 }
 
@@ -86,6 +90,7 @@ export function useChatResource(
     key: typeof key;
     url?: string;
     status: ChatResourceBinding["status"];
+    error?: ChatResourceFailure;
   }>();
   useEffect(() => {
     const controller = new AbortController();
@@ -122,11 +127,18 @@ export function useChatResource(
           key,
           ...(url === undefined ? {} : { url }),
           status: url === undefined ? "unavailable" : "ready",
+          ...(url === undefined
+            ? { error: normalizeChatResourceError(undefined) }
+            : {}),
         });
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!controller.signal.aborted)
-          setState({ key, status: "unavailable" });
+          setState({
+            key,
+            status: "unavailable",
+            error: normalizeChatResourceError(error),
+          });
       });
     return () => {
       controller.abort();
@@ -139,7 +151,7 @@ export function useChatResource(
       : undefined;
   return {
     ...(state?.key === key
-      ? { status: state.status, url: state.url }
+      ? { status: state.status, url: state.url, error: state.error }
       : publicUrl === undefined
         ? { status: "loading" as const }
         : { status: "ready" as const, url: publicUrl }),

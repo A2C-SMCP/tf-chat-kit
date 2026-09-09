@@ -112,3 +112,75 @@ independent headless, React and Ant Design consumer projects; those projects do 
 source. The resource action test uses a real local HTTP server, and the presentation integration test
 uses a real HTTP/Socket.IO adapter into Runtime. See `baselines/parity-58/capabilities.md` for the
 acceptance-to-test mapping and limits. No production credentials or external application are required.
+
+## Resource errors and localization (#75)
+
+The resource port signatures are unchanged. Hosts may throw `ChatResourceError` (available from
+`@turingfocus/chat-kit/headless` and its UI entries), or reject with `{ code }`. Supported codes are
+`unauthorized`, `network`, `not-found`, `expired`, `unsupported`, `cancelled`, and `unknown`.
+`normalizeChatResourceError(unknown)` produces only `{ code, retryable }`; it never copies a host
+message, URL, response body, cause or stack. Existing untyped exceptions remain safe unknown errors.
+Map your backend/platform errors to these codes in the host; do not infer classification from error
+message substrings or pass credentials into the error.
+
+For example, a host that detects an expired lease can `throw new ChatResourceError("expired")`.
+A user-cancelled platform save can throw `new ChatResourceError("cancelled")`; native `AbortError`
+is also recognized. `ChatResolvedResource.dispose` remains the lease cleanup callback, not a new
+method on `ChatResourcePort`.
+
+`useChatResource` retains its existing `loading | ready | unavailable` status union and adds an
+optional `error: ChatResourceFailure`. Custom UIs should treat `error.code === "cancelled"` as a
+neutral outcome, not an alert. Explicit `retry()` starts another resolve. The built-in UI offers
+retry for authorization, network, expiry and unknown failures; sign in or correct permissions in
+the host before retrying an authorization failure. Not-found and unsupported errors are not given
+a display retry button. Open/download can be attempted again using the corresponding action.
+Cancelled display loading shows neutral copy, while cancelled open/download silently clears busy
+state. Context changes/unmount cancel requests, discard late failures, and release late leases.
+There is no automatic retry, login, lease refresh or polling.
+
+The default browser download maps HTTP 401/403 to unauthorized, 404 to not-found, 410 to expired,
+and 415 to unsupported. Fetch/network failures use network; other responses use unknown. Browser
+image errors provide no reliable status and therefore use unknown. Native media error codes
+identify cancellation, network or unsupported/decoding failures. Opening a browser link only
+initiates navigation; the Kit cannot inspect a new tab's HTTP/authentication result. Hosts needing
+that guarantee must implement `open` and reject with the appropriate code.
+
+Set `labels.resource` once on `ChatWorkspace` or `ChatConversationView`; it reaches message
+attachments, Markdown resources, and both modal/split event details. Standalone `ChatTimeline`,
+`ChatEventDetail`, and `ChatResourceView` also accept `labels`. Each omitted key retains English
+copy. Labels are instance-local and can change without reconnecting or reacquiring a resource.
+For a complete Chinese resource dictionary:
+
+```tsx
+import type { ChatUiLabelOverrides } from "@turingfocus/chat-kit/antd";
+
+const labels: ChatUiLabelOverrides = {
+  resource: {
+    screenshot: "浏览器截图",
+    generatedFile: "生成的文件",
+    fileTitle: "文件",
+    image: "图片",
+    audio: "音频",
+    video: "视频",
+    loading: "正在加载资源…",
+    retry: "重试资源",
+    open: "打开",
+    download: "下载",
+    opening: "正在打开…",
+    downloading: "正在下载…",
+    unauthorized: "请登录或检查资源访问权限。",
+    network: "无法连接资源，请检查网络后重试。",
+    "not-found": "资源不存在。",
+    expired: "资源链接已过期，请重试刷新。",
+    unsupported: "不支持此资源格式。",
+    cancelled: "已取消资源加载。",
+    unknown: "资源操作失败，请重试。",
+  },
+};
+// <ChatWorkspace labels={labels} /> inside the existing providers.
+```
+
+This is an additive Minor API change in the fixed package group. No TFRobot REST/Socket contract,
+server baseline, credentials, host platform adapter, migration flag or production seed changes are
+required. The repository's Playground expiry fixture and Tauri-style packed consumer cover the
+new resource contract; actual client deployment and resource transport remain host-owned.

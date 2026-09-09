@@ -13,6 +13,8 @@ import { ConfigProvider } from "antd";
 import {
   ChatProvider,
   ChatResourceProvider,
+  ChatResourceError,
+  ChatResourceView,
   ChatDocumentSourceProvider,
   ChatTimelineItem,
   createChatRendererRegistry,
@@ -515,6 +517,50 @@ const verifyIndependentParityConsumer = async (): Promise<void> => {
       dom.container.querySelector("img")?.getAttribute("src") ===
         "https://example.test/screenshot.png",
       "Packed private resource resolver failed",
+    );
+    let resourceAttempt = 0;
+    const translatedResources: ChatResourcePort = {
+      resolve: () => {
+        if (++resourceAttempt === 1) throw new ChatResourceError("expired");
+        return { url: "https://example.test/recovered.png" };
+      },
+    };
+    await act(async () => {
+      dom.root.render(
+        createElement(
+          ChatResourceProvider,
+          { port: translatedResources },
+          createElement(ChatResourceView, {
+            kind: "image",
+            resource: { uri: "private:packed" },
+            labels: {
+              resource: {
+                expired: "链接已过期",
+                retry: "重新加载",
+                download: "下载",
+              },
+            },
+          }),
+        ),
+      );
+      await flushMicrotasks();
+    });
+    check(
+      dom.container.textContent?.includes("链接已过期"),
+      "Packed resource error translation missing",
+    );
+    await act(async () => {
+      const retry = Array.from(dom.container.querySelectorAll("button")).find(
+        (button) => button.textContent === "重新加载",
+      );
+      check(retry, "Packed resource retry missing");
+      retry?.click();
+      await flushMicrotasks();
+    });
+    check(
+      dom.container.querySelector("img")?.getAttribute("src") ===
+        "https://example.test/recovered.png",
+      "Packed resource retry did not recover",
     );
     const current = client.getComposerDraft(item.conversationId);
     client.setComposerDraft({

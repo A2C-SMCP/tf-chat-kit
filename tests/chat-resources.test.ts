@@ -87,3 +87,44 @@ it("recovers expired resources on explicit retry and rejects executable URLs", a
   expect(binding?.url).toBe("https://example.com/avatar");
   act(() => renderer.unmount());
 });
+
+it("exposes only safe cancellation state and clears it on explicit retry", async () => {
+  let attempts = 0;
+  let binding: ChatResourceBinding | undefined;
+  function Consumer() {
+    binding = useChatResource({ uri: "private:file" });
+    return null;
+  }
+  let renderer!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      renderer = create(
+        createElement(
+          ChatResourceProvider,
+          {
+            port: {
+              resolve: () => {
+                if (++attempts === 1)
+                  throw {
+                    code: "cancelled",
+                    message: "token=secret",
+                    stack: "private-stack",
+                  };
+                return { url: "https://example.test/file" };
+              },
+            },
+          },
+          createElement(Consumer),
+        ),
+      );
+    });
+    expect(binding?.error).toEqual({ code: "cancelled", retryable: false });
+    expect(binding?.status).toBe("unavailable");
+    expect(JSON.stringify(binding)).not.toContain("secret");
+    await act(async () => binding?.retry());
+    expect(binding?.status).toBe("ready");
+    expect(binding?.error).toBeUndefined();
+  } finally {
+    act(() => renderer?.unmount());
+  }
+});

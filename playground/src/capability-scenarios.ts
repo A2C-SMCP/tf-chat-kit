@@ -1,3 +1,4 @@
+import { ChatResourceError } from "@turingfocus/chat-protocol";
 import type {
   ChatResourcePort,
   MessageContent,
@@ -15,7 +16,7 @@ export const capabilityScenarios = [
   {
     id: "media",
     title: "媒体与资源",
-    hint: "播放本地音视频，打开或下载文件；图片首次模拟授权过期，点击 Retry resource 恢复。所有素材都来自本地。",
+    hint: "播放本地音视频，打开或下载文件；图片首次模拟授权过期，点击 重试资源 恢复。所有素材都来自本地。",
   },
   {
     id: "markdown",
@@ -51,10 +52,10 @@ export function createDemoPorts(): {
   return {
     resources: {
       resolve: (request) => {
-        if (request.signal.aborted) throw new Error("Cancelled");
+        if (request.signal.aborted) throw new ChatResourceError("cancelled");
         if (request.resource.uri === "private:demo-retry" && expired) {
           expired = false;
-          throw new Error("Demo authorization expired");
+          throw new ChatResourceError("expired");
         }
         const paths: Readonly<Record<string, string>> = {
           "private:demo-report": "/demo/report.txt",

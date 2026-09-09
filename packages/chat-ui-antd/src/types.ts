@@ -60,7 +60,31 @@ export type ChatContentState =
       readonly title?: ReactNode | undefined;
     };
 
+export interface ChatResourceLabels {
+  readonly screenshot: string;
+  readonly generatedFile: string;
+  readonly fileTitle: string;
+  readonly image: string;
+  readonly audio: string;
+  readonly video: string;
+  readonly loading: string;
+  readonly retry: string;
+  readonly open: string;
+  readonly download: string;
+  readonly opening: string;
+  readonly downloading: string;
+  readonly unauthorized: string;
+  readonly network: string;
+  readonly "not-found": string;
+  readonly expired: string;
+  readonly unsupported: string;
+  readonly cancelled: string;
+  readonly unknown: string;
+}
+
 export interface ChatUiLabels {
+  /** Resource copy is optional so existing complete host dictionaries remain valid. */
+  readonly resource?: Readonly<Partial<ChatResourceLabels>> | undefined;
   readonly attach: ReactNode;
   readonly askUserCancel: ReactNode;
   readonly askUserChatAboutThis: ReactNode;

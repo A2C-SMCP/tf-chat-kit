@@ -3,6 +3,7 @@ import { isValidElement, lazy, Suspense, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
+import { useResourceLabels } from "./resource-labels.js";
 import { ChatResourceView } from "./resource-content.js";
 
 export interface ChatMarkdownContentProps {
@@ -54,16 +55,18 @@ const components: Components = {
     ) : (
       <span>{children}</span>
     ),
-  img: ({ alt, src }) =>
-    src ? (
+  img: function ResourceImage({ alt, src }) {
+    const labels = useResourceLabels();
+    return src ? (
       <ChatResourceView
         resource={{ uri: src }}
         kind="image"
-        label={alt || "Image"}
+        label={alt || labels.image}
       />
     ) : (
-      <span>{alt || "Image unavailable"}</span>
-    ),
+      <span>{alt || labels.unknown}</span>
+    );
+  },
   p: Paragraph,
   pre: CodeBlock,
 };

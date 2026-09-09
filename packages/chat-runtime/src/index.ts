@@ -50,3 +50,10 @@ export {
   type ChatDocumentReference,
   type ChatDocumentSource,
 } from "./references.js";
+
+export {
+  ChatResourceError,
+  normalizeChatResourceError,
+  type ChatResourceFailure,
+  type ChatResourceErrorCode,
+} from "@turingfocus/chat-protocol";

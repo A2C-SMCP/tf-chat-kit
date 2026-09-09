@@ -1,6 +1,33 @@
-import type { ChatUiLabelOverrides, ChatUiLabels } from "./types.js";
+import type {
+  ChatResourceLabels,
+  ChatUiLabelOverrides,
+  ChatUiLabels,
+} from "./types.js";
+
+export const defaultChatResourceLabels: ChatResourceLabels = Object.freeze({
+  screenshot: "Browser screenshot",
+  generatedFile: "Generated file",
+  fileTitle: "File",
+  image: "Image",
+  audio: "Audio",
+  video: "Video",
+  loading: "Loading resource…",
+  retry: "Retry resource",
+  open: "Open",
+  download: "Download",
+  opening: "Opening…",
+  downloading: "Downloading…",
+  unauthorized: "Sign in or check your access to this resource.",
+  network: "Resource could not be reached. Check your connection and retry.",
+  "not-found": "Resource was not found.",
+  expired: "Resource link has expired. Retry to refresh it.",
+  unsupported: "This resource format is not supported.",
+  cancelled: "Resource loading cancelled.",
+  unknown: "Resource action failed. Try again.",
+});
 
 export const defaultChatUiLabels: ChatUiLabels = Object.freeze({
+  resource: defaultChatResourceLabels,
   attach: "Attach",
   askUserCancel: "Cancel",
   askUserChatAboutThis: "Chat about this",
@@ -85,6 +112,7 @@ export const resolveChatUiLabels = (
 ): ChatUiLabels => ({
   ...defaultChatUiLabels,
   ...overrides,
+  resource: { ...defaultChatUiLabels.resource, ...overrides?.resource },
   lifecycleStatus: {
     ...defaultChatUiLabels.lifecycleStatus,
     ...overrides?.lifecycleStatus,

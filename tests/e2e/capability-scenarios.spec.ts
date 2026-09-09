@@ -38,7 +38,7 @@ test("five tool views, real download and event navigation", async ({
   await expect(detail).toContainText("资源与引用测试通过");
   await page.getByRole("button", { name: "Next event", exact: true }).click();
   const downloading = page.waitForEvent("download");
-  await detail.getByRole("button", { name: "Download", exact: true }).click();
+  await detail.getByRole("button", { name: "下载", exact: true }).click();
   const download = await downloading;
   expect(download.suggestedFilename()).toBe("chat-kit-report.txt");
   const stream = await download.createReadStream();
@@ -68,9 +68,11 @@ test("local media really plays and expired image recovers", async ({
       .toBeGreaterThan(0);
     await media.evaluate((element: HTMLMediaElement) => element.pause());
   }
-  await page
-    .getByRole("button", { name: "Retry resource", exact: true })
-    .click();
+  await expect(page.getByRole("alert")).toContainText(
+    "资源链接已过期，请重试刷新。",
+  );
+  await expect(page.getByText("Unavailable", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "重试资源", exact: true }).click();
   const recovered = page.getByRole("img", { name: "可重试图片", exact: true });
   await expect
     .poll(() =>

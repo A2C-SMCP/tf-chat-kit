@@ -109,6 +109,10 @@ export {
 } from "@turingfocus/chat-gateway-tfrobot";
 
 export {
+  ChatResourceError,
+  normalizeChatResourceError,
+  type ChatResourceFailure,
+  type ChatResourceErrorCode,
   type ChatResourcePort,
   type ChatResourceRequest,
   type ChatResourcePurpose,
