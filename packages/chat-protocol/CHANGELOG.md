@@ -1,5 +1,11 @@
 # @turingfocus/chat-protocol
 
+## 0.8.1
+
+### Patch Changes
+
+- e3ba706: Add safe resource error codes, neutral cancellation handling, and optional unified resource labels for loading, retry, open and download. Existing resource ports and host label dictionaries remain compatible. Resource copy now reaches attachments, Markdown and event details through the existing UI labels input.
+
 ## 0.8.0
 
 ### Minor Changes

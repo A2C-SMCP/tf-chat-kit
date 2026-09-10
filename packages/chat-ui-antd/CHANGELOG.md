@@ -1,5 +1,19 @@
 # @turingfocus/chat-ui-antd
 
+## 0.8.1
+
+### Patch Changes
+
+- a0dd631: Enable bounded, instance-local conversation caching by default, with cache-first display and server synchronization. Add optional scoped, versioned persistence and attachment revalidation ports, cache clearing and status subscriptions. Preserve the uncached path with `cache: false`; restored state does not grant live operation rights or automatically resend messages.
+- 4f32743: Allow connection notices, conversation errors and run failures to be dismissed in the chat UI. Restore notices for changed connection states, new errors and conversation switches without changing runtime state.
+- e3ba706: Add safe resource error codes, neutral cancellation handling, and optional unified resource labels for loading, retry, open and download. Existing resource ports and host label dictionaries remain compatible. Resource copy now reaches attachments, Markdown and event details through the existing UI labels input.
+- a2d7ab0: Remove the conversation event navigation toolbar, including its slider, counter, and navigation
+  buttons. Event details remain accessible by selecting events in the timeline.
+- Updated dependencies [a0dd631]
+- Updated dependencies [e3ba706]
+  - @turingfocus/chat-react@0.8.1
+  - @turingfocus/chat-protocol@0.8.1
+
 ## 0.8.0
 
 ### Minor Changes

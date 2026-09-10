@@ -1,5 +1,12 @@
 # @turingfocus/chat-testing
 
+## 0.8.1
+
+### Patch Changes
+
+- Updated dependencies [e3ba706]
+  - @turingfocus/chat-protocol@0.8.1
+
 ## 0.8.0
 
 ### Minor Changes
