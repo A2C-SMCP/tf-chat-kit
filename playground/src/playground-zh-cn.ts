@@ -1,6 +1,27 @@
 import type { ChatUiLabelOverrides } from "@turingfocus/chat-ui-antd";
 
 export const playgroundChatLabels: ChatUiLabelOverrides = Object.freeze({
+  resource: {
+    screenshot: "浏览器截图",
+    generatedFile: "生成的文件",
+    fileTitle: "文件",
+    image: "图片",
+    audio: "音频",
+    video: "视频",
+    loading: "正在加载资源…",
+    retry: "重试资源",
+    open: "打开",
+    download: "下载",
+    opening: "正在打开…",
+    downloading: "正在下载…",
+    unauthorized: "请登录或检查资源访问权限。",
+    network: "无法连接资源，请检查网络后重试。",
+    "not-found": "资源不存在。",
+    expired: "资源链接已过期，请重试刷新。",
+    unsupported: "不支持此资源格式。",
+    cancelled: "已取消资源加载。",
+    unknown: "资源操作失败，请重试。",
+  },
   attach: "上传附件",
   askUserCancel: "取消",
   askUserChatAboutThis: "聊聊这个问题",

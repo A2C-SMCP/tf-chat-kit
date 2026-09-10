@@ -1,3 +1,4 @@
+import { useResourceLabels } from "./resource-labels.js";
 import { lazy, Suspense, type ReactNode } from "react";
 import type { ToolPresentation } from "@turingfocus/chat-protocol";
 import { ChatMarkdownContent } from "./markdown-content.js";
@@ -24,6 +25,7 @@ export function ToolPresentationView({
 }: {
   readonly presentation: ToolPresentation;
 }): ReactNode {
+  const labels = useResourceLabels();
   if (presentation.kind === "browser")
     return (
       <section
@@ -40,7 +42,7 @@ export function ToolPresentationView({
           <ChatResourceView
             resource={presentation.image}
             kind="image"
-            label="Browser screenshot"
+            label={labels.screenshot}
           />
         )}
         {presentation.markdown === undefined ? null : (
@@ -74,7 +76,7 @@ export function ToolPresentationView({
     return (
       <ChatResourceView
         resource={presentation.resource}
-        label={presentation.resource.name ?? "Generated file"}
+        label={presentation.resource.name ?? labels.generatedFile}
       />
     );
   return null;

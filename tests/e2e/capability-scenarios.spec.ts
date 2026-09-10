@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByText("欢迎使用本地 Chat Kit 调试台。")).toBeVisible();
 });
 
-test("five tool views, real download and event navigation", async ({
+test("five tool views, real download and timeline selection", async ({
   page,
 }, testInfo) => {
   await page.getByRole("button", { name: "工具呈现", exact: true }).click();
@@ -29,16 +29,24 @@ test("five tool views, real download and event navigation", async ({
     fullPage: true,
     animations: "disabled",
   });
-  await page.getByRole("button", { name: "Next event", exact: true }).click();
+  await page
+    .getByRole("button", { name: "打开事件详情: Preview 示例", exact: true })
+    .click();
   await expect(detail.locator("code")).toContainText("Hello Chat Kit");
-  await page.getByRole("button", { name: "Next event", exact: true }).click();
+  await page
+    .getByRole("button", { name: "打开事件详情: Editor 示例", exact: true })
+    .click();
   await expect(detail.getByLabel("Read-only diff")).toBeVisible();
   await expect(detail).toContainText("follow-latest");
-  await page.getByRole("button", { name: "Next event", exact: true }).click();
+  await page
+    .getByRole("button", { name: "打开事件详情: Shell 示例", exact: true })
+    .click();
   await expect(detail).toContainText("资源与引用测试通过");
-  await page.getByRole("button", { name: "Next event", exact: true }).click();
+  await page
+    .getByRole("button", { name: "打开事件详情: Download 示例", exact: true })
+    .click();
   const downloading = page.waitForEvent("download");
-  await detail.getByRole("button", { name: "Download", exact: true }).click();
+  await detail.getByRole("button", { name: "下载", exact: true }).click();
   const download = await downloading;
   expect(download.suggestedFilename()).toBe("chat-kit-report.txt");
   const stream = await download.createReadStream();
@@ -68,9 +76,11 @@ test("local media really plays and expired image recovers", async ({
       .toBeGreaterThan(0);
     await media.evaluate((element: HTMLMediaElement) => element.pause());
   }
-  await page
-    .getByRole("button", { name: "Retry resource", exact: true })
-    .click();
+  await expect(page.getByRole("alert")).toContainText(
+    "资源链接已过期，请重试刷新。",
+  );
+  await expect(page.getByText("Unavailable", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "重试资源", exact: true }).click();
   const recovered = page.getByRole("img", { name: "可重试图片", exact: true });
   await expect
     .poll(() =>
@@ -128,11 +138,11 @@ test("Markdown copies the exact selected block and references send full content"
   });
 });
 
-test("long result expansion, following and mobile detail", async ({
+test("long result expansion, persistent selection and mobile detail", async ({
   page,
 }, testInfo) => {
   await page
-    .getByRole("button", { name: "长结果与事件导航", exact: true })
+    .getByRole("button", { name: "长结果与事件详情", exact: true })
     .click();
   await page
     .getByRole("button", { name: "打开事件详情: 检查演示", exact: true })
@@ -142,20 +152,12 @@ test("long result expansion, following and mobile detail", async ({
   await expect(detail).toContainText("检查完成");
   await detail.getByRole("button", { name: /Show more/ }).click();
   await expect(detail).toContainText('"index": 179');
-  await page
-    .getByRole("button", { name: "Follow latest", exact: true })
-    .click();
-  await page.getByRole("button", { name: "追加事件", exact: true }).click();
   await expect(
     page.getByRole("navigation", { name: "Event navigation" }),
-  ).toContainText("2 / 2");
-  await page
-    .getByRole("button", { name: "Previous event", exact: true })
-    .click();
+  ).toHaveCount(0);
   await page.getByRole("button", { name: "追加事件", exact: true }).click();
-  await expect(
-    page.getByRole("navigation", { name: "Event navigation" }),
-  ).toContainText("1 / 3");
+  await expect(detail).toContainText("检查完成");
+  await expect(detail).toContainText('"index": 179');
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole("dialog", { name: "事件详情" })).toBeVisible();
   await expect(page.getByRole("dialog", { name: "事件详情" })).not.toHaveClass(

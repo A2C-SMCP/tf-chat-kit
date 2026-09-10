@@ -1,3 +1,4 @@
+import { ResourceLabelsProvider } from "./resource-labels.js";
 import { Empty } from "antd";
 import { useMemo, type CSSProperties } from "react";
 
@@ -23,6 +24,7 @@ export const isChatEventItem = (
   item?.kind === "agent-event" || item?.kind === "unknown-event";
 
 export interface ChatEventDetailProps {
+  readonly labels?: ChatUiLabelOverrides | undefined;
   readonly className?: string | undefined;
   readonly formatTimestamp?: ((timestamp: number) => string) | undefined;
   readonly item: ChatEventItem;
@@ -33,6 +35,7 @@ export interface ChatEventDetailProps {
 }
 
 export const ChatEventDetail = ({
+  labels,
   className,
   formatTimestamp = formatChatTimestampUtc,
   item,
@@ -45,16 +48,18 @@ export const ChatEventDetail = ({
     [renderers],
   );
   return (
-    <div className={className} style={style}>
-      <ChatTimelineItem
-        displayMode="detail"
-        formatTimestamp={formatTimestamp}
-        item={item}
-        onRendererError={onRendererError}
-        registry={registry}
-        selected
-      />
-    </div>
+    <ResourceLabelsProvider labels={labels}>
+      <div className={className} style={style}>
+        <ChatTimelineItem
+          displayMode="detail"
+          formatTimestamp={formatTimestamp}
+          item={item}
+          onRendererError={onRendererError}
+          registry={registry}
+          selected
+        />
+      </div>
+    </ResourceLabelsProvider>
   );
 };
 

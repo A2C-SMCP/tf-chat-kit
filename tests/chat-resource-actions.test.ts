@@ -287,3 +287,78 @@ it.each(["audio", "video"] as const)(
     }
   },
 );
+
+it.each([
+  [401, "unauthorized"],
+  [403, "unauthorized"],
+  [404, "not-found"],
+  [410, "expired"],
+  [415, "unsupported"],
+  [500, "unknown"],
+  [0, "network"],
+] as const)(
+  "classifies real HTTP download status %s without displaying response diagnostics",
+  async (status, code) => {
+    const { defaultChatUiLabels } =
+      await import("../packages/chat-ui-antd/src/index.js");
+    const server = createServer((request, response) => {
+      if (status === 0) {
+        request.socket.destroy();
+        return;
+      }
+      response.writeHead(status);
+      response.end("token=secret Cookie=private signed-url backend-stack");
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const address = server.address();
+    if (address === null || typeof address === "string")
+      throw new Error("Missing HTTP address");
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const appears = (selector: string): Promise<Element> =>
+      new Promise((resolve, reject) => {
+        const observer = new MutationObserver(() => {
+          const node = container.querySelector(selector);
+          if (node) {
+            clearTimeout(timeout);
+            observer.disconnect();
+            resolve(node);
+          }
+        });
+        const timeout = setTimeout(() => {
+          observer.disconnect();
+          reject(new Error("Resource UI did not settle"));
+        }, 5000);
+        observer.observe(container, { childList: true, subtree: true });
+      });
+    try {
+      const ready = appears("button");
+      root.render(
+        createElement(ChatResourceView, {
+          resource: {
+            uri: `http://127.0.0.1:${address.port}/file`,
+            name: "file",
+          },
+        }),
+      );
+      await ready;
+      const failed = appears('[role="alert"]');
+      const download = Array.from(container.querySelectorAll("button")).find(
+        (node) => node.textContent === "Download",
+      );
+      expect(download).toBeDefined();
+      download?.click();
+      expect((await failed).textContent).toBe(
+        defaultChatUiLabels.resource![code],
+      );
+      expect(container.textContent).not.toMatch(
+        /secret|Cookie|signed-url|backend-stack/,
+      );
+    } finally {
+      root.unmount();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  },
+);
