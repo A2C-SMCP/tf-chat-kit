@@ -138,6 +138,77 @@ const moveSnapshotToConversation = (
 });
 
 describe("@turingfocus/chat-ui-antd vertical slice", () => {
+  it("shows cached content and synchronization state before server completion", async () => {
+    const { client, memory } = await createLoadedClient();
+    const a = memory.fixtures.conversation.id;
+    const replacement = moveSnapshotToConversation(
+      memory.fixtures.initialSnapshot,
+      "cache-b",
+    );
+    memory.controller.setSnapshot(replacement);
+    await client.loadConversation({
+      conversationId: "cache-b",
+      deadlineAt: deadlineAt(),
+    });
+    const rendered = await renderInDom(
+      createElement(
+        ChatProvider,
+        { client },
+        createElement(ChatConversationView, { getDeadlineAt: deadlineAt }),
+      ),
+    );
+    const hold = memory.controller.holdNext("loadConversation");
+    let loading: ReturnType<typeof client.loadConversation> | undefined;
+    try {
+      await act(async () => {
+        loading = client.loadConversation({
+          conversationId: a,
+          deadlineAt: deadlineAt(),
+        });
+        await hold.started;
+        await flushMicrotasks();
+      });
+      expect(rendered.container.textContent).toContain("Initial message");
+      expect(rendered.container.textContent).toContain(
+        "Showing cached conversation",
+      );
+      expect(client.getCacheState().status).toBe("syncing");
+      await act(async () => {
+        hold.release();
+        await loading;
+      });
+      expect(rendered.container.textContent).not.toContain(
+        "Showing cached conversation",
+      );
+      await act(async () => {
+        await client.loadConversation({
+          conversationId: "cache-b",
+          deadlineAt: deadlineAt(),
+        });
+      });
+      memory.controller.failNext("loadConversation", {
+        code: "network",
+        message: "Unavailable",
+        retryable: true,
+      });
+      await act(async () => {
+        await client.loadConversation({
+          conversationId: a,
+          deadlineAt: deadlineAt(),
+        });
+      });
+      expect(rendered.container.textContent).toContain(
+        "Cached content may be out of date",
+      );
+      expect(rendered.container.textContent).toContain("Initial message");
+    } finally {
+      hold.release();
+      await loading;
+      await rendered.unmount();
+      await client.dispose({ deadlineAt: deadlineAt() });
+    }
+  });
+
   it("dismisses connection notices until status or conversation changes", async () => {
     const { client, memory } = await createLoadedClient();
     const conversationId = memory.fixtures.conversation.id;

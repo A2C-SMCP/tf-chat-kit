@@ -594,7 +594,53 @@ const verifyIndependentParityConsumer = async (): Promise<void> => {
   check(releases > 0, "Packed resource lease was not disposed");
 };
 
+const verifyPackedConversationCache = async (): Promise<void> => {
+  const gateway = createMemoryChatGateway();
+  const client = createChatClient({ gateway: gateway.gateway });
+  const a = gateway.fixtures.conversation.id;
+  const base = gateway.fixtures.initialSnapshot;
+  gateway.controller.setSnapshot({
+    ...base,
+    conversation: { ...base.conversation, id: "packed-b" },
+    timeline: [],
+    run: null,
+  });
+  await client.loadConversation({
+    conversationId: a,
+    deadlineAt: deadlineAt(),
+  });
+  await client.loadConversation({
+    conversationId: "packed-b",
+    deadlineAt: deadlineAt(),
+  });
+  const hold = gateway.controller.holdNext("loadConversation");
+  const loading = client.loadConversation({
+    conversationId: a,
+    deadlineAt: deadlineAt(),
+  });
+  try {
+    await hold.started;
+    check(
+      client.getSnapshot()?.conversation.id === a &&
+        client.getCacheState().source === "memory" &&
+        client.getCacheState().status === "syncing",
+      "packed default cache must display A before synchronization completes",
+    );
+    hold.release();
+    await loading;
+    check(
+      client.getCacheState().status === "ready",
+      "packed cache must become synchronized",
+    );
+  } finally {
+    hold.release();
+    await loading;
+    await client.dispose({ deadlineAt: deadlineAt() });
+  }
+};
+
 export const runTauriConsumerVerification = async (): Promise<void> => {
+  await verifyPackedConversationCache();
   await verifyIndependentParityConsumer();
   await verifyLargeToolHistory();
   const fixture = createTauriHostFixture();

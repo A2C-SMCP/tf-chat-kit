@@ -83,6 +83,11 @@ export interface ChatResourceLabels {
 }
 
 export interface ChatUiLabels {
+  readonly cacheSyncing?: string;
+  readonly cacheStale?: string;
+  readonly cacheSyncFailed?: string;
+  readonly cacheAttachmentUnavailable?: string;
+  readonly cacheStorageFailed?: string;
   /** Resource copy is optional so existing complete host dictionaries remain valid. */
   readonly resource?: Readonly<Partial<ChatResourceLabels>> | undefined;
   readonly attach: ReactNode;

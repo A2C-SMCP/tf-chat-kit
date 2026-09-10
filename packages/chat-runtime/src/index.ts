@@ -57,3 +57,12 @@ export {
   type ChatResourceFailure,
   type ChatResourceErrorCode,
 } from "@turingfocus/chat-protocol";
+
+export type {
+  ConversationCacheOptions,
+  ConversationCacheState,
+  ConversationCacheStorage,
+  ConversationCacheEvent,
+  CachedAttachmentResolver,
+} from "./conversation-cache.js";
+export type { ConversationCacheRecord } from "./cache-record.js";

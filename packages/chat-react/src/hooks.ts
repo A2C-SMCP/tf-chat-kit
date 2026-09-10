@@ -3,6 +3,7 @@ import { useCallback, useContext, useMemo, useSyncExternalStore } from "react";
 import type { ChatClient } from "@turingfocus/chat-runtime";
 import type {
   ComposerDraft,
+  ConversationCacheState,
   SetComposerDraftInput,
 } from "@turingfocus/chat-runtime";
 import type { ChatAttachmentUploader } from "./attachment-upload.js";
@@ -140,4 +141,18 @@ export const useChatSelector = <T>(
   );
 
   return useSyncExternalStore(subscribe, getSelection, getServerSelection);
+};
+
+/** Cache visibility and synchronization state, independent of live assurance. */
+export const useConversationCache = (): ConversationCacheState => {
+  const client = useChatClient();
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const subscription = client.subscribeCacheState(listener);
+      return () => subscription.dispose();
+    },
+    [client],
+  );
+  const read = useCallback(() => client.getCacheState(), [client]);
+  return useSyncExternalStore(subscribe, read, read);
 };

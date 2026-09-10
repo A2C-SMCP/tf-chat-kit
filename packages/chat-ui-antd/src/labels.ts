@@ -27,6 +27,13 @@ export const defaultChatResourceLabels: ChatResourceLabels = Object.freeze({
 });
 
 export const defaultChatUiLabels: ChatUiLabels = Object.freeze({
+  cacheSyncing: "Showing cached conversation. Syncing latest updates…",
+  cacheStale: "Showing older cached content. Syncing latest updates…",
+  cacheSyncFailed: "Could not sync. Cached content may be out of date.",
+  cacheAttachmentUnavailable:
+    "Some draft attachments need to be attached again.",
+  cacheStorageFailed:
+    "Local cache could not be saved or restored. Server loading is still available.",
   resource: defaultChatResourceLabels,
   attach: "Attach",
   askUserCancel: "Cancel",

@@ -18,6 +18,7 @@ import {
   useChatClient,
   useChatSelector,
   useComposerDraft,
+  useConversationCache,
 } from "@turingfocus/chat-react";
 
 import { ChatComposer } from "./chat-composer.js";
@@ -162,6 +163,7 @@ export const ChatConversationView = ({
   const { token } = theme.useToken();
   const labels = resolveChatUiLabels(labelOverrides);
   const client = useChatClient();
+  const cache = useConversationCache();
   const snapshot = useChatSelector(
     selectChatConversationViewSnapshot,
     equalChatConversationViewSnapshot,
@@ -446,6 +448,45 @@ export const ChatConversationView = ({
         ...style,
       }}
     >
+      {cache.conversationId === snapshot.conversationId &&
+      cache.source !== "none" &&
+      (cache.status === "syncing" || cache.status === "error") ? (
+        <DismissibleChatAlert
+          key={`cache:${viewResetKey}`}
+          resetOn={`${cache.status}:${cache.freshness}`}
+          message={
+            cache.status === "error"
+              ? labels.cacheSyncFailed
+              : cache.freshness === "stale"
+                ? labels.cacheStale
+                : labels.cacheSyncing
+          }
+          type={cache.status === "error" ? "warning" : "info"}
+          showIcon
+          style={{ margin: token.marginXS }}
+        />
+      ) : null}
+      {cache.conversationId === snapshot.conversationId &&
+      cache.unavailableAttachments > 0 ? (
+        <DismissibleChatAlert
+          key={`cache-attachments:${viewResetKey}`}
+          resetOn={String(cache.unavailableAttachments)}
+          message={labels.cacheAttachmentUnavailable}
+          type="warning"
+          showIcon
+          style={{ margin: token.marginXS }}
+        />
+      ) : null}
+      {cache.storageError ? (
+        <DismissibleChatAlert
+          key={`cache-storage:${viewResetKey}`}
+          resetOn="storage-error"
+          message={labels.cacheStorageFailed}
+          type="warning"
+          showIcon
+          style={{ margin: token.marginXS }}
+        />
+      ) : null}
       <ChatRunStatus
         key={`${viewResetKey}:${snapshot.run?.id ?? "no-run"}`}
         canInterrupt={lifecycleOperable && snapshot.capabilities.interrupt}
