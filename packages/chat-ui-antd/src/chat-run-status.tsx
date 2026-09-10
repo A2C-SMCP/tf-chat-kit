@@ -1,9 +1,13 @@
-import { Alert, Button, Tag, Typography, theme } from "antd";
+import { Button, Tag, Typography, theme } from "antd";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 import type { Run } from "@turingfocus/chat-protocol";
 
 import { resolveChatUiLabels } from "./labels.js";
+import {
+  chatErrorNoticeKey,
+  DismissibleChatAlert,
+} from "./dismissible-chat-alert.js";
 import type { ChatUiLabelOverrides } from "./types.js";
 
 export interface ChatRunStatusProps {
@@ -102,7 +106,9 @@ export const ChatRunStatus = ({
         ) : null}
       </div>
       {run.error === undefined ? null : (
-        <Alert
+        <DismissibleChatAlert
+          key={JSON.stringify([run.conversationId, run.id])}
+          resetOn={chatErrorNoticeKey(run.error)}
           message={run.error.message}
           showIcon
           style={{ marginTop: token.marginXS }}

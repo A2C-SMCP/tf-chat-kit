@@ -710,7 +710,12 @@ export class ConversationWorkspaceController {
       ...this.#snapshot,
       pendingConversationId: undefined,
       selectionError: error,
-      selectionStatus: "error",
+      selectionStatus:
+        this.#client.getCacheState().source !== "none" &&
+        this.#client.getSnapshot()?.conversation.id ===
+          this.#snapshot.selectedConversationId
+          ? "ready"
+          : "error",
     });
   }
 

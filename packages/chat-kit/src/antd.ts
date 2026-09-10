@@ -51,6 +51,7 @@ export {
   type ChatUiCommandFailure,
   type ChatUiLabelOverrides,
   type ChatUiLabels,
+  type ChatResourceLabels,
   type ChatUiShellProps,
   type ChatUiSlotStyles,
   type ChatWorkspaceProps,

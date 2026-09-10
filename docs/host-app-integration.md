@@ -607,3 +607,7 @@ Chat Kit 负责：
 
 第三方独立接入的资源/引用端口、默认工具展示和导航见 [扩展接入指南](third-party-parity.md)，
 当前能力与限制见 [版本化能力矩阵](baselines/parity-58/capabilities.md)。
+
+## 多会话缓存与可选持久化
+
+默认启用实例隔离的内存缓存，省略 scope 也可使用；持久化、隔离存储、附件重新验证和清理接口见[缓存接入指南](baselines/issue-77/integration.md)。需要保持原加载行为的宿主可设置 `cache: false`。

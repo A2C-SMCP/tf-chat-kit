@@ -70,3 +70,5 @@ export {
   ChatResourceView,
   type ChatResourceViewProps,
 } from "./resource-content.js";
+
+export type { ChatResourceLabels } from "./types.js";

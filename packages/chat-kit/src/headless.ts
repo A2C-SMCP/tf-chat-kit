@@ -109,6 +109,10 @@ export {
 } from "@turingfocus/chat-gateway-tfrobot";
 
 export {
+  ChatResourceError,
+  normalizeChatResourceError,
+  type ChatResourceFailure,
+  type ChatResourceErrorCode,
   type ChatResourcePort,
   type ChatResourceRequest,
   type ChatResourcePurpose,
@@ -121,4 +125,13 @@ export {
   appendComposerReference,
   type ChatDocumentReference,
   type ChatDocumentSource,
+} from "@turingfocus/chat-runtime";
+
+export type {
+  ConversationCacheOptions,
+  ConversationCacheState,
+  ConversationCacheStorage,
+  ConversationCacheEvent,
+  CachedAttachmentResolver,
+  ConversationCacheRecord,
 } from "@turingfocus/chat-runtime";

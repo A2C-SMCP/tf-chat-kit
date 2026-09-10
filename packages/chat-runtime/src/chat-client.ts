@@ -1,5 +1,6 @@
 import {
   answerInteractionInputSchema,
+  getTimelineItemKey,
   createConversationInputSchema,
   createGatewayDeadlineExceededError,
   deleteConversationInputSchema,
@@ -57,7 +58,15 @@ import {
   type SnapshotStateListener,
   type SnapshotSubscription,
 } from "./snapshot-store.js";
-import { mergeHistoryTimeline } from "./timeline.js";
+import { createTimelineState, mergeHistoryTimeline } from "./timeline.js";
+import {
+  ConversationCache,
+  mergeCachedHistory,
+  type ConversationCacheOptions,
+  type ConversationCacheState,
+  type CacheEntry,
+} from "./conversation-cache.js";
+import { cachedDisplaySnapshot } from "./cache-record.js";
 import {
   areComposerLongTextsValid,
   emptyComposerDraft,
@@ -69,6 +78,8 @@ import {
 } from "./composer-draft.js";
 
 export interface ChatClientOptions {
+  /** Instance-local memory caching is enabled by default; false preserves uncached loading. */
+  readonly cache?: ConversationCacheOptions | false;
   /** The instance-owned transport port. ChatClient disposes it on shutdown. */
   readonly gateway: ChatGateway;
   /** Receives isolated listener and best-effort subscription cleanup failures. */
@@ -169,6 +180,19 @@ const runCleanup = async (
  */
 export class ChatClient {
   readonly #gateway: ChatGateway;
+  readonly #cache: ConversationCache | undefined;
+  readonly #cacheListeners = new Set<() => void>();
+  #cacheRequestId = 0;
+  #cacheReadOnly = false;
+  #cacheWriteScheduled = false;
+  #clearedSnapshot: ChatSnapshot | null = null;
+  #cacheState: ConversationCacheState = Object.freeze({
+    status: "idle",
+    source: "none",
+    freshness: "miss",
+    unavailableAttachments: 0,
+    storageError: false,
+  });
   readonly #onUnhandledError:
     ((failure: ChatClientUnhandledError) => void) | undefined;
   readonly #snapshotStore: SnapshotStore;
@@ -201,12 +225,161 @@ export class ChatClient {
 
   constructor(options: ChatClientOptions) {
     this.#gateway = options.gateway;
+    this.#cache =
+      options.cache === false
+        ? undefined
+        : new ConversationCache(
+            {
+              ...options.cache,
+              onEvent: (event) => {
+                if (
+                  event.kind === "storage-error" ||
+                  event.kind === "invalid-record" ||
+                  event.kind === "write-conflict"
+                )
+                  this.#setCacheState({
+                    ...this.#cacheState,
+                    storageError: true,
+                  });
+                if (options.cache) options.cache.onEvent?.(event);
+              },
+            },
+            (id) => {
+              if (this.getSnapshot()?.conversation.id !== id)
+                this.#discardComposerDraft(id);
+            },
+          );
+    if (this.#cache === undefined)
+      this.#cacheState = Object.freeze({
+        ...this.#cacheState,
+        status: "disabled",
+      });
     this.#onUnhandledError = options.onUnhandledError;
     this.#snapshotStore = new SnapshotStore({
       onListenerError: (cause) => {
         this.#reportUnhandledError({ cause, source: "listener" });
       },
     });
+    if (options.cache !== false && options.cache?.storage !== undefined) {
+      this.#snapshotStore.subscribe(() => this.#scheduleCacheWrite());
+    }
+  }
+
+  getCacheState(): ConversationCacheState {
+    return this.#cacheState;
+  }
+
+  subscribeCacheState(listener: () => void): ChatClientSubscription {
+    const isDisposed = (): boolean => this.#disposed;
+    let closed = this.#disposed;
+    if (!closed) this.#cacheListeners.add(listener);
+    return {
+      get closed() {
+        return closed || isDisposed();
+      },
+      dispose: () => {
+        closed = true;
+        this.#cacheListeners.delete(listener);
+      },
+    };
+  }
+
+  async clearConversationCache(
+    conversationId: string,
+    options: GatewayRequestOptions,
+  ): Promise<void> {
+    if (this.#disposed) return;
+    if (this.#cacheState.conversationId === conversationId)
+      this.cancelPendingConversationLoad();
+    if (this.getSnapshot()?.conversation.id === conversationId)
+      this.#clearedSnapshot = this.getSnapshot();
+    this.#discardComposerDraft(conversationId);
+    const clearing = this.#cache?.clear(conversationId, options);
+    if (this.getSnapshot()?.conversation.id === conversationId)
+      this.#clearCachedView();
+    if (this.#cacheState.conversationId === conversationId)
+      this.#setCacheState({
+        ...this.#cacheState,
+        source: "none",
+        freshness: "miss",
+      });
+    await clearing;
+  }
+
+  async clearCache(options: GatewayRequestOptions): Promise<void> {
+    if (this.#disposed) return;
+    this.cancelPendingConversationLoad();
+    this.#clearedSnapshot = this.getSnapshot();
+    for (const id of [...this.#composerDrafts.keys()])
+      this.#discardComposerDraft(id);
+    const clearing = this.#cache?.clear(undefined, options);
+    this.#clearCachedView();
+    this.#setCacheState({
+      status: this.#cache === undefined ? "disabled" : "idle",
+      source: "none",
+      freshness: "miss",
+      unavailableAttachments: 0,
+      storageError: this.#cache?.storageError ?? false,
+    });
+    await clearing;
+  }
+
+  #clearCachedView(): void {
+    const snapshot = this.getSnapshot();
+    if (!this.#cacheReadOnly || snapshot === null) return;
+    // Clearing local content does not delete the server conversation or selection.
+    this.#snapshotStore.commit(
+      createSnapshotState(
+        cachedDisplaySnapshot({
+          ...snapshot,
+          timeline: [],
+          pageInfo: { hasPreviousPage: false },
+        }),
+      ),
+    );
+  }
+
+  async flushCache(options: GatewayRequestOptions): Promise<void> {
+    this.#captureCache(options);
+    await this.#cache?.flush();
+  }
+
+  #captureCache(options: GatewayRequestOptions): void {
+    const snapshot = this.getSnapshot();
+    if (
+      this.#disposed ||
+      this.#cacheReadOnly ||
+      snapshot === null ||
+      snapshot === this.#clearedSnapshot
+    )
+      return;
+    this.#cache?.put(
+      snapshot,
+      this.getComposerDraft(snapshot.conversation.id),
+      options,
+    );
+  }
+
+  #scheduleCacheWrite(): void {
+    if (this.#cacheWriteScheduled || this.#disposed || this.#cacheReadOnly)
+      return;
+    this.#cacheWriteScheduled = true;
+    void Promise.resolve().then(() => {
+      this.#cacheWriteScheduled = false;
+      this.#captureCache({ deadlineAt: Date.now() + 5000 });
+    });
+  }
+
+  #setCacheState(state: ConversationCacheState): void {
+    if (this.#disposed || this.#cache === undefined) return;
+    this.#cacheState = Object.freeze(state);
+    for (const listener of this.#cacheListeners) {
+      try {
+        listener();
+      } catch (cause) {
+        this.#reportUnhandledError({ cause, source: "listener" });
+      }
+    }
   }
 
   get disposed(): boolean {
@@ -234,6 +407,18 @@ export class ChatClient {
     return empty;
   }
 
+  #discardComposerDraft(conversationId: string): void {
+    this.#composerDrafts.delete(conversationId);
+    const empty = emptyComposerDraft(conversationId);
+    for (const listener of this.#composerListeners) {
+      try {
+        listener(empty);
+      } catch (cause) {
+        this.#reportUnhandledError({ cause, source: "listener" });
+      }
+    }
+  }
+
   setComposerDraft(input: SetComposerDraftInput): ComposerDraft {
     if (this.#disposed) return this.getComposerDraft(input.conversationId);
     const current = this.getComposerDraft(input.conversationId);
@@ -252,6 +437,15 @@ export class ChatClient {
       revision: current.revision + 1,
     });
     this.#composerDrafts.set(input.conversationId, next);
+    this.#cache?.updateDraft(
+      input.conversationId,
+      next,
+      {
+        deadlineAt: Date.now() + 5000,
+      },
+      input.attachments === undefined,
+    );
+    this.#scheduleCacheWrite();
     for (const listener of this.#composerListeners) {
       try {
         listener(next);
@@ -333,6 +527,7 @@ export class ChatClient {
    * that load completes successfully while transport cleanup settles.
    */
   cancelPendingConversationLoad(): void {
+    this.#cacheRequestId += 1;
     if (this.#disposed || this.#pendingLoadRequestId === undefined) return;
     this.#loadRequestId += 1;
     this.#pendingLoadConversationId = undefined;
@@ -492,8 +687,15 @@ export class ChatClient {
         parsed.data.conversationId,
       );
     }
+    const cacheClear = result.ok
+      ? this.#cache
+          ?.clear(parsed.data.conversationId, parsed.data)
+          .catch(() => undefined)
+      : undefined;
     if (result.ok) {
-      this.#composerDrafts.delete(parsed.data.conversationId);
+      if (this.#cacheState.conversationId === parsed.data.conversationId)
+        this.#cacheRequestId += 1;
+      this.#discardComposerDraft(parsed.data.conversationId);
       const sendKeyPrefix = `${parsed.data.conversationId.length}:${parsed.data.conversationId}:`;
       for (const key of this.#composerSendsInFlight.keys()) {
         if (key.startsWith(sendKeyPrefix))
@@ -539,10 +741,196 @@ export class ChatClient {
         parsed.data.conversationId,
       );
     }
+    await cacheClear;
     return result;
   }
 
   async loadConversation(
+    input: LoadConversationInput,
+  ): Promise<GatewayResult<ChatSnapshot>> {
+    if (
+      this.#cache === undefined ||
+      input.previousCursor !== undefined ||
+      this.#disposed
+    )
+      return this.#loadConversationFromGateway(input);
+    if (isGatewayDeadlineExceeded(input))
+      return {
+        ok: false,
+        error: createGatewayDeadlineExceededError(input.conversationId),
+      };
+    this.cancelPendingConversationLoad();
+    const ticket = this.#cacheRequestId;
+    const epoch = this.#cache.epochFor(input.conversationId);
+    this.#captureCache(input);
+    let entry = this.#cache.peek(input.conversationId);
+    let source: ConversationCacheState["source"] =
+      entry === undefined ? "none" : "memory";
+    if (entry === undefined && this.#cache.hasStorage) {
+      entry = await this.#cache.restore(input.conversationId, input);
+      if (entry !== undefined) source = "storage";
+    }
+    if (
+      this.#disposed ||
+      ticket !== this.#cacheRequestId ||
+      epoch !== this.#cache.epochFor(input.conversationId)
+    )
+      return runtimeFailure(
+        "conflict",
+        "Cached load was superseded",
+        input.conversationId,
+      );
+    this.#setCacheState({
+      conversationId: input.conversationId,
+      status: "syncing",
+      source,
+      freshness:
+        entry === undefined
+          ? this.#cache.wasExpired(input.conversationId)
+            ? "expired"
+            : "miss"
+          : this.#cache.freshness(entry.savedAt),
+      ...(entry === undefined ? {} : { savedAt: entry.savedAt }),
+      unavailableAttachments:
+        (entry?.unavailableAttachments ?? 0) +
+        (entry?.attachmentKeys?.length ?? 0),
+      storageError: this.#cache.storageError,
+    });
+    if (
+      this.#disposed ||
+      ticket !== this.#cacheRequestId ||
+      epoch !== this.#cache.epochFor(input.conversationId)
+    )
+      return runtimeFailure(
+        "conflict",
+        "Cached load was superseded",
+        input.conversationId,
+      );
+    if (
+      entry !== undefined &&
+      (this.getSnapshot()?.conversation.id !== input.conversationId ||
+        this.#cacheReadOnly)
+    ) {
+      const oldSubscription = this.#gatewaySubscription;
+      this.#gatewaySubscription = undefined;
+      this.#generation += 1;
+      this.#conversationEpoch += 1;
+      this.#historyRequestId += 1;
+      this.#cacheReadOnly = true;
+      this.#snapshotStore.commit(
+        createSnapshotState(cachedDisplaySnapshot(entry.snapshot)),
+      );
+      void this.#runSubscriptionCleanup(
+        () => oldSubscription?.dispose(input),
+        input.conversationId,
+      );
+      if (
+        ticket === this.#cacheRequestId &&
+        epoch === this.#cache.epochFor(input.conversationId)
+      )
+        this.#restoreCachedDraft(entry, source, input, ticket);
+    }
+    if (
+      this.#disposed ||
+      ticket !== this.#cacheRequestId ||
+      epoch !== this.#cache.epochFor(input.conversationId)
+    )
+      return runtimeFailure(
+        "conflict",
+        "Cached load was superseded",
+        input.conversationId,
+      );
+    const result = await this.#loadConversationFromGateway(input);
+    if (
+      this.#disposed ||
+      ticket !== this.#cacheRequestId ||
+      epoch !== this.#cache.epochFor(input.conversationId)
+    )
+      return result;
+    if (result.ok) {
+      this.#cacheReadOnly = false;
+      this.#captureCache(input);
+      this.#setCacheState({
+        ...this.#cacheState,
+        status: "ready",
+        freshness: "fresh",
+        savedAt: this.#cache.now(),
+        storageError: this.#cache.storageError,
+      });
+    } else {
+      this.#setCacheState({
+        ...this.#cacheState,
+        status: "error",
+        storageError: this.#cache.storageError,
+      });
+      if (
+        result.error.code === "not-found" ||
+        result.error.code === "authorization" ||
+        result.error.code === "authentication"
+      ) {
+        await this.clearConversationCache(input.conversationId, input).catch(
+          () => undefined,
+        );
+      }
+    }
+    return result;
+  }
+
+  #restoreCachedDraft(
+    entry: CacheEntry,
+    source: ConversationCacheState["source"],
+    input: LoadConversationInput,
+    ticket: number,
+  ): void {
+    const existing = this.#composerDrafts.get(input.conversationId);
+    if (existing !== undefined && existing.revision > 0) return;
+    const draft = this.setComposerDraft({
+      conversationId: input.conversationId,
+      text: entry.draft.text,
+      longTexts: entry.draft.longTexts,
+      ...(source === "memory" ? { attachments: entry.draft.attachments } : {}),
+    });
+    if (source !== "storage") return;
+    const epoch = this.#cache!.epochFor(input.conversationId);
+    this.#setCacheState({
+      ...this.#cacheState,
+      unavailableAttachments:
+        (entry.attachmentKeys?.length ?? 0) +
+        (entry.unavailableAttachments ?? 0),
+    });
+    void this.#cache!.restoreAttachments(entry, input).then((restored) => {
+      if (
+        this.#disposed ||
+        epoch !== this.#cache!.epochFor(input.conversationId) ||
+        this.getComposerDraft(input.conversationId).revision !== draft.revision
+      )
+        return;
+      const validated = sendMessageInputSchema.safeParse({
+        ...input,
+        text: draft.text || " ",
+        attachments: restored.attachments,
+      });
+      this.setComposerDraft({
+        conversationId: input.conversationId,
+        attachments: validated.success ? restored.attachments : [],
+      });
+      const unavailable =
+        restored.unavailable +
+        (validated.success ? 0 : restored.attachments.length);
+      this.#cache!.setUnavailableAttachments(
+        input.conversationId,
+        unavailable,
+        input,
+      );
+      if (ticket === this.#cacheRequestId)
+        this.#setCacheState({
+          ...this.#cacheState,
+          unavailableAttachments: unavailable,
+        });
+    });
+  }
+
+  async #loadConversationFromGateway(
     input: LoadConversationInput,
   ): Promise<GatewayResult<ChatSnapshot>> {
     if (this.#disposed) {
@@ -598,7 +986,10 @@ export class ChatClient {
       );
     }
 
-    const loaded = await this.#gateway.loadConversation(input);
+    let loaded = await this.#gateway.loadConversation(input);
+    if (loaded.ok && loaded.value.conversation.id === input.conversationId) {
+      loaded = await this.#bridgeCachedHistory(input, loaded.value, requestId);
+    }
     if (!loaded.ok) {
       this.#clearPendingLoad(requestId);
       await this.#discardGatewaySubscription(subscribed, input);
@@ -669,10 +1060,15 @@ export class ChatClient {
       this.#pendingLoadConversationId === input.conversationId
         ? this.#pendingLoadConversationOverride
         : undefined;
+    const cached = this.#cache?.peek(input.conversationId);
+    const loadedWithHistory = mergeCachedHistory(
+      loaded.value,
+      cached?.snapshot,
+    );
     const loadedState = createSnapshotState(
       conversationOverride === undefined
-        ? loaded.value
-        : { ...loaded.value, conversation: conversationOverride },
+        ? loadedWithHistory
+        : { ...loadedWithHistory, conversation: conversationOverride },
     );
     const currentState = this.#snapshotStore.state;
     const handoff = this.#pendingHandoff;
@@ -690,6 +1086,7 @@ export class ChatClient {
       nextState = this.#guardInteractionTransition(currentState, nextState);
     }
     this.#clearPendingLoad(requestId);
+    this.#cacheReadOnly = false;
     this.#snapshotStore.commit(nextState);
     if (!this.#disposed) notificationQueue.activate(generation);
     const committedSnapshot =
@@ -966,6 +1363,10 @@ export class ChatClient {
   dispose(options: GatewayRequestOptions): Promise<void> {
     if (this.#disposePromise !== undefined) return this.#disposePromise;
 
+    this.#captureCache(options);
+    const cacheClosed = this.#cache?.close();
+    this.#cacheListeners.clear();
+    this.#cacheRequestId += 1;
     this.#disposed = true;
     this.#conversationEpoch += 1;
     this.#generation += 1;
@@ -987,6 +1388,7 @@ export class ChatClient {
     this.#gatewaySubscription = undefined;
 
     this.#disposePromise = Promise.allSettled([
+      cacheClosed,
       Promise.resolve().then(() => subscription?.dispose(options)),
       Promise.resolve().then(() => this.#gateway.dispose(options)),
     ]).then((results) => {
@@ -1002,6 +1404,63 @@ export class ChatClient {
       }
     });
     return this.#disposePromise;
+  }
+
+  async #bridgeCachedHistory(
+    input: LoadConversationInput,
+    snapshot: ChatSnapshot,
+    requestId: number,
+  ): Promise<GatewayResult<ChatSnapshot>> {
+    const cached = this.#cache?.peek(input.conversationId);
+    if (cached === undefined || cached.snapshot.timeline.length === 0)
+      return { ok: true, value: snapshot };
+    const keys = new Set(cached.snapshot.timeline.map(getTimelineItemKey));
+    const cursors = new Set<string>();
+    let current = snapshot;
+    while (
+      current.pageInfo.hasPreviousPage &&
+      !current.timeline.some((item) => keys.has(getTimelineItemKey(item)))
+    ) {
+      const cursor = current.pageInfo.previousCursor;
+      if (this.#disposed || requestId !== this.#loadRequestId)
+        return runtimeFailure(
+          "conflict",
+          "Cache synchronization was superseded",
+          input.conversationId,
+        );
+      if (isGatewayDeadlineExceeded(input))
+        return {
+          ok: false,
+          error: createGatewayDeadlineExceededError(input.conversationId),
+        };
+      if (cursor === undefined || cursors.has(cursor) || cursors.size >= 50)
+        return runtimeFailure(
+          "conflict",
+          "Cache synchronization could not establish continuous history",
+          input.conversationId,
+        );
+      cursors.add(cursor);
+      const page = await this.#gateway.loadConversation({
+        ...input,
+        previousCursor: cursor,
+      });
+      if (!page.ok) return page;
+      if (page.value.conversation.id !== input.conversationId)
+        return runtimeFailure(
+          "validation",
+          "Gateway returned history for a different conversation",
+          input.conversationId,
+        );
+      current = {
+        ...current,
+        timeline: mergeHistoryTimeline(
+          createTimelineState(current.timeline),
+          page.value.timeline,
+        ).items,
+        pageInfo: page.value.pageInfo,
+      };
+    }
+    return { ok: true, value: current };
   }
 
   async #loadHistory(
@@ -1119,6 +1578,12 @@ export class ChatClient {
         conversationId,
       );
     }
+    if (this.#cacheReadOnly)
+      return runtimeFailure(
+        "conflict",
+        "Cached conversation is read-only until synchronization succeeds",
+        conversationId,
+      );
     const lifecycle = this.#snapshotStore.state.snapshot.lifecycle;
     if (lifecycle !== undefined && !isChatLifecycleOperable(lifecycle)) {
       return runtimeFailure(
@@ -1244,10 +1709,19 @@ export class ChatClient {
       return;
     }
     const state = this.#snapshotStore.latestState()!;
+    const prepared =
+      this.#cache !== undefined &&
+      update.kind === "snapshot.replace" &&
+      update.snapshot.conversation.id === state.snapshot.conversation.id
+        ? {
+            ...update,
+            snapshot: mergeCachedHistory(update.snapshot, state.snapshot),
+          }
+        : update;
     this.#snapshotStore.commit(
       this.#guardInteractionTransition(
         state,
-        applySnapshotUpdate(state, update),
+        applySnapshotUpdate(state, prepared),
       ),
     );
   }

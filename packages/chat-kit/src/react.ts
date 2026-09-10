@@ -10,6 +10,7 @@ export {
   useChatClient,
   useChatAttachmentUploader,
   useComposerDraft,
+  useConversationCache,
   useConversationWorkspace,
   useChatSelector,
   useChatSnapshot,

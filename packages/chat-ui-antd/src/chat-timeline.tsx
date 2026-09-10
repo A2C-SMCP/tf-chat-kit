@@ -1,3 +1,4 @@
+import { ResourceLabelsProvider } from "./resource-labels.js";
 import { Button, Empty, Typography, theme } from "antd";
 import {
   memo,
@@ -276,59 +277,61 @@ export const ChatTimeline = ({
   }
 
   return (
-    <div
-      className={className}
-      style={{
-        height: "100%",
-        minHeight: 240,
-        overflow: "hidden",
-        position: "relative",
-        ...style,
-      }}
-    >
-      <Virtuoso
-        key={conversationId}
-        ref={virtuosoRef}
-        aria-label={ariaLabel ?? labels.timelineLabel}
-        atBottomStateChange={handleAtBottomChange}
-        atBottomThreshold={150}
-        computeItemKey={(index, item: TimelineItem | undefined) =>
-          item === undefined
-            ? `timeline:${conversationId}:pending:${index}`
-            : getTimelineItemKey(item)
-        }
-        data={items}
-        followOutput={followNewOutput}
-        increaseViewportBy={{ bottom: 400, top: 200 }}
-        initialItemCount={Math.min(items.length, 20)}
-        initialTopMostItemIndex={Math.max(
-          0,
-          items.length - Math.min(items.length, 20),
+    <ResourceLabelsProvider labels={labelOverrides}>
+      <div
+        className={className}
+        style={{
+          height: "100%",
+          minHeight: 240,
+          overflow: "hidden",
+          position: "relative",
+          ...style,
+        }}
+      >
+        <Virtuoso
+          key={conversationId}
+          ref={virtuosoRef}
+          aria-label={ariaLabel ?? labels.timelineLabel}
+          atBottomStateChange={handleAtBottomChange}
+          atBottomThreshold={150}
+          computeItemKey={(index, item: TimelineItem | undefined) =>
+            item === undefined
+              ? `timeline:${conversationId}:pending:${index}`
+              : getTimelineItemKey(item)
+          }
+          data={items}
+          followOutput={followNewOutput}
+          increaseViewportBy={{ bottom: 400, top: 200 }}
+          initialItemCount={Math.min(items.length, 20)}
+          initialTopMostItemIndex={Math.max(
+            0,
+            items.length - Math.min(items.length, 20),
+          )}
+          itemContent={renderItem}
+          overscan={{ main: 300, reverse: 200 }}
+          role="log"
+          style={{ height: "100%" }}
+        />
+        {newItemCount === 0 ? null : (
+          <Button
+            onClick={jumpToLatest}
+            size="small"
+            style={{
+              bottom: token.marginSM,
+              boxShadow: token.boxShadowSecondary,
+              left: "50%",
+              position: "absolute",
+              transform: "translateX(-50%)",
+              zIndex: 1,
+            }}
+            type="primary"
+          >
+            <Typography.Text style={{ color: "inherit" }}>
+              {newItemCount} {labels.newMessages} · {labels.jumpToLatest}
+            </Typography.Text>
+          </Button>
         )}
-        itemContent={renderItem}
-        overscan={{ main: 300, reverse: 200 }}
-        role="log"
-        style={{ height: "100%" }}
-      />
-      {newItemCount === 0 ? null : (
-        <Button
-          onClick={jumpToLatest}
-          size="small"
-          style={{
-            bottom: token.marginSM,
-            boxShadow: token.boxShadowSecondary,
-            left: "50%",
-            position: "absolute",
-            transform: "translateX(-50%)",
-            zIndex: 1,
-          }}
-          type="primary"
-        >
-          <Typography.Text style={{ color: "inherit" }}>
-            {newItemCount} {labels.newMessages} · {labels.jumpToLatest}
-          </Typography.Text>
-        </Button>
-      )}
-    </div>
+      </div>
+    </ResourceLabelsProvider>
   );
 };

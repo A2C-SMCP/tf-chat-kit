@@ -1,3 +1,4 @@
+import { ChatResourceError } from "@turingfocus/chat-protocol";
 import type {
   ChatResourcePort,
   MessageContent,
@@ -10,12 +11,12 @@ export const capabilityScenarios = [
   {
     id: "tools",
     title: "工具呈现",
-    hint: "点击时间线中的工具，查看 Browser 截图、Preview 代码、Editor 差异、Shell 输出和 Download 产物；使用前后按钮或滑块切换。",
+    hint: "点击时间线中的工具，查看 Browser 截图、Preview 代码、Editor 差异、Shell 输出和 Download 产物。",
   },
   {
     id: "media",
     title: "媒体与资源",
-    hint: "播放本地音视频，打开或下载文件；图片首次模拟授权过期，点击 Retry resource 恢复。所有素材都来自本地。",
+    hint: "播放本地音视频，打开或下载文件；图片首次模拟授权过期，点击 重试资源 恢复。所有素材都来自本地。",
   },
   {
     id: "markdown",
@@ -24,8 +25,8 @@ export const capabilityScenarios = [
   },
   {
     id: "inspection",
-    title: "长结果与事件导航",
-    hint: "点击事件查看 Markdown 正文、历史状态标签和长结果，尝试展开与复制。开启 Follow latest 后，再点击追加事件。",
+    title: "长结果与事件详情",
+    hint: "点击事件查看 Markdown 正文、历史状态标签和长结果，尝试展开与复制。点击追加事件后，可从列表选择新事件查看详情。",
   },
   {
     id: "references",
@@ -51,10 +52,10 @@ export function createDemoPorts(): {
   return {
     resources: {
       resolve: (request) => {
-        if (request.signal.aborted) throw new Error("Cancelled");
+        if (request.signal.aborted) throw new ChatResourceError("cancelled");
         if (request.resource.uri === "private:demo-retry" && expired) {
           expired = false;
-          throw new Error("Demo authorization expired");
+          throw new ChatResourceError("expired");
         }
         const paths: Readonly<Record<string, string>> = {
           "private:demo-report": "/demo/report.txt",
@@ -85,7 +86,7 @@ export function createDemoPorts(): {
               {
                 id: "checklist",
                 title: "演示验收清单",
-                content: "逐项验证工具、媒体、Markdown、事件导航和引用发送。",
+                content: "逐项验证工具、媒体、Markdown、事件详情和引用发送。",
               },
             ].filter((document) =>
               `${document.title} ${document.content}`.includes(query),

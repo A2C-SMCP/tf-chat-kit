@@ -57,7 +57,7 @@ failure simulation. RobotServer mode does not expose these mock fixtures or docu
 | Scenario         | Browser acceptance                                                                                                              |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | 工具呈现         | Browser screenshot, Preview syntax, Editor readonly diff, Shell ANSI output, actual Download bytes; previous/next navigation    |
-| 媒体与资源       | Local WAV and WebM playback advances currentTime; private image fails once and succeeds on Retry; contact/file/URL cards        |
+| 媒体与资源       | Local WAV and WebM playback advances currentTime; private image fails once and succeeds on 重试资源; contact/file/URL cards     |
 | Markdown 与复制  | GFM table, local private image and exact second-block clipboard text                                                            |
 | 长结果与事件导航 | Full received result expansion, both transition tabs, follow latest vs manual selection; 390px modal and no horizontal overflow |
 | 文档引用         | Injected source selection, reference draft placeholder, sending both original text paragraphs through Runtime                   |
@@ -79,3 +79,12 @@ component tests, typecheck, lint, formatting and playground production build. De
 screenshots were visually inspected. Isolated review of the 11 follow-up files: **APPROVE**.
 Non-blocking follow-ups: explicit draft-preservation/stream-cancellation tests, and clearing the active
 scenario highlight when changing conversations.
+
+## Issue #75 resource failures and copy
+
+The media scenario now throws the public `expired` resource error and shows Chinese expiry/retry
+copy through the conversation labels. The focused capability browser tests verify recovery to a
+loaded image, actual audio/video playback, and downloaded file bytes with Chinese resource actions.
+The resource component suites cover English/Chinese port failures, cancellation and stale scopes;
+real local HTTP tests cover status classification and connection failures. No external seed or
+production resource is used.

@@ -14,6 +14,7 @@
 | [008](008-github-and-public-npm-release.md)     | GitHub 托管与 npm 公开发布 | Accepted   |
 | [009](009-independent-compatibility-testing.md) | 独立项目与仓库内兼容测试   | Accepted   |
 | [010](010-default-host-facade.md)               | 统一宿主门面与七包边界     | Accepted   |
+| [011](011-conversation-cache.md)                | 会话缓存与恢复信任边界     | Accepted   |
 
 ## 状态规则
 

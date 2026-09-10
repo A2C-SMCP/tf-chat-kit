@@ -14,14 +14,18 @@ import {
   type ChatSnapshot,
 } from "@turingfocus/chat-protocol";
 import {
-  useChatEventNavigation,
   useChatAttachmentUploader,
   useChatClient,
   useChatSelector,
   useComposerDraft,
+  useConversationCache,
 } from "@turingfocus/chat-react";
 
 import { ChatComposer } from "./chat-composer.js";
+import {
+  chatErrorNoticeKey,
+  DismissibleChatAlert,
+} from "./dismissible-chat-alert.js";
 import {
   ChatEventDetail,
   ChatEventDetailEmpty,
@@ -93,6 +97,7 @@ interface ChatConversationViewSnapshot {
   readonly capabilities: ChatSnapshot["capabilities"];
   readonly conversationId: string;
   readonly error: ChatError | undefined;
+  readonly errorNoticeKey: string;
   readonly lifecycle: ChatSnapshot["lifecycle"];
   readonly pendingInteraction: ChatSnapshot["pendingInteraction"];
   readonly run: ChatSnapshot["run"];
@@ -108,6 +113,10 @@ const selectChatConversationViewSnapshot = (
         capabilities: snapshot.capabilities,
         conversationId: snapshot.conversation.id,
         error: snapshot.error,
+        errorNoticeKey: chatErrorNoticeKey(
+          snapshot.error,
+          snapshot.activeErrors?.at(-1),
+        ),
         lifecycle: snapshot.lifecycle,
         pendingInteraction: snapshot.pendingInteraction,
         run: snapshot.run,
@@ -124,6 +133,7 @@ const equalChatConversationViewSnapshot = (
     left.capabilities === right.capabilities &&
     left.conversationId === right.conversationId &&
     left.error === right.error &&
+    left.errorNoticeKey === right.errorNoticeKey &&
     left.lifecycle === right.lifecycle &&
     left.pendingInteraction === right.pendingInteraction &&
     left.run === right.run &&
@@ -153,6 +163,7 @@ export const ChatConversationView = ({
   const { token } = theme.useToken();
   const labels = resolveChatUiLabels(labelOverrides);
   const client = useChatClient();
+  const cache = useConversationCache();
   const snapshot = useChatSelector(
     selectChatConversationViewSnapshot,
     equalChatConversationViewSnapshot,
@@ -274,29 +285,6 @@ export const ChatConversationView = ({
     [controlledSelectedEventId, onSelectedEventChange],
   );
 
-  const navigationScope = useMemo(
-    () => ({ client, currentConversationId }),
-    [client, currentConversationId],
-  );
-  const navigationEvents = useMemo(
-    () => snapshot?.timeline.filter(isChatEventItem) ?? [],
-    [snapshot?.timeline],
-  );
-  const navigationSelect = useCallback(
-    (id: string | null) =>
-      updateSelection(
-        id,
-        navigationEvents.find((item) => item.id === id) ?? null,
-      ),
-    [navigationEvents, updateSelection],
-  );
-  const navigation = useChatEventNavigation({
-    eventIds: navigationEvents.map((item) => item.id),
-    selectedEventId,
-    onSelect: navigationSelect,
-    scope: navigationScope,
-  });
-
   const previousClientRef = useRef(client);
   const previousConversationIdRef = useRef<string | null>(
     currentConversationId,
@@ -366,12 +354,11 @@ export const ChatConversationView = ({
 
   const selectEvent = useCallback(
     (item: ChatEventItem, trigger: HTMLElement) => {
-      navigation.pause();
       lastTriggerRef.current = trigger;
       updateSelection(item.id, item);
       setModalOpen(resolvedEventDetailMode === "modal");
     },
-    [resolvedEventDetailMode, updateSelection, navigation],
+    [resolvedEventDetailMode, updateSelection],
   );
 
   const changeEventDetailMode = useCallback(
@@ -440,6 +427,7 @@ export const ChatConversationView = ({
         <ChatEventDetailEmpty labels={labels} />
       ) : (
         <ChatEventDetail
+          labels={labels}
           formatTimestamp={formatTimestamp}
           item={selectedEvent}
           onRendererError={onRendererError}
@@ -460,6 +448,45 @@ export const ChatConversationView = ({
         ...style,
       }}
     >
+      {cache.conversationId === snapshot.conversationId &&
+      cache.source !== "none" &&
+      (cache.status === "syncing" || cache.status === "error") ? (
+        <DismissibleChatAlert
+          key={`cache:${viewResetKey}`}
+          resetOn={`${cache.status}:${cache.freshness}`}
+          message={
+            cache.status === "error"
+              ? labels.cacheSyncFailed
+              : cache.freshness === "stale"
+                ? labels.cacheStale
+                : labels.cacheSyncing
+          }
+          type={cache.status === "error" ? "warning" : "info"}
+          showIcon
+          style={{ margin: token.marginXS }}
+        />
+      ) : null}
+      {cache.conversationId === snapshot.conversationId &&
+      cache.unavailableAttachments > 0 ? (
+        <DismissibleChatAlert
+          key={`cache-attachments:${viewResetKey}`}
+          resetOn={String(cache.unavailableAttachments)}
+          message={labels.cacheAttachmentUnavailable}
+          type="warning"
+          showIcon
+          style={{ margin: token.marginXS }}
+        />
+      ) : null}
+      {cache.storageError ? (
+        <DismissibleChatAlert
+          key={`cache-storage:${viewResetKey}`}
+          resetOn="storage-error"
+          message={labels.cacheStorageFailed}
+          type="warning"
+          showIcon
+          style={{ margin: token.marginXS }}
+        />
+      ) : null}
       <ChatRunStatus
         key={`${viewResetKey}:${snapshot.run?.id ?? "no-run"}`}
         canInterrupt={lifecycleOperable && snapshot.capabilities.interrupt}
@@ -471,7 +498,9 @@ export const ChatConversationView = ({
       {snapshot.lifecycle === undefined ||
       (snapshot.lifecycle.status === "active" &&
         !activeRecoveryUnverified) ? null : (
-        <Alert
+        <DismissibleChatAlert
+          key={`lifecycle:${viewResetKey}`}
+          resetOn={lifecycleDisplayStatus}
           message={
             lifecycleDisplayStatus === undefined
               ? undefined
@@ -488,9 +517,12 @@ export const ChatConversationView = ({
           }
         />
       )}
-      {visibleSnapshotError === undefined ? null : (
-        <Alert
-          message={visibleSnapshotError.message}
+      {snapshot.error === undefined ? null : (
+        <DismissibleChatAlert
+          key={`snapshot-error:${viewResetKey}`}
+          resetOn={snapshot.errorNoticeKey}
+          visible={visibleSnapshotError !== undefined}
+          message={snapshot.error.message}
           showIcon
           style={{ margin: token.marginXS }}
           type="error"
@@ -529,53 +561,6 @@ export const ChatConversationView = ({
           value={requestedEventDetailMode}
         />
       </div>
-      <nav
-        aria-label="Event navigation"
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "center",
-          gap: 8,
-          padding: 8,
-        }}
-      >
-        <button
-          type="button"
-          disabled={!navigation.canPrevious}
-          onClick={() => navigation.select(navigation.index - 1)}
-        >
-          Previous event
-        </button>
-        <input
-          type="range"
-          aria-label="Event index"
-          min={0}
-          max={Math.max(0, navigation.count - 1)}
-          value={Math.max(0, navigation.index)}
-          disabled={navigation.count === 0}
-          onChange={(event) =>
-            navigation.select(Number(event.currentTarget.value))
-          }
-        />
-        <span aria-live="polite">
-          {navigation.index + 1} / {navigation.count}
-        </span>
-        <button
-          type="button"
-          disabled={!navigation.canNext}
-          onClick={() => navigation.select(navigation.index + 1)}
-        >
-          Next event
-        </button>
-        <button
-          type="button"
-          disabled={navigation.count === 0}
-          aria-pressed={navigation.mode === "follow-latest"}
-          onClick={navigation.followLatest}
-        >
-          Follow latest
-        </button>
-      </nav>
       <div
         data-chat-event-layout={resolvedEventDetailMode}
         ref={layoutRef}
@@ -680,6 +665,7 @@ export const ChatConversationView = ({
       >
         {selectedEvent === undefined ? null : (
           <ChatEventDetail
+            labels={labels}
             formatTimestamp={formatTimestamp}
             item={selectedEvent}
             onRendererError={onRendererError}
