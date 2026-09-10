@@ -138,6 +138,318 @@ const moveSnapshotToConversation = (
 });
 
 describe("@turingfocus/chat-ui-antd vertical slice", () => {
+  it("dismisses connection notices until status or conversation changes", async () => {
+    const { client, memory } = await createLoadedClient();
+    const conversationId = memory.fixtures.conversation.id;
+    const emitLifecycle = async (status: "degraded" | "offline" | "active") => {
+      await act(async () => {
+        memory.controller.emitUpdateToAll({
+          kind: "lifecycle.changed",
+          conversationId,
+          lifecycle: {
+            status,
+            generation: 1,
+            subscriptionId: "notice-test",
+            ...(status === "degraded"
+              ? {
+                  recovery: {
+                    complete: false,
+                    assurance: "best-effort",
+                    source: "rest-rebase",
+                  },
+                }
+              : {}),
+          },
+        });
+      });
+    };
+    const rendered = await renderInDom(
+      createElement(
+        ChatProvider,
+        { client },
+        createElement(ChatConversationView, { getDeadlineAt: deadlineAt }),
+      ),
+    );
+    const closeNotice = async () => {
+      const button = rendered.container.querySelector<HTMLButtonElement>(
+        ".ant-alert-close-icon",
+      );
+      expect(button).not.toBeNull();
+      await act(async () => {
+        button!.click();
+      });
+      expect(rendered.container.querySelector(".ant-alert")).toBeNull();
+    };
+    try {
+      await emitLifecycle("degraded");
+      expect(rendered.container.textContent).toContain("best-effort recovery");
+      await closeNotice();
+      expect(client.getSnapshot()?.lifecycle?.status).toBe("degraded");
+      await act(async () => {
+        memory.controller.emitUpdateToAll({
+          kind: "timeline.upsert",
+          conversationId,
+          item: {
+            kind: "message",
+            id: "notice-refresh",
+            conversationId,
+            role: "assistant",
+            content: { kind: "text", text: "A new message" },
+            createdAt: Date.now(),
+          },
+        });
+      });
+      expect(
+        client
+          .getSnapshot()
+          ?.timeline.some((item) => item.id === "notice-refresh"),
+      ).toBe(true);
+      expect(rendered.container.querySelector(".ant-alert")).toBeNull();
+      await emitLifecycle("offline");
+      expect(rendered.container.textContent).toContain("Chat is offline");
+      await closeNotice();
+      await emitLifecycle("degraded");
+      expect(rendered.container.textContent).toContain("best-effort recovery");
+      await closeNotice();
+      await emitLifecycle("active");
+      expect(rendered.container.querySelector(".ant-alert")).toBeNull();
+      await emitLifecycle("degraded");
+      await closeNotice();
+      await act(async () => {
+        const snapshot = moveSnapshotToConversation(
+          client.getSnapshot()!,
+          "notice-other",
+        );
+        memory.controller.setSnapshot(snapshot);
+        await client.loadConversation({
+          conversationId: "notice-other",
+          deadlineAt: deadlineAt(),
+        });
+      });
+      expect(rendered.container.textContent).toContain("best-effort recovery");
+    } finally {
+      await rendered.unmount();
+      await client.dispose({ deadlineAt: deadlineAt() });
+    }
+  });
+
+  it.each(["snapshot", "run"] as const)(
+    "dismisses %s errors independently and restores new errors",
+    async (kind) => {
+      const { client, memory } = await createLoadedClient();
+      const conversationId = memory.fixtures.conversation.id;
+      let occurrenceId = 0;
+      const report = async (message: string) => {
+        occurrenceId += 1;
+        const error = {
+          code: "server" as const,
+          message,
+          retryable: true,
+          conversationId,
+        };
+        await act(async () => {
+          memory.controller.emitUpdateToAll(
+            kind === "snapshot"
+              ? {
+                  kind: "error.reported",
+                  conversationId,
+                  error,
+                  errorId: `notice-error-${occurrenceId}`,
+                  generation: 1,
+                  source: "domain",
+                  scope: { kind: "conversation", id: conversationId },
+                }
+              : {
+                  kind: "run.replace",
+                  conversationId,
+                  run: {
+                    id: "notice-run",
+                    conversationId,
+                    status: "failed",
+                    canInterrupt: false,
+                    error,
+                  },
+                },
+          );
+        });
+      };
+      const rendered = await renderInDom(
+        createElement(
+          ChatProvider,
+          { client },
+          createElement(ChatConversationView, { getDeadlineAt: deadlineAt }),
+        ),
+      );
+      try {
+        await report("First failure");
+        const beforeClose = client.getSnapshot();
+        const button = rendered.container.querySelector<HTMLButtonElement>(
+          ".ant-alert-close-icon",
+        );
+        expect(button).not.toBeNull();
+        await act(async () => {
+          button!.click();
+        });
+        expect(rendered.container.querySelector(".ant-alert")).toBeNull();
+        expect(client.getSnapshot()).toBe(beforeClose);
+        await act(async () => {
+          memory.controller.emitUpdateToAll({
+            kind: "timeline.upsert",
+            conversationId,
+            item: {
+              kind: "message",
+              id: "error-refresh",
+              conversationId,
+              role: "assistant",
+              content: { kind: "text", text: "Still chatting" },
+              createdAt: Date.now(),
+            },
+          });
+        });
+        expect(
+          client
+            .getSnapshot()
+            ?.timeline.some((item) => item.id === "error-refresh"),
+        ).toBe(true);
+        expect(rendered.container.querySelector(".ant-alert")).toBeNull();
+        await act(async () => {
+          const snapshot = client.getSnapshot()!;
+          memory.controller.emitUpdateToAll({
+            kind: "snapshot.replace",
+            snapshot: {
+              ...snapshot,
+              timeline: [
+                ...snapshot.timeline,
+                {
+                  kind: "message",
+                  id: "full-snapshot-refresh",
+                  conversationId,
+                  role: "assistant",
+                  content: { kind: "text", text: "Snapshot message" },
+                  createdAt: Date.now(),
+                },
+              ],
+            },
+          });
+        });
+        expect(rendered.container.querySelector(".ant-alert")).toBeNull();
+        if (kind === "run") {
+          await act(async () => {
+            memory.controller.emitUpdateToAll({
+              kind: "run.replace",
+              conversationId,
+              run: { ...client.getSnapshot()!.run!, finishedAt: Date.now() },
+            });
+          });
+          expect(rendered.container.querySelector(".ant-alert")).toBeNull();
+        } else {
+          // A new occurrence with the same text must still be announced.
+          await report("First failure");
+          expect(rendered.container.textContent).toContain("First failure");
+        }
+        await report("Second failure");
+        expect(rendered.container.textContent).toContain("Second failure");
+        expect(
+          rendered.container.querySelector(".ant-alert-close-icon"),
+        ).not.toBeNull();
+      } finally {
+        await rendered.unmount();
+        await client.dispose({ deadlineAt: deadlineAt() });
+      }
+    },
+  );
+
+  it("isolates dismissal between views and resets it when the client is replaced", async () => {
+    const first = await createLoadedClient();
+    const second = await createLoadedClient();
+    for (const { memory } of [first, second]) {
+      memory.controller.emitUpdateToAll({
+        kind: "error.reported",
+        error: {
+          code: "server",
+          message: "Instance error",
+          retryable: true,
+        },
+      });
+    }
+    const view = (client: typeof first.client) =>
+      createElement(
+        ChatProvider,
+        { client },
+        createElement(ChatConversationView, { getDeadlineAt: deadlineAt }),
+      );
+    const rendered = await renderInDom(
+      createElement("div", null, view(first.client), view(first.client)),
+    );
+    try {
+      expect(rendered.container.querySelectorAll(".ant-alert")).toHaveLength(2);
+      await act(async () => {
+        rendered.container
+          .querySelector<HTMLButtonElement>(".ant-alert-close-icon")!
+          .click();
+      });
+      expect(rendered.container.querySelectorAll(".ant-alert")).toHaveLength(1);
+      await act(async () => {
+        rendered.root.render(
+          createElement("div", null, view(second.client), view(first.client)),
+        );
+      });
+      expect(rendered.container.querySelectorAll(".ant-alert")).toHaveLength(2);
+    } finally {
+      await rendered.unmount();
+      await first.client.dispose({ deadlineAt: deadlineAt() });
+      await second.client.dispose({ deadlineAt: deadlineAt() });
+    }
+  });
+
+  it("keeps a dismissed snapshot error hidden after a command failure is dismissed", async () => {
+    const { client, memory } = await createLoadedClient();
+    memory.controller.emitUpdateToAll({
+      kind: "error.reported",
+      error: {
+        code: "server",
+        message: "Original snapshot error",
+        retryable: true,
+      },
+    });
+    const send = vi
+      .spyOn(client, "sendComposerDraft")
+      .mockRejectedValueOnce(new Error("Command failure"));
+    const rendered = await renderInDom(
+      createElement(
+        ChatProvider,
+        { client },
+        createElement(ChatConversationView, { getDeadlineAt: deadlineAt }),
+      ),
+    );
+    const close = async () => {
+      const button = rendered.container.querySelector<HTMLButtonElement>(
+        ".ant-alert-close-icon",
+      );
+      expect(button).not.toBeNull();
+      await act(async () => {
+        button!.click();
+      });
+    };
+    try {
+      await close();
+      await setComposerText(rendered.container, "Trigger a command");
+      await clickButton(rendered.container, "Send");
+      expect(rendered.container.textContent).toContain(
+        "The chat command failed unexpectedly",
+      );
+      await close();
+      expect(rendered.container.querySelector(".ant-alert")).toBeNull();
+      expect(client.getSnapshot()?.error?.message).toBe(
+        "Original snapshot error",
+      );
+    } finally {
+      send.mockRestore();
+      await rendered.unmount();
+      await client.dispose({ deadlineAt: deadlineAt() });
+    }
+  });
+
   it("renders and submits a conversation-scoped Ask User request", async () => {
     const { client, memory } = await createLoadedClient();
     const pendingInteraction = {

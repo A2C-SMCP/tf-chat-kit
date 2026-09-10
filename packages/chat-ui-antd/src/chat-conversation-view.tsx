@@ -22,6 +22,10 @@ import {
 
 import { ChatComposer } from "./chat-composer.js";
 import {
+  chatErrorNoticeKey,
+  DismissibleChatAlert,
+} from "./dismissible-chat-alert.js";
+import {
   ChatEventDetail,
   ChatEventDetailEmpty,
   isChatEventItem,
@@ -92,6 +96,7 @@ interface ChatConversationViewSnapshot {
   readonly capabilities: ChatSnapshot["capabilities"];
   readonly conversationId: string;
   readonly error: ChatError | undefined;
+  readonly errorNoticeKey: string;
   readonly lifecycle: ChatSnapshot["lifecycle"];
   readonly pendingInteraction: ChatSnapshot["pendingInteraction"];
   readonly run: ChatSnapshot["run"];
@@ -107,6 +112,10 @@ const selectChatConversationViewSnapshot = (
         capabilities: snapshot.capabilities,
         conversationId: snapshot.conversation.id,
         error: snapshot.error,
+        errorNoticeKey: chatErrorNoticeKey(
+          snapshot.error,
+          snapshot.activeErrors?.at(-1),
+        ),
         lifecycle: snapshot.lifecycle,
         pendingInteraction: snapshot.pendingInteraction,
         run: snapshot.run,
@@ -123,6 +132,7 @@ const equalChatConversationViewSnapshot = (
     left.capabilities === right.capabilities &&
     left.conversationId === right.conversationId &&
     left.error === right.error &&
+    left.errorNoticeKey === right.errorNoticeKey &&
     left.lifecycle === right.lifecycle &&
     left.pendingInteraction === right.pendingInteraction &&
     left.run === right.run &&
@@ -447,7 +457,9 @@ export const ChatConversationView = ({
       {snapshot.lifecycle === undefined ||
       (snapshot.lifecycle.status === "active" &&
         !activeRecoveryUnverified) ? null : (
-        <Alert
+        <DismissibleChatAlert
+          key={`lifecycle:${viewResetKey}`}
+          resetOn={lifecycleDisplayStatus}
           message={
             lifecycleDisplayStatus === undefined
               ? undefined
@@ -464,9 +476,12 @@ export const ChatConversationView = ({
           }
         />
       )}
-      {visibleSnapshotError === undefined ? null : (
-        <Alert
-          message={visibleSnapshotError.message}
+      {snapshot.error === undefined ? null : (
+        <DismissibleChatAlert
+          key={`snapshot-error:${viewResetKey}`}
+          resetOn={snapshot.errorNoticeKey}
+          visible={visibleSnapshotError !== undefined}
+          message={snapshot.error.message}
           showIcon
           style={{ margin: token.marginXS }}
           type="error"
