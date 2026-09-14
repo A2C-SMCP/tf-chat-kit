@@ -8,6 +8,7 @@ export {
   ChatProvider,
   OwnedChatProvider,
   useChatClient,
+  useChatDiagnostics,
   useChatAttachmentUploader,
   useComposerDraft,
   useConversationCache,

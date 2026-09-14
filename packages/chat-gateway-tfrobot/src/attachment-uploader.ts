@@ -60,6 +60,7 @@ class DefaultTFRobotAttachmentUploader implements TFRobotAttachmentUploader {
         method: "POST",
         path: "v1/dashboard/remote/source/cos/upload",
         operation: "send",
+        diagnosticOperation: "uploadAttachment",
         options: input,
         formData,
         schema: uploadResponseSchema,

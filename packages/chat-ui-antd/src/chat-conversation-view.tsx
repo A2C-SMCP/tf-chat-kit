@@ -1,4 +1,6 @@
-import { Alert, Modal, Segmented, Typography, theme } from "antd";
+import { ChatNotices, type ChatNoticeTiming } from "./chat-notices.js";
+import { ChatErrorNotice } from "./chat-diagnostics.js";
+import { Modal, Segmented, Typography, theme } from "antd";
 import {
   useCallback,
   useEffect,
@@ -22,10 +24,7 @@ import {
 } from "@turingfocus/chat-react";
 
 import { ChatComposer } from "./chat-composer.js";
-import {
-  chatErrorNoticeKey,
-  DismissibleChatAlert,
-} from "./dismissible-chat-alert.js";
+import { chatErrorNoticeKey } from "./dismissible-chat-alert.js";
 import {
   ChatEventDetail,
   ChatEventDetailEmpty,
@@ -39,7 +38,6 @@ import {
   type AskUserChatAboutThisRequest,
 } from "./ask-user-interaction.js";
 import { ChatRunStatus } from "./chat-run-status.js";
-import { ChatStateView } from "./chat-state-view.js";
 import { ChatTimeline } from "./chat-timeline.js";
 import { resolveChatUiLabels } from "./labels.js";
 import {
@@ -60,6 +58,8 @@ import {
 export type { ChatUiCommand, ChatUiCommandFailure };
 
 export interface ChatConversationViewProps {
+  readonly noticeTiming?: ChatNoticeTiming | undefined;
+  readonly onRequestAuthentication?: (() => void) | undefined;
   readonly className?: string | undefined;
   readonly defaultEventDetailMode?: ChatEventDetailMode | undefined;
   readonly defaultSelectedEventId?: string | null | undefined;
@@ -141,6 +141,8 @@ const equalChatConversationViewSnapshot = (
 
 export const ChatConversationView = ({
   className,
+  noticeTiming,
+  onRequestAuthentication,
   defaultEventDetailMode = "auto",
   defaultEventDetailSplitRatio,
   defaultSelectedEventId = null,
@@ -186,7 +188,6 @@ export const ChatConversationView = ({
     sendText,
     viewResetKey,
     visibleCommandFailures,
-    visibleSnapshotError,
   } = useChatCommandCoordinator({
     canAnswerInteraction:
       lifecycleOperable && snapshot?.capabilities.answerInteraction === true,
@@ -396,7 +397,14 @@ export const ChatConversationView = ({
   );
 
   if (snapshot === null) {
-    return <ChatStateView labels={labels} state={{ kind: "loading" }} />;
+    return (
+      <ChatNotices
+        loading
+        labels={labels}
+        timing={noticeTiming}
+        getDeadlineAt={getDeadlineAt}
+      />
+    );
   }
 
   const conversationId = snapshot.conversationId;
@@ -448,45 +456,14 @@ export const ChatConversationView = ({
         ...style,
       }}
     >
-      {cache.conversationId === snapshot.conversationId &&
-      cache.source !== "none" &&
-      (cache.status === "syncing" || cache.status === "error") ? (
-        <DismissibleChatAlert
-          key={`cache:${viewResetKey}`}
-          resetOn={`${cache.status}:${cache.freshness}`}
-          message={
-            cache.status === "error"
-              ? labels.cacheSyncFailed
-              : cache.freshness === "stale"
-                ? labels.cacheStale
-                : labels.cacheSyncing
-          }
-          type={cache.status === "error" ? "warning" : "info"}
-          showIcon
-          style={{ margin: token.marginXS }}
-        />
-      ) : null}
-      {cache.conversationId === snapshot.conversationId &&
-      cache.unavailableAttachments > 0 ? (
-        <DismissibleChatAlert
-          key={`cache-attachments:${viewResetKey}`}
-          resetOn={String(cache.unavailableAttachments)}
-          message={labels.cacheAttachmentUnavailable}
-          type="warning"
-          showIcon
-          style={{ margin: token.marginXS }}
-        />
-      ) : null}
-      {cache.storageError ? (
-        <DismissibleChatAlert
-          key={`cache-storage:${viewResetKey}`}
-          resetOn="storage-error"
-          message={labels.cacheStorageFailed}
-          type="warning"
-          showIcon
-          style={{ margin: token.marginXS }}
-        />
-      ) : null}
+      <ChatNotices
+        key={`notices:${viewResetKey}`}
+        conversationId={conversationId}
+        timing={noticeTiming}
+        labels={labels}
+        getDeadlineAt={getDeadlineAt}
+        onRequestAuthentication={onRequestAuthentication}
+      />
       <ChatRunStatus
         key={`${viewResetKey}:${snapshot.run?.id ?? "no-run"}`}
         canInterrupt={lifecycleOperable && snapshot.capabilities.interrupt}
@@ -494,53 +471,8 @@ export const ChatConversationView = ({
         onInterrupt={interrupt}
         run={snapshot.run}
         showInterruptButton={false}
+        showError={false}
       />
-      {snapshot.lifecycle === undefined ||
-      (snapshot.lifecycle.status === "active" &&
-        !activeRecoveryUnverified) ? null : (
-        <DismissibleChatAlert
-          key={`lifecycle:${viewResetKey}`}
-          resetOn={lifecycleDisplayStatus}
-          message={
-            lifecycleDisplayStatus === undefined
-              ? undefined
-              : labels.lifecycleStatus?.[lifecycleDisplayStatus]
-          }
-          showIcon
-          style={{ margin: token.marginXS }}
-          type={
-            snapshot.lifecycle.status === "auth-required" ||
-            snapshot.lifecycle.status === "subscription-failed" ||
-            snapshot.lifecycle.status === "offline"
-              ? "warning"
-              : "info"
-          }
-        />
-      )}
-      {snapshot.error === undefined ? null : (
-        <DismissibleChatAlert
-          key={`snapshot-error:${viewResetKey}`}
-          resetOn={snapshot.errorNoticeKey}
-          visible={visibleSnapshotError !== undefined}
-          message={snapshot.error.message}
-          showIcon
-          style={{ margin: token.marginXS }}
-          type="error"
-        />
-      )}
-      {visibleCommandFailures.map((failure) => (
-        <Alert
-          key={failure.command}
-          closable
-          message={failure.error.message}
-          onClose={() => {
-            dismissFailure(failure.command);
-          }}
-          showIcon
-          style={{ margin: token.marginXS }}
-          type="error"
-        />
-      ))}
       <div
         style={{
           alignItems: "center",
@@ -581,6 +513,17 @@ export const ChatConversationView = ({
           timeline={timeline}
         />
       </div>
+      {visibleCommandFailures
+        .filter((failure) => failure.command === "answerInteraction")
+        .map((failure) => (
+          <ChatErrorNotice
+            key={failure.command}
+            error={failure.error}
+            operation={failure.command}
+            labels={labels}
+            onDismiss={() => dismissFailure(failure.command)}
+          />
+        ))}
       {snapshot.pendingInteraction === undefined ? null : (
         <div style={{ padding: token.paddingXS }}>
           <AskUserInteractionCard
@@ -600,7 +543,36 @@ export const ChatConversationView = ({
           />
         </div>
       )}
+      {visibleCommandFailures
+        .filter((failure) => failure.command !== "answerInteraction")
+        .map((failure) => (
+          <ChatErrorNotice
+            key={failure.command}
+            error={failure.error}
+            operation={failure.command}
+            labels={labels}
+            onDismiss={() => dismissFailure(failure.command)}
+          />
+        ))}
+      {cache.conversationId === conversationId &&
+      cache.unavailableAttachments > 0 ? (
+        <span role="status">{labels.cacheAttachmentUnavailable}</span>
+      ) : null}
       <ChatComposer
+        renderUploadError={(error) => (
+          <ChatErrorNotice
+            error={error}
+            operation="uploadAttachment"
+            labels={labels}
+          />
+        )}
+        onUploadError={(error) =>
+          client.recordDiagnostic({
+            ...error,
+            conversationId,
+            diagnostic: { ...error.diagnostic, operation: "uploadAttachment" },
+          })
+        }
         attachmentUploader={
           snapshot.capabilities.sendAttachments === true
             ? attachmentUploader
@@ -623,11 +595,17 @@ export const ChatConversationView = ({
             (snapshot.capabilities.sendAttachments === true &&
               attachmentUploader !== undefined))
             ? undefined
-            : snapshot.lifecycle !== undefined && !lifecycleOperable
-              ? lifecycleDisplayStatus === undefined
+            : cache.conversationId === conversationId &&
+                cache.status === "syncing"
+              ? undefined
+              : snapshot.lifecycle?.status === "connecting" ||
+                  snapshot.lifecycle?.status === "joining"
                 ? undefined
-                : labels.lifecycleStatus?.[lifecycleDisplayStatus]
-              : labels.textSendingUnavailable
+                : snapshot.lifecycle !== undefined && !lifecycleOperable
+                  ? lifecycleDisplayStatus === undefined
+                    ? undefined
+                    : labels.lifecycleStatus?.[lifecycleDisplayStatus]
+                  : labels.textSendingUnavailable
         }
         interruptAction={
           snapshot.run?.status === "running"

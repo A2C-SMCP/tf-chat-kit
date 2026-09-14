@@ -1,3 +1,7 @@
+import {
+  safeDiagnosticError,
+  type ChatError,
+} from "@turingfocus/chat-protocol";
 import { ChatReferencePicker } from "./reference-picker.js";
 import {
   appendComposerReference,
@@ -31,6 +35,8 @@ import { resolveChatUiLabels } from "./labels.js";
 import type { ChatUiLabelOverrides } from "./types.js";
 
 export interface ChatComposerProps {
+  readonly renderUploadError?: ((error: ChatError) => ReactNode) | undefined;
+  readonly onUploadError?: ((error: ChatError) => ChatError) | undefined;
   readonly className?: string | undefined;
   readonly disabled?: boolean | undefined;
   readonly disabledReason?: ReactNode | undefined;
@@ -63,6 +69,8 @@ export interface ChatComposerInterruptAction {
 
 export const ChatComposer = ({
   className,
+  onUploadError,
+  renderUploadError,
   disabled = false,
   disabledReason,
   interruptAction,
@@ -92,7 +100,7 @@ export const ChatComposer = ({
     readonly {
       readonly file: File;
       readonly id: string;
-      readonly error?: string;
+      readonly error?: ChatError;
     }[]
   >([]);
   const [selectedLongTextId, setSelectedLongTextId] = useState<string>();
@@ -237,15 +245,22 @@ export const ChatComposer = ({
             },
           },
         });
-      } catch (error) {
+      } catch {
+        const failure = {
+          code: "unknown" as const,
+          message: "Upload failed",
+          retryable: false,
+          diagnostic: { operation: "uploadAttachment" },
+        };
+        const recorded =
+          onUploadError?.(failure) ?? safeDiagnosticError(failure);
         if (uploadGeneration.current !== generation) return;
         setUploading((current) =>
           current.map((item) =>
             item.id === id
               ? {
                   ...item,
-                  error:
-                    error instanceof Error ? error.message : "Upload failed",
+                  error: recorded,
                 }
               : item,
           ),
@@ -256,6 +271,9 @@ export const ChatComposer = ({
           uploadControllers.current.delete(id);
         }
       }
+      const recordedFailure = result.ok
+        ? undefined
+        : (onUploadError?.(result.error) ?? safeDiagnosticError(result.error));
       if (uploadGeneration.current !== generation) return;
       if (result.ok) {
         updateDraft({
@@ -265,12 +283,12 @@ export const ChatComposer = ({
       } else {
         setUploading((current) =>
           current.map((item) =>
-            item.id === id ? { ...item, error: result.error.message } : item,
+            item.id === id ? { ...item, error: recordedFailure! } : item,
           ),
         );
       }
     },
-    [attachmentUploader, getDeadlineAt, updateDraft],
+    [attachmentUploader, getDeadlineAt, onUploadError, updateDraft],
   );
 
   const selectFiles = (event: ChangeEvent<HTMLInputElement>): void => {
@@ -498,21 +516,28 @@ export const ChatComposer = ({
             </Button>
           ))}
           {uploading.map((item) => (
-            <Button
-              danger={item.error !== undefined}
-              key={item.id}
-              loading={item.error === undefined}
-              onClick={() =>
-                item.error === undefined
-                  ? undefined
-                  : void uploadFile(item.file, item.id)
-              }
-              size="small"
-            >
-              {item.error === undefined
-                ? item.file.name
-                : `${labels.retryUpload} ${item.file.name}`}
-            </Button>
+            <div key={item.id}>
+              <Button
+                danger={item.error !== undefined}
+                key={item.id}
+                loading={item.error === undefined}
+                onClick={() =>
+                  item.error === undefined
+                    ? undefined
+                    : void uploadFile(item.file, item.id)
+                }
+                size="small"
+              >
+                {item.error === undefined
+                  ? item.file.name
+                  : `${labels.retryUpload} ${item.file.name}`}
+              </Button>
+              {item.error
+                ? (renderUploadError?.(item.error) ?? (
+                    <span role="alert">{item.error.message}</span>
+                  ))
+                : null}
+            </div>
           ))}
         </Space>
       )}

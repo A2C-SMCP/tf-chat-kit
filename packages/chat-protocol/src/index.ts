@@ -99,3 +99,13 @@ export {
 export type { ToolPresentation, ToolAttachment } from "./presentation.js";
 
 export * from "./resources.js";
+
+export {
+  safeDiagnosticError,
+  formatChatDiagnostic,
+  sanitizeChatDiagnosticText,
+} from "./diagnostics.js";
+export type {
+  ChatErrorDiagnostic,
+  ChatDiagnosticRecord,
+} from "./diagnostics.js";

@@ -9,6 +9,7 @@ import {
 } from "@turingfocus/chat-runtime";
 
 export interface TFRobotChatClientOptions extends TFRobotGatewayOptions {
+  readonly diagnostics?: ChatClientOptions["diagnostics"];
   readonly cache?: ChatClientOptions["cache"];
   /** Receives isolated Runtime listener and cleanup failures. */
   readonly onUnhandledError?: ChatClientOptions["onUnhandledError"];
@@ -21,11 +22,12 @@ export interface TFRobotChatClientOptions extends TFRobotGatewayOptions {
 export const createTFRobotChatClient = (
   options: TFRobotChatClientOptions,
 ): ChatClient => {
-  const { cache, onUnhandledError, ...gatewayOptions } = options;
+  const { cache, diagnostics, onUnhandledError, ...gatewayOptions } = options;
   const gateway = createTFRobotChatGateway(gatewayOptions);
   return createChatClient({
     gateway,
     onUnhandledError,
+    diagnostics,
     ...(cache === undefined ? {} : { cache }),
   });
 };

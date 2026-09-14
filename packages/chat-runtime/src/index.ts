@@ -66,3 +66,6 @@ export type {
   CachedAttachmentResolver,
 } from "./conversation-cache.js";
 export type { ConversationCacheRecord } from "./cache-record.js";
+
+export type { ChatDiagnosticsOptions } from "./diagnostics.js";
+export type { ChatDiagnosticRecord } from "@turingfocus/chat-protocol";

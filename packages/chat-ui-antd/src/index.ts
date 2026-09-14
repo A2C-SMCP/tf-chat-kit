@@ -72,3 +72,5 @@ export {
 } from "./resource-content.js";
 
 export type { ChatResourceLabels } from "./types.js";
+
+export type { ChatNoticeTiming } from "./chat-notices.js";

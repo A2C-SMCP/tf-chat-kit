@@ -88,3 +88,15 @@ loaded image, actual audio/video playback, and downloaded file bytes with Chines
 The resource component suites cover English/Chinese port failures, cancellation and stale scopes;
 real local HTTP tests cover status classification and connection failures. No external seed or
 production resource is used.
+
+## Issue #82 session notices and diagnostics
+
+Use the Mock mode “服务端错误” action twice. The conversation keeps one fault banner,
+while Diagnostics retains both occurrences. Keyboard Enter opens the diagnostic modal;
+copy the current conversation and an individual record, close with Escape and verify
+focus returns to the trigger. Chat content and input remain separate from notices.
+
+Focused browser gate: `TF_CHAT_PLAYGROUND_PORT=3001 pnpm test:e2e tests/e2e/session-diagnostics.spec.ts`.
+Timing, recovery, cache and instance disposal are additionally covered by deterministic
+DOM/Runtime suites, with actual HTTP/Socket.IO metadata tested on ephemeral local ports.
+No server seed, external credentials or production data are required.

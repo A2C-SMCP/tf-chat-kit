@@ -4480,11 +4480,11 @@ describe("TFRobotChatGateway Socket boundary", () => {
       });
       expect(errors.slice(2)).toMatchObject([
         {
-          conversationId: "[REDACTED]",
+          conversationId: "42",
           message: "Injected connect [REDACTED]",
         },
         {
-          conversationId: "[REDACTED]",
+          conversationId: "42",
           message: "Injected disconnect [REDACTED]",
         },
       ]);

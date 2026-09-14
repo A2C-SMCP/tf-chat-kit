@@ -156,3 +156,19 @@ export const useConversationCache = (): ConversationCacheState => {
   const read = useCallback(() => client.getCacheState(), [client]);
   return useSyncExternalStore(subscribe, read, read);
 };
+
+export const useChatDiagnostics = (conversationId?: string) => {
+  const client = useChatClient();
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const subscription = client.subscribeDiagnostics(listener);
+      return () => subscription.dispose();
+    },
+    [client],
+  );
+  const read = useCallback(
+    () => client.getDiagnostics(conversationId),
+    [client, conversationId],
+  );
+  return useSyncExternalStore(subscribe, read, read);
+};

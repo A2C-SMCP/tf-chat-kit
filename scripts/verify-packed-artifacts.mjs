@@ -537,8 +537,9 @@ try {
       packageNames: ["@turingfocus/chat-kit"],
       sourceFiles: {
         "index.ts": [
-          'import { appendComposerReference, resolveComposerDraftText, createConversationWorkspaceController, createTFRobotChatClient, type ChatResourcePort, type SessionProvider, type TFRobotSession } from "@turingfocus/chat-kit/headless";',
+          'import { formatChatDiagnostic, appendComposerReference, resolveComposerDraftText, createConversationWorkspaceController, createTFRobotChatClient, type ChatResourcePort, type SessionProvider, type TFRobotSession } from "@turingfocus/chat-kit/headless";',
           "",
+          'if (typeof formatChatDiagnostic !== "function") throw new Error("Headless diagnostic formatter is unavailable");',
           'if (typeof createConversationWorkspaceController !== "function") throw new Error("Headless facade workspace controller is unavailable");',
           "",
           'const resourcePort: ChatResourcePort = { download: ({ resource, signal }) => { if (signal.aborted || resource.uri !== "private:report") throw new Error("Invalid headless resource operation"); } };',

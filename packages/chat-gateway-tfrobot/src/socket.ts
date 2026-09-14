@@ -1,3 +1,4 @@
+import { safeDiagnosticError } from "@turingfocus/chat-protocol";
 import { io } from "socket.io-client";
 
 import {
@@ -696,11 +697,12 @@ export class TFRobotSocketClient {
         setupFailure = { reason };
       }
     };
+    let diagnosticLifecycle: ChatLifecycle | undefined;
     const diagnose = (error: ChatError): void => {
       try {
-        void Promise.resolve(this.#options.onDiagnostic?.(error)).catch(
-          () => undefined,
-        );
+        void Promise.resolve(
+          this.#options.onDiagnostic?.(safeDiagnosticError(error)),
+        ).catch(() => undefined);
       } catch {
         // Diagnostics are observational and cannot break the chat stream.
       }
@@ -734,10 +736,23 @@ export class TFRobotSocketClient {
       if (replaceableErrorSources.has(source)) {
         activeErrorIds.set(source, errorId);
       }
-      const occurrenceError =
-        error.conversationId === undefined
-          ? error
-          : { ...error, conversationId: errorConversationId() };
+      const occurrenceError: ChatError = {
+        ...error,
+        ...(error.conversationId === undefined
+          ? {}
+          : { conversationId: errorConversationId() }),
+        diagnostic: {
+          ...error.diagnostic,
+          errorId,
+          operation: "subscribe",
+          phase: source,
+          generation,
+          reconnectAttempt: active.reconnectAttempt,
+          reasonCode: error.code,
+          recoveryComplete: diagnosticLifecycle?.recovery?.complete,
+          recoveryAssurance: diagnosticLifecycle?.recovery?.assurance,
+        },
+      };
       publishUpdate(
         chatUpdateSchema.parse({
           kind: "error.reported",
@@ -752,9 +767,9 @@ export class TFRobotSocketClient {
           generation,
         }),
       );
-      if (subscriptionEstablished) notifyError(error);
-      else pendingNotifications.push({ kind: "error", error });
-      diagnose(error);
+      if (subscriptionEstablished) notifyError(occurrenceError);
+      else pendingNotifications.push({ kind: "error", error: occurrenceError });
+      diagnose(occurrenceError);
     };
     const sanitizePayload = (payload: unknown): unknown =>
       sanitizeCredentialPayload(payload, credentialValues);
@@ -826,6 +841,7 @@ export class TFRobotSocketClient {
         subscriptionId,
         ...(recovery === undefined ? {} : { recovery }),
       };
+      diagnosticLifecycle = value;
       const update = chatUpdateSchema.parse({
         kind: "lifecycle.changed",
         conversationId: errorConversationId(),
@@ -1775,6 +1791,7 @@ export class TFRobotSocketClient {
     };
     this.#subscriptions.add(active);
     this.#establishing = active;
+    const startedAt = this.#now();
     return new Promise((resolve) => {
       let settled = false;
       const settle = (result: GatewayResult<GatewaySubscription>): void => {
@@ -1785,6 +1802,21 @@ export class TFRobotSocketClient {
         if (this.#establishing === active) this.#establishing = undefined;
         clearTimeout(timeout);
         if (!result.ok) {
+          const error: ChatError = {
+            ...result.error,
+            diagnostic: {
+              ...result.error.diagnostic,
+              errorId: `${subscriptionId}:establishment`,
+              operation: "subscribe",
+              phase: joinPending ? "joining" : "subscription",
+              generation,
+              reconnectAttempt: active.reconnectAttempt,
+              timeoutMs: Math.max(0, options.deadlineAt - startedAt),
+              elapsedMs: Math.max(0, this.#now() - startedAt),
+            },
+          };
+          diagnose(error);
+          result = { ok: false, error };
           active.active = false;
           active.cleanup();
           this.#subscriptions.delete(active);

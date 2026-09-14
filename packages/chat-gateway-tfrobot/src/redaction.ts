@@ -129,6 +129,18 @@ export const sanitizeCredentialError = (
   credentialValues: Iterable<string>,
 ): ChatError => ({
   ...error,
+  ...(error.diagnostic === undefined
+    ? {}
+    : {
+        diagnostic: Object.fromEntries(
+          Object.entries(error.diagnostic).map(([key, value]) => [
+            key,
+            typeof value === "string"
+              ? sanitizeCredentialText(value, credentialValues)
+              : value,
+          ]),
+        ),
+      }),
   message: sanitizeCredentialText(error.message, credentialValues),
   ...(error.conversationId === undefined
     ? {}

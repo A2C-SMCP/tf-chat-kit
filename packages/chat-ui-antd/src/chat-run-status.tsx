@@ -1,8 +1,9 @@
 import { Button, Tag, Typography, theme } from "antd";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
-import type { Run } from "@turingfocus/chat-protocol";
+import { safeDiagnosticError, type Run } from "@turingfocus/chat-protocol";
 
+import { errorSummary } from "./chat-diagnostics.js";
 import { resolveChatUiLabels } from "./labels.js";
 import {
   chatErrorNoticeKey,
@@ -16,6 +17,7 @@ export interface ChatRunStatusProps {
   readonly labels?: ChatUiLabelOverrides | undefined;
   readonly onInterrupt: () => boolean | PromiseLike<boolean>;
   readonly run: Run | null;
+  readonly showError?: boolean | undefined;
   readonly showInterruptButton?: boolean | undefined;
   readonly style?: CSSProperties | undefined;
 }
@@ -27,6 +29,7 @@ export const ChatRunStatus = ({
   onInterrupt,
   run,
   showInterruptButton = true,
+  showError = true,
   style,
 }: ChatRunStatusProps) => {
   const { token } = theme.useToken();
@@ -105,11 +108,14 @@ export const ChatRunStatus = ({
           </Button>
         ) : null}
       </div>
-      {run.error === undefined ? null : (
+      {!showError || run.error === undefined ? null : (
         <DismissibleChatAlert
           key={JSON.stringify([run.conversationId, run.id])}
           resetOn={chatErrorNoticeKey(run.error)}
-          message={run.error.message}
+          message={
+            labels.formatChatError?.(safeDiagnosticError(run.error)) ??
+            errorSummary(safeDiagnosticError(run.error))
+          }
           showIcon
           style={{ marginTop: token.marginXS }}
           type="error"

@@ -187,6 +187,12 @@ const TauriRuntimeView = ({
     },
     createElement(ChatWorkspace, {
       conversationViewProps: {
+        noticeTiming: {
+          progressDelayMs: 2000,
+          disconnectDelayMs: 5000,
+          recoveredDurationMs: 3000,
+          bestEffortDurationMs: 5000,
+        },
         defaultEventDetailMode: eventDetailMode,
         defaultEventDetailSplitRatio: 0.6,
       },

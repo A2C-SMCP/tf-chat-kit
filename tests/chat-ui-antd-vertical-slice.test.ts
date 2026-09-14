@@ -169,7 +169,7 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
         await flushMicrotasks();
       });
       expect(rendered.container.textContent).toContain("Initial message");
-      expect(rendered.container.textContent).toContain(
+      expect(rendered.container.textContent).not.toContain(
         "Showing cached conversation",
       );
       expect(client.getCacheState().status).toBe("syncing");
@@ -209,7 +209,7 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
     }
   });
 
-  it("dismisses connection notices until status or conversation changes", async () => {
+  it("keeps initial degraded in the status entry and preserves command gating", async () => {
     const { client, memory } = await createLoadedClient();
     const conversationId = memory.fixtures.conversation.id;
     const emitLifecycle = async (status: "degraded" | "offline" | "active") => {
@@ -241,20 +241,10 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
         createElement(ChatConversationView, { getDeadlineAt: deadlineAt }),
       ),
     );
-    const closeNotice = async () => {
-      const button = rendered.container.querySelector<HTMLButtonElement>(
-        ".ant-alert-close-icon",
-      );
-      expect(button).not.toBeNull();
-      await act(async () => {
-        button!.click();
-      });
-      expect(rendered.container.querySelector(".ant-alert")).toBeNull();
-    };
     try {
       await emitLifecycle("degraded");
       expect(rendered.container.textContent).toContain("best-effort recovery");
-      await closeNotice();
+      expect(rendered.container.querySelector(".ant-alert")).toBeNull();
       expect(client.getSnapshot()?.lifecycle?.status).toBe("degraded");
       await act(async () => {
         memory.controller.emitUpdateToAll({
@@ -278,14 +268,14 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
       expect(rendered.container.querySelector(".ant-alert")).toBeNull();
       await emitLifecycle("offline");
       expect(rendered.container.textContent).toContain("Chat is offline");
-      await closeNotice();
+      expect(rendered.container.querySelector(".ant-alert")).toBeNull();
       await emitLifecycle("degraded");
       expect(rendered.container.textContent).toContain("best-effort recovery");
-      await closeNotice();
+      expect(rendered.container.querySelector(".ant-alert")).toBeNull();
       await emitLifecycle("active");
       expect(rendered.container.querySelector(".ant-alert")).toBeNull();
       await emitLifecycle("degraded");
-      await closeNotice();
+      expect(rendered.container.querySelector(".ant-alert")).toBeNull();
       await act(async () => {
         const snapshot = moveSnapshotToConversation(
           client.getSnapshot()!,
@@ -317,6 +307,7 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
           message,
           retryable: true,
           conversationId,
+          diagnostic: { errorId: `notice-error-${occurrenceId}` },
         };
         await act(async () => {
           memory.controller.emitUpdateToAll(
@@ -416,10 +407,14 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
         } else {
           // A new occurrence with the same text must still be announced.
           await report("First failure");
-          expect(rendered.container.textContent).toContain("First failure");
+          expect(rendered.container.textContent).toContain(
+            "Chat operation failed",
+          );
         }
         await report("Second failure");
-        expect(rendered.container.textContent).toContain("Second failure");
+        expect(rendered.container.textContent).toContain(
+          "Chat operation failed",
+        );
         expect(
           rendered.container.querySelector(".ant-alert-close-icon"),
         ).not.toBeNull();
@@ -506,9 +501,7 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
       await close();
       await setComposerText(rendered.container, "Trigger a command");
       await clickButton(rendered.container, "Send");
-      expect(rendered.container.textContent).toContain(
-        "The chat command failed unexpectedly",
-      );
+      expect(rendered.container.textContent).toContain("Send message failed");
       await close();
       expect(rendered.container.querySelector(".ant-alert")).toBeNull();
       expect(client.getSnapshot()?.error?.message).toBe(
@@ -954,7 +947,7 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
     try {
       await clickButton(rendered.container, "Cancel");
       expect(rendered.container.textContent).toContain("Need your input");
-      expect(rendered.container.textContent).toContain("Answer failed safely");
+      expect(rendered.container.textContent).toContain("Submit answer failed");
       expect(failures).toMatchObject([
         {
           command: "answerInteraction",
@@ -1001,7 +994,7 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
 
     try {
       await clickButton(rendered.container, "Cancel");
-      expect(rendered.container.textContent).toContain("Old request failed");
+      expect(rendered.container.textContent).toContain("Submit answer failed");
 
       const replacement = {
         ...memory.fixtures.askUserRequest,
@@ -1023,11 +1016,11 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
 
       expect(rendered.container.textContent).toContain("Replacement input");
       expect(rendered.container.textContent).not.toContain(
-        "Old request failed",
+        "Submit answer failed",
       );
 
       await clickButton(rendered.container, "Cancel");
-      expect(rendered.container.textContent).toContain("Old request failed");
+      expect(rendered.container.textContent).toContain("Submit answer failed");
       memory.controller.setSnapshot({
         ...pendingSnapshot,
         pendingInteraction: undefined,
@@ -1041,7 +1034,7 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
         await flushMicrotasks();
       });
       expect(rendered.container.textContent).not.toContain(
-        "Old request failed",
+        "Submit answer failed",
       );
 
       const capabilityProbe = {
@@ -1062,7 +1055,7 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
         await flushMicrotasks();
       });
       await clickButton(rendered.container, "Cancel");
-      expect(rendered.container.textContent).toContain("Old request failed");
+      expect(rendered.container.textContent).toContain("Submit answer failed");
       memory.controller.setSnapshot({
         ...pendingSnapshot,
         capabilities: {
@@ -1083,7 +1076,7 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
         await flushMicrotasks();
       });
       expect(rendered.container.textContent).not.toContain(
-        "Old request failed",
+        "Submit answer failed",
       );
     } finally {
       await rendered.unmount();
@@ -1213,7 +1206,7 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
         await sendHold.completed;
         await flushMicrotasks();
       });
-      expect(rendered.container.textContent).toContain("Send failed safely");
+      expect(rendered.container.textContent).toContain("Send message failed");
       expect(rendered.container.querySelectorAll(".ant-alert")).toHaveLength(1);
       expect(
         rendered.container.querySelector<HTMLTextAreaElement>(
@@ -1226,7 +1219,7 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
         await interruptHold.completed;
         await flushMicrotasks();
       });
-      expect(rendered.container.textContent).toContain("Send failed safely");
+      expect(rendered.container.textContent).toContain("Send message failed");
       expect(failures.map(({ command }) => command)).toEqual(["sendText"]);
     } finally {
       sendHold.release();
@@ -1625,9 +1618,7 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
 
     try {
       await clickButton(rendered.container, "Stop");
-      expect(rendered.container.textContent).toContain(
-        "Run-specific interrupt failure",
-      );
+      expect(rendered.container.textContent).toContain("Stop run failed");
       expect(rendered.container.querySelectorAll(".ant-alert")).toHaveLength(1);
 
       const initialRun = memory.fixtures.initialSnapshot.run;
@@ -1640,9 +1631,7 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
         });
         await flushMicrotasks();
       });
-      expect(rendered.container.textContent).not.toContain(
-        "Run-specific interrupt failure",
-      );
+      expect(rendered.container.textContent).not.toContain("Stop run failed");
     } finally {
       await rendered.unmount();
       await client.dispose({ deadlineAt: deadlineAt() });

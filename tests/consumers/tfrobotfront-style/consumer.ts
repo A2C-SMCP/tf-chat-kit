@@ -501,7 +501,13 @@ export const runHostConsumerVerification = async (): Promise<void> => {
   check(
     first.diagnostics.length === 1 &&
       second.diagnostics.length === 1 &&
-      injectedFailureDiagnostics.includes("[REDACTED]"),
+      [...first.diagnostics, ...second.diagnostics].every(
+        (error) =>
+          error.code === "server" &&
+          error.diagnostic?.errorId !== undefined &&
+          error.details === undefined &&
+          error.message === "Chat operation failed (server).",
+      ),
     "controlled failures must reach each host as sanitized diagnostics",
   );
   check(

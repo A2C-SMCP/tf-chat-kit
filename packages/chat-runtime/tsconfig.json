@@ -5,8 +5,13 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "types": [],
-    "tsBuildInfoFile": "../../.artifacts/tsbuildinfo/chat-runtime.tsbuildinfo"
+    "tsBuildInfoFile": "../../.artifacts/tsbuildinfo/chat-runtime.tsbuildinfo",
+    "resolveJsonModule": true
   },
-  "references": [{ "path": "../chat-protocol" }],
+  "references": [
+    {
+      "path": "../chat-protocol"
+    }
+  ],
   "include": ["src/**/*.ts"]
 }

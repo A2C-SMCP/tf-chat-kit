@@ -611,3 +611,40 @@ Chat Kit 负责：
 ## 多会话缓存与可选持久化
 
 默认启用实例隔离的内存缓存，省略 scope 也可使用；持久化、隔离存储、附件重新验证和清理接口见[缓存接入指南](baselines/issue-77/integration.md)。需要保持原加载行为的宿主可设置 `cache: false`。
+
+## Session notices and diagnostics (#82)
+
+`ChatConversationView` and `ChatWorkspace.conversationViewProps` accept `noticeTiming`:
+`progressDelayMs` (2000), `disconnectDelayMs` (5000), `recoveredDurationMs` (3000), and
+`bestEffortDurationMs` (5000). Values must be finite between 0 and 60000 ms; invalid
+values use the default. Hovering or focusing a recovery notice pauses its remaining
+time. Notices live inside the panel and never enter conversation history.
+
+`onRequestAuthentication` is an optional host callback; Kit does not implement login.
+Send/interrupt/answer rights still come from the live Runtime and capabilities.
+A timed-out send with an unknown result asks the user to check history before sending
+again. There is no automatic replay.
+
+Create a client with `diagnostics: { appVersion, onRecord }` to supply the host version
+and receive safe records. Existing Gateway `onDiagnostic` and `onLifecycleDiagnostic`
+callbacks remain independent. `client.getDiagnostics(conversationId)` and
+`client.subscribeDiagnostics(listener)` also work without React; React hosts can use
+`useChatDiagnostics(conversationId)`. Omitting the ID in the headless API selects all
+records in that instance, including global cache failures. A diagnostic subscription
+returns a `dispose()` handle.
+
+Records remain in memory after notices close and faults resolve: at most 50 records,
+8 KiB per record and 128 KiB total UTF-8 JSON per client. Disposal clears the store.
+Repeated occurrences retain first context, first/latest time and count. No credentials,
+request headers, message bodies or arbitrary response/details payloads are exported.
+Unverified original error text is omitted; a small allowlist of known transport error
+messages can be retained. Missing fields are explicitly shown as not provided.
+Server Request/Trace IDs are distinct from local operation/error IDs. Browser CORS
+header exposure may make response IDs unavailable; Kit does not infer them.
+
+Use `formatChatDiagnostic(record)` from Protocol (or the headless facade) for the same
+safe JSON representation as the built-in copy action. New optional UI labels include
+`diagnostics`, `copyDiagnostic`, `diagnosticCopied`, `diagnosticCopyFailed`,
+`diagnosticDetails`, `noDiagnostics`, `activeFaults`, `signInAgain`,
+`recoveredComplete`, `recoveredBestEffort` and `formatChatError`.
+The formatter receives the safe standard error, never raw transport data.

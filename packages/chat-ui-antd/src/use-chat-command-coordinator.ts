@@ -1,3 +1,4 @@
+import { safeDiagnosticError } from "@turingfocus/chat-protocol";
 import {
   useCallback,
   useEffect,
@@ -144,9 +145,9 @@ const createInteractionKey = ({
 
 const sameChatError = (left: ChatError, right: ChatError): boolean =>
   left === right ||
-  (left.code === right.code &&
-    left.conversationId === right.conversationId &&
-    left.message === right.message);
+  (left.diagnostic?.errorId !== undefined &&
+    left.diagnostic.errorId === right.diagnostic?.errorId &&
+    left.conversationId === right.conversationId);
 
 const createViewResetKey = (
   client: ChatClient,
@@ -330,7 +331,8 @@ export const useChatCommandCoordinator = ({
         },
         viewScope: request.viewScope,
       }));
-      if (visible) onCommandError?.(failure);
+      if (visible)
+        onCommandError?.({ ...failure, error: safeDiagnosticError(error) });
       return !visible;
     },
     [isFailureRelevant, isLatestRequest, onCommandError],
@@ -476,7 +478,6 @@ export const useChatCommandCoordinator = ({
       ? Object.values(failureState.failures)
       : [];
   const visibleSnapshotError =
-    visibleCommandFailures.length === 0 &&
     snapshotError !== undefined &&
     !trackedCommandFailures.some(({ error }) =>
       sameChatError(error, snapshotError),

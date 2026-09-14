@@ -11,6 +11,9 @@ export {
   isGatewayDeadlineExceeded,
   isGatewayOperationSupported,
   sanitizeDiagnosticText,
+  sanitizeChatDiagnosticText,
+  safeDiagnosticError,
+  formatChatDiagnostic,
 } from "@turingfocus/chat-protocol";
 export type {
   AnswerInteractionInput,
@@ -19,6 +22,8 @@ export type {
   AskUserInteractionRequest,
   Capabilities,
   ChatError,
+  ChatErrorDiagnostic,
+  ChatDiagnosticRecord,
   ChatLifecycle,
   ChatLifecycleStatus,
   ChatRecoveryAssurance,
@@ -66,6 +71,7 @@ export {
   rebaseComposerLongTexts,
   resolveComposerDraftText,
   type ChatClientOptions,
+  type ChatDiagnosticsOptions,
   type ChatClientSubscription,
   type ChatClientUnhandledError,
   type ChatClientUnhandledErrorSource,
