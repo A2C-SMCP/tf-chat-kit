@@ -18,6 +18,7 @@ describe("TFRobot production Socket factory", () => {
       "https://robot.example/chat",
       expect.objectContaining({
         autoConnect: false,
+        forceNew: true,
         path: "/socket.io",
         reconnection: true,
         transports: ["websocket"],

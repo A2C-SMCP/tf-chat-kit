@@ -166,6 +166,18 @@ export const getChatDeadlineAt = deadlineAt;
 - React/UI 只看到通用 `ChatAttachmentUploader`。非 TFRobot 后端或具有平台上传策略的宿主可向
   `ChatProvider` 传入自己的 uploader；不要在 UI 中读取 Gateway、Token 或固定 COS 路径。
 
+#### 会话切换与连接复用
+
+同一 Gateway 实例、固定服务端与机器人路由、相同认证材料下，健康的 Socket.IO 连接会跨会话复用。
+切换仍会订阅目标会话并加载服务端数据；命中缓存时立即展示只读内容，完成同步后才恢复操作。
+订阅释放只清理该订阅的监听和异步任务，Gateway 释放才关闭保留的健康连接；宿主须按实例生命周期调用 dispose。
+认证材料变化会使旧连接失效，即使新会话的预检失败，也不会继续使用旧身份。路由变化应创建新实例。
+
+当前 TFRobotServer 没有可靠的 leave 操作，连接存活期间可能保留访问过的房间。
+Gateway 隔离其他会话的事件；跨会话复用后，缺少会话标识的应用事件（含未知事件和无归属的协议 error）
+不会被猜测为当前会话数据。连接级断线和认证错误仍正常呈现。此行为与服务端真正退订不同，
+也不承诺补齐未持久化的事件；需要可靠退订的集成应等待相应服务端契约。
+
 #### `current-server` 兼容档位
 
 默认 `verified` 档位对空 join ACK 失败关闭，并要求 Server 在重连时明确证明 replay 完整。若目标部署仍是当前缺少 join ACK 和 durable replay cursor/outbox 的 TFRobotServer，宿主可显式配置：

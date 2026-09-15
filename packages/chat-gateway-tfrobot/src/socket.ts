@@ -22,6 +22,10 @@ import {
 
 import { awaitBounded } from "./bounded.js";
 import {
+  TFRobotSocketTransports,
+  type SocketLease,
+} from "./socket-transport.js";
+import {
   chatErrorEventDtoSchema,
   eventDtoSchema,
   messageDtoSchema,
@@ -322,11 +326,19 @@ const authOf = (session: TFRobotSession): TFRobotSocketAuth => {
   return auth;
 };
 
+// Private callback metadata keeps the narrow injected Socket API unchanged.
+// The production adapter uses the same deadline as the Gateway's join timer.
+const ACK_TIMEOUT = Symbol("TFRobot ACK timeout");
+type TimedAcknowledgement = ((...args: unknown[]) => void) & {
+  readonly [ACK_TIMEOUT]: number;
+};
+
 export const createSocketIoFactoryWith =
   (connect: typeof io): TFRobotSocketFactory =>
-  ({ getAuth, namespaceUrl, path }) =>
-    connect(namespaceUrl, {
+  ({ getAuth, namespaceUrl, path }) => {
+    const socket = connect(namespaceUrl, {
       autoConnect: false,
+      forceNew: true,
       path,
       reconnection: true,
       transports: ["websocket"],
@@ -335,7 +347,42 @@ export const createSocketIoFactoryWith =
           .then(callback)
           .catch(() => callback({}));
       },
-    }) as unknown as TFRobotSocket;
+    });
+    return {
+      get connected() {
+        return socket.connected;
+      },
+      connect: () => {
+        socket.connect();
+      },
+      disconnect: () => {
+        socket.disconnect();
+      },
+      on: (event, listener) => socket.on(event, listener),
+      off: (event, listener) => socket.off(event, listener),
+      onAny: (listener) => socket.onAny(listener),
+      offAny: (listener) => socket.offAny(listener),
+      emit: (event, ...args) => {
+        const callback = args.at(-1);
+        const timeout =
+          typeof callback === "function"
+            ? (callback as Partial<TimedAcknowledgement>)[ACK_TIMEOUT]
+            : undefined;
+        if (timeout === undefined) return socket.emit(event, ...args);
+        return socket
+          .timeout(timeout)
+          .emit(
+            event,
+            ...args.slice(0, -1),
+            (error: Error | null, ...values: unknown[]) => {
+              // Gateway timers/disconnect handlers own failure reporting. Strip
+              // Socket.IO's error-first prefix so an empty Server ACK stays empty.
+              if (error === null) (callback as TimedAcknowledgement)(...values);
+            },
+          );
+      },
+    };
+  };
 
 export const createSocketIoFactory = createSocketIoFactoryWith(io);
 
@@ -364,11 +411,18 @@ type ReconnectStatusLoader = (
   conversationId: string,
 ) => Promise<GatewayResult<StatusDto>>;
 type RecoveryOutcome =
-  "success" | "superseded-by-realtime" | "failure" | "auth-required";
+  | "success"
+  | "superseded-by-realtime"
+  | "failure"
+  | "authentication"
+  | "authorization";
 type CurrentServerRecoveryOutcome =
   | { readonly kind: "success"; readonly reason: string }
   | { readonly kind: "failure" }
-  | { readonly kind: "auth-required" };
+  | {
+      readonly kind: "auth-required";
+      readonly code: "authentication" | "authorization";
+    };
 
 const MAX_RECOVERY_IDENTITIES = 10_000;
 
@@ -460,6 +514,7 @@ export class TFRobotSocketClient {
   readonly #recoveryCheckpoints = new Map<string, Set<string>>();
   readonly #runs = new Map<string, Run | null>();
   readonly #subscriptions = new Set<ActiveSubscription>();
+  readonly #transports = new TFRobotSocketTransports();
   #subscriptionGeneration = 0;
 
   constructor(
@@ -546,6 +601,7 @@ export class TFRobotSocketClient {
         };
       }
       case "error": {
+        this.#transports.invalidate();
         clearPendingEstablishment();
         return {
           ok: false,
@@ -575,6 +631,21 @@ export class TFRobotSocketClient {
     }
 
     const initialSession = authOutcome.value;
+    // Identity changes must retire the old authenticated transport even when
+    // the target's REST preflight subsequently fails.
+    this.#transports.isolateAuthentication(authOf(initialSession));
+    if (this.#disposed || establishmentAbort.signal.aborted) {
+      clearPendingEstablishment();
+      return {
+        ok: false,
+        error: this.#error(
+          "conflict",
+          "TFRobot subscription was superseded",
+          false,
+          undefined,
+        ),
+      };
+    }
     if (this.#profile.kind === "current-server") {
       const preflight = await this.#currentServerRestLoader({
         checkpoint: new Set(),
@@ -601,6 +672,8 @@ export class TFRobotSocketClient {
         };
       }
       if (!preflight.ok) {
+        if (preflight.error.code === "authentication")
+          this.#transports.invalidate();
         clearPendingEstablishment();
         return preflight;
       }
@@ -614,48 +687,54 @@ export class TFRobotSocketClient {
     let currentServerSession: TFRobotSession | undefined = initialSession;
     let authenticationFailure: unknown;
     const connectionAbort = new AbortController();
-    let socket: TFRobotSocket;
+    let socket: SocketLease;
     try {
-      socket = this.#factory({
-        namespaceUrl: this.#namespaceUrl,
-        path: this.#path,
-        getAuth: async () => {
-          if (connectionAbort.signal.aborted) {
-            throw new Error("TFRobot Socket session refresh was cancelled");
-          }
-          if (firstAuth !== undefined) {
-            const auth = firstAuth;
-            firstAuth = undefined;
-            return auth;
-          }
-          const reconnectSession = await awaitBounded(
-            () => this.#getSocketSession(conversationId, "reconnect"),
-            {
-              deadlineAt: this.#now() + RECONNECT_AUTH_TIMEOUT_MS,
-              now: this.#now,
-              signal: connectionAbort.signal,
-            },
-          );
-          if (reconnectSession.kind === "value") {
-            currentServerSession = reconnectSession.value;
-            const reconnectAuth = authOf(reconnectSession.value);
-            for (const value of Object.values(reconnectAuth)) {
-              credentialValues.add(value);
+      socket = this.#transports.acquire(
+        this.#factory,
+        {
+          namespaceUrl: this.#namespaceUrl,
+          path: this.#path,
+          getAuth: async () => {
+            if (connectionAbort.signal.aborted) {
+              throw new Error("TFRobot Socket session refresh was cancelled");
             }
-            return reconnectAuth;
-          }
-          const reason =
-            reconnectSession.kind === "error"
-              ? reconnectSession.reason
-              : new Error(
-                  reconnectSession.kind === "deadline"
-                    ? "TFRobot Socket session refresh exceeded its deadline"
-                    : "TFRobot Socket session refresh was cancelled",
-                );
-          authenticationFailure = reason;
-          throw reason;
+            if (firstAuth !== undefined) {
+              const auth = firstAuth;
+              firstAuth = undefined;
+              return auth;
+            }
+            const reconnectSession = await awaitBounded(
+              () => this.#getSocketSession(conversationId, "reconnect"),
+              {
+                deadlineAt: this.#now() + RECONNECT_AUTH_TIMEOUT_MS,
+                now: this.#now,
+                signal: connectionAbort.signal,
+              },
+            );
+            if (reconnectSession.kind === "value") {
+              currentServerSession = reconnectSession.value;
+              const reconnectAuth = authOf(reconnectSession.value);
+              for (const value of Object.values(reconnectAuth)) {
+                credentialValues.add(value);
+              }
+              return reconnectAuth;
+            }
+            const reason =
+              reconnectSession.kind === "error"
+                ? reconnectSession.reason
+                : new Error(
+                    reconnectSession.kind === "deadline"
+                      ? "TFRobot Socket session refresh exceeded its deadline"
+                      : "TFRobot Socket session refresh was cancelled",
+                  );
+            authenticationFailure = reason;
+            throw reason;
+          },
         },
-      });
+        initialAuth,
+        conversationId,
+      );
+      if (socket.reused) firstAuth = undefined;
     } catch (reason) {
       connectionAbort.abort();
       clearPendingEstablishment();
@@ -806,8 +885,21 @@ export class TFRobotSocketClient {
       }
     };
     publishUpdate = next;
-    const dispatchRealtime = (action: () => void): void => {
+    const dispatchRealtime = (action: () => void, payload?: unknown): void => {
+      // Older rooms remain joined on the current Server. An unscoped payload
+      // cannot safely be assigned to a conversation after connection reuse.
+      if (
+        belongsToForeignConversation(payload, conversationId) ||
+        (socket.requiresConversationId &&
+          transportConversationId(payload) === undefined)
+      )
+        return;
       const guardedAction = (): void => {
+        if (
+          socket.requiresConversationId &&
+          transportConversationId(payload) === undefined
+        )
+          return;
         try {
           action();
         } catch (reason) {
@@ -881,7 +973,9 @@ export class TFRobotSocketClient {
         // Lifecycle diagnostics are observational.
       }
     };
-    const enterAuthRequired = (): void => {
+    const enterAuthRequired = (
+      code: "authentication" | "authorization" = "authentication",
+    ): void => {
       active.acceptingEvents = false;
       active.authRequired = true;
       active.terminal = true;
@@ -890,7 +984,8 @@ export class TFRobotSocketClient {
       active.recoveryRevision += 1;
       lifecycle("auth-required");
       try {
-        active.socket.disconnect();
+        if (code === "authentication") socket.invalidate();
+        else socket.disconnect();
       } catch {
         // Authentication is already terminal for this subscription episode.
       }
@@ -960,7 +1055,7 @@ export class TFRobotSocketClient {
         const error = sanitizeCredentialError(result.error, credentialValues);
         if (error.code === "authentication" || error.code === "authorization") {
           report(error, "authentication");
-          return { kind: "auth-required" };
+          return { kind: "auth-required", code: error.code };
         }
         report(error, "recovery");
         return { kind: "failure" };
@@ -1095,12 +1190,13 @@ export class TFRobotSocketClient {
               void this.#invalidateSession(error, "rejected");
             }
             settleEstablishment({ ok: false, error });
+            if (rejectionCode === "authentication") socket.invalidate();
           } else {
             const authenticationRejected =
               rejectionCode === "authentication" ||
               rejectionCode === "authorization";
             if (authenticationRejected) {
-              enterAuthRequired();
+              enterAuthRequired(rejectionCode);
             } else {
               active.acceptingEvents = false;
               active.terminal = true;
@@ -1226,7 +1322,7 @@ export class TFRobotSocketClient {
                 return;
               }
               if (outcome.kind === "auth-required") {
-                enterAuthRequired();
+                enterAuthRequired(outcome.code);
                 return;
               }
               if (outcome.kind !== "success") return;
@@ -1272,8 +1368,8 @@ export class TFRobotSocketClient {
           report,
         )
           .then((outcome) => {
-            if (outcome === "auth-required") {
-              enterAuthRequired();
+            if (outcome === "authentication" || outcome === "authorization") {
+              enterAuthRequired(outcome);
               return;
             }
             if (
@@ -1362,7 +1458,12 @@ export class TFRobotSocketClient {
         socket.emit(
           "join_conversation",
           { conversation_id: conversationId },
-          settleJoin,
+          Object.assign(settleJoin, {
+            [ACK_TIMEOUT]: Math.min(
+              MAX_TIMER_DELAY,
+              Math.max(0, joinDeadlineAt - this.#now()),
+            ),
+          }),
         );
       } catch (reason) {
         const error = this.#transportError(
@@ -1384,7 +1485,6 @@ export class TFRobotSocketClient {
     });
     add("chat_message", (payload) => {
       dispatchRealtime(() => {
-        if (belongsToForeignConversation(payload, conversationId)) return;
         const parsed = messageDtoSchema.safeParse(sanitizePayload(payload));
         if (!parsed.success) {
           report(
@@ -1400,11 +1500,10 @@ export class TFRobotSocketClient {
         mapAndNext("TFRobot chat_message could not be normalized", () =>
           mapMessageUpdate(parsed.data),
         );
-      });
+      }, payload);
     });
     add("chat_event", (payload) => {
       dispatchRealtime(() => {
-        if (belongsToForeignConversation(payload, conversationId)) return;
         const parsed = eventDtoSchema.safeParse(sanitizePayload(payload));
         if (!parsed.success) {
           report(
@@ -1420,11 +1519,10 @@ export class TFRobotSocketClient {
         mapAndNext("TFRobot chat_event could not be normalized", () =>
           mapEventUpdate(parsed.data),
         );
-      });
+      }, payload);
     });
     add("conversation_state_changed", (payload) => {
       dispatchRealtime(() => {
-        if (belongsToForeignConversation(payload, conversationId)) return;
         const parsed = stateChangedDtoSchema.safeParse(
           sanitizePayload(payload),
         );
@@ -1459,11 +1557,10 @@ export class TFRobotSocketClient {
             run,
           });
         });
-      });
+      }, payload);
     });
     add("chat_error", (payload) => {
       dispatchRealtime(() => {
-        if (belongsToForeignConversation(payload, conversationId)) return;
         const parsed = chatErrorEventDtoSchema.safeParse(
           sanitizePayload(payload),
         );
@@ -1498,7 +1595,7 @@ export class TFRobotSocketClient {
           ),
           "domain",
         );
-      });
+      }, payload);
     });
     add("error", (payload) => {
       dispatchRealtime(() => {
@@ -1517,7 +1614,7 @@ export class TFRobotSocketClient {
             credentialValues,
           ),
         );
-      });
+      }, payload);
     });
     add("connect_error", (reason) => {
       if (!active.active || active.terminal) return;
@@ -1679,7 +1776,6 @@ export class TFRobotSocketClient {
     ): void => {
       dispatchRealtime(() => {
         if (KNOWN_EVENTS.has(eventName)) return;
-        if (belongsToForeignConversation(payload, conversationId)) return;
         // An unknown event needs only its name/time to remain visible. Its
         // optional payload must not turn a safe fallback into a stream error.
         let safePayload: unknown;
@@ -1707,7 +1803,7 @@ export class TFRobotSocketClient {
             this.#now(),
           ),
         );
-      });
+      }, payload);
     };
     if (setupFailure === undefined) {
       try {
@@ -1735,7 +1831,8 @@ export class TFRobotSocketClient {
         // Continue to the transport disconnect.
       }
       try {
-        socket.disconnect();
+        if (!subscriptionEstablished && !socket.reused) socket.disconnect();
+        else socket.release();
       } catch {
         // Adapter ownership is cleared even if an injected transport misbehaves.
       }
@@ -1876,6 +1973,7 @@ export class TFRobotSocketClient {
       subscription.cleanup();
     }
     this.#subscriptions.clear();
+    this.#transports.dispose();
     this.#recoveryCheckpoints.clear();
     this.#runs.clear();
   }
@@ -1970,7 +2068,7 @@ export class TFRobotSocketClient {
       const error = sanitizeCredentialError(result.error, credentialValues);
       if (error.code === "authentication" || error.code === "authorization") {
         report(error, "authentication");
-        return "auth-required";
+        return error.code;
       }
       if (active.runRevision !== runRevision) {
         return "superseded-by-realtime";
