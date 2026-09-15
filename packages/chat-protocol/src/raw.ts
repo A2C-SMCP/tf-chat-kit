@@ -76,8 +76,11 @@ const awsAccessKeyPattern =
   /\b(?:A3T[A-Z0-9]{17}|A(?:GPA|IDA|IPA|KIA|NPA|NVA|ROA|SCA|SIA)[A-Z0-9]{16})\b/gu;
 const urlParameterPattern = /([?&#])([^?&#=]+)=([^&#]*)/gu;
 const urlUserInfoPattern = /((?:\b[A-Za-z][A-Za-z0-9+.-]*:)?\/\/)([^/@\s]+)@/gu;
-const embeddedParameterPattern =
-  /(^|[\s,;])([^?&#:=\s,;]+)\s*([:=])\s*([^\s,;&#]+)/gu;
+const parameterPrefix = /[\s,;]/u;
+const standaloneKeyEnd = /[?&#:=\s]/u;
+const parameterKeyEnd = /[?&#:=\s,;]/u;
+const parameterValueEnd = /[\s,;&#]/u;
+const whitespace = /\s/u;
 
 const decodeUrlKey = (key: string): string => {
   try {
@@ -87,39 +90,103 @@ const decodeUrlKey = (key: string): string => {
   }
 };
 
+const hasStandaloneCredentialParameter = (input: string): boolean => {
+  let keyEnd = 0;
+  while (keyEnd < input.length && !standaloneKeyEnd.test(input[keyEnd]!))
+    keyEnd += 1;
+  if (keyEnd === 0) return false;
+  let index = keyEnd;
+  while (index < input.length && whitespace.test(input[index]!)) index += 1;
+  if (input[index] !== ":" && input[index] !== "=") return false;
+  index += 1;
+  while (index < input.length && whitespace.test(input[index]!)) index += 1;
+  return (
+    index < input.length &&
+    isSensitiveRawKey(decodeUrlKey(input.slice(0, keyEnd)))
+  );
+};
+
+// Consume each candidate once, including non-sensitive matches. A global
+// backtracking regexp here takes quadratic time on long non-matching text in
+// JavaScriptCore. Failed candidates resume at the end of the key, so suffixes
+// of a long key are never scanned again. Whitespace is visited at most twice.
+const sanitizeEmbeddedParameters = (input: string): string => {
+  const parts: string[] = [];
+  let copiedUntil = 0;
+  let index = 0;
+  while (index < input.length) {
+    const hasPrefix = parameterPrefix.test(input[index]!);
+    if (index !== 0 && !hasPrefix) {
+      index += 1;
+      continue;
+    }
+    const keyStart = index + (hasPrefix ? 1 : 0);
+    let keyEnd = keyStart;
+    while (keyEnd < input.length && !parameterKeyEnd.test(input[keyEnd]!))
+      keyEnd += 1;
+    if (keyEnd === keyStart) {
+      index += 1;
+      continue;
+    }
+    let separatorIndex = keyEnd;
+    while (
+      separatorIndex < input.length &&
+      whitespace.test(input[separatorIndex]!)
+    )
+      separatorIndex += 1;
+    const separator = input[separatorIndex];
+    if (separator !== ":" && separator !== "=") {
+      index = keyEnd;
+      continue;
+    }
+    let valueStart = separatorIndex + 1;
+    while (valueStart < input.length && whitespace.test(input[valueStart]!))
+      valueStart += 1;
+    let valueEnd = valueStart;
+    while (valueEnd < input.length && !parameterValueEnd.test(input[valueEnd]!))
+      valueEnd += 1;
+    if (valueEnd === valueStart) {
+      index = keyEnd;
+      continue;
+    }
+    const key = input.slice(keyStart, keyEnd);
+    if (isSensitiveRawKey(decodeUrlKey(key))) {
+      parts.push(input.slice(copiedUntil, keyEnd), separator, REDACTED_VALUE);
+      copiedUntil = valueEnd;
+    }
+    index = valueEnd;
+  }
+  if (parts.length === 0) return input;
+  parts.push(input.slice(copiedUntil));
+  return parts.join("");
+};
+
 /** Removes credential-shaped fragments from user-visible diagnostic text. */
 export const sanitizeDiagnosticText = (input: string): string => {
   const trimmed = input.trim();
-  const standaloneParameter = /^([^?&#:=\s]+)\s*[:=]\s*\S+/u.exec(trimmed);
   if (
     pemPrivateKeyPattern.test(trimmed) ||
-    (standaloneParameter !== null &&
-      isSensitiveRawKey(decodeUrlKey(standaloneParameter[1]!)))
+    hasStandaloneCredentialParameter(trimmed)
   ) {
     return REDACTED_VALUE;
   }
 
-  return input
-    .replace(urlUserInfoPattern, `$1${REDACTED_VALUE}@`)
-    .replace(
-      urlParameterPattern,
-      (match, separator: string, encodedKey: string) =>
-        isSensitiveRawKey(decodeUrlKey(encodedKey))
-          ? `${separator}${encodedKey}=${encodeURIComponent(REDACTED_VALUE)}`
-          : match,
-    )
-    .replace(credentialHeaderValuePattern, REDACTED_VALUE)
-    .replace(authorizationValuePattern, REDACTED_VALUE)
-    .replace(jwtValuePattern, REDACTED_VALUE)
-    .replace(providerTokenPattern, REDACTED_VALUE)
-    .replace(awsAccessKeyPattern, REDACTED_VALUE)
-    .replace(
-      embeddedParameterPattern,
-      (match, prefix: string, encodedKey: string, separator: string): string =>
-        isSensitiveRawKey(decodeUrlKey(encodedKey))
-          ? `${prefix}${encodedKey}${separator}${REDACTED_VALUE}`
-          : match,
-    );
+  return sanitizeEmbeddedParameters(
+    input
+      .replace(urlUserInfoPattern, `$1${REDACTED_VALUE}@`)
+      .replace(
+        urlParameterPattern,
+        (match, separator: string, encodedKey: string) =>
+          isSensitiveRawKey(decodeUrlKey(encodedKey))
+            ? `${separator}${encodedKey}=${encodeURIComponent(REDACTED_VALUE)}`
+            : match,
+      )
+      .replace(credentialHeaderValuePattern, REDACTED_VALUE)
+      .replace(authorizationValuePattern, REDACTED_VALUE)
+      .replace(jwtValuePattern, REDACTED_VALUE)
+      .replace(providerTokenPattern, REDACTED_VALUE)
+      .replace(awsAccessKeyPattern, REDACTED_VALUE),
+  );
 };
 
 interface SanitizeState {
