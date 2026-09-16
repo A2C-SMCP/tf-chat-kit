@@ -278,7 +278,7 @@ export interface ChatGateway {
 }
 
 export type SessionPurpose = "connect" | "reconnect" | "request";
-export type SessionOperation = "read" | "send" | "subscribe";
+export type SessionOperation = "read" | "send" | "subscribe" | "remote-tool";
 
 export interface SessionRequest {
   readonly purpose: SessionPurpose;
@@ -432,7 +432,7 @@ const gatewayResultParser = <T>(
 
 const sessionRequestParser: z.ZodType<SessionRequest> = z.object({
   purpose: z.enum(["connect", "reconnect", "request"]),
-  operation: z.enum(["read", "send", "subscribe"]),
+  operation: z.enum(["read", "send", "subscribe", "remote-tool"]),
   conversationId: z.string().min(1).optional(),
 });
 

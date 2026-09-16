@@ -393,6 +393,9 @@ try {
     'if (!shellMarkup.includes("No conversation selected")) {',
     '  throw new Error("Packed Ant Design chat shell did not render.");',
     "}",
+    'const shortcut: _turingfocus_chat_kit.ChatComposerSendShortcut = "ctrl-enter";',
+    "const composerMarkup = renderToStaticMarkup(createElement(_turingfocus_chat_kit.ChatComposer, { sendShortcut: shortcut, onSend: () => false }));",
+    'if (!composerMarkup.includes("Ctrl+Enter to send") || !composerMarkup.includes(\'aria-keyshortcuts="Control+Enter"\')) throw new Error("Packed composer shortcut configuration is unavailable");',
     "const unknownItem: TimelineItem = {",
     '  kind: "unknown-event",',
     '  id: "packed-unknown",',
@@ -527,7 +530,11 @@ try {
     dependencies: {
       "@turingfocus/chat-kit": packageFiles["@turingfocus/chat-kit"],
     },
-    devDependencies: { typescript: "5.9.3" },
+    devDependencies: {
+      typescript: "5.9.3",
+      "@types/node": "24.13.3",
+      "socket.io": "4.8.3",
+    },
     pnpm: { overrides: reactConsumerPackageFiles },
   };
   await verifyConsumerProject(
@@ -536,9 +543,19 @@ try {
       manifest: headlessFacadeConsumerManifest,
       packageNames: ["@turingfocus/chat-kit"],
       sourceFiles: {
+        "remote-tool-consumer.ts": await readFile(
+          path.join(
+            rootDirectory,
+            "docs/baselines/issue-80/remote-tool-consumer.ts",
+          ),
+          "utf8",
+        ),
         "index.ts": [
-          'import { appendComposerReference, resolveComposerDraftText, createConversationWorkspaceController, createTFRobotChatClient, type ChatResourcePort, type SessionProvider, type TFRobotSession } from "@turingfocus/chat-kit/headless";',
+          'import { verifyRemoteToolConsumer } from "./remote-tool-consumer.js";',
+          "await verifyRemoteToolConsumer();",
+          'import { formatChatDiagnostic, appendComposerReference, resolveComposerDraftText, createConversationWorkspaceController, createTFRobotChatClient, type ChatResourcePort, type SessionProvider, type TFRobotSession } from "@turingfocus/chat-kit/headless";',
           "",
+          'if (typeof formatChatDiagnostic !== "function") throw new Error("Headless diagnostic formatter is unavailable");',
           'if (typeof createConversationWorkspaceController !== "function") throw new Error("Headless facade workspace controller is unavailable");',
           "",
           'const resourcePort: ChatResourcePort = { download: ({ resource, signal }) => { if (signal.aborted || resource.uri !== "private:report") throw new Error("Invalid headless resource operation"); } };',
@@ -574,7 +591,7 @@ try {
           strict: true,
           target: "ES2023",
         },
-        include: ["index.ts"],
+        include: ["index.ts", "remote-tool-consumer.ts"],
       },
     },
     packManifest.packages,

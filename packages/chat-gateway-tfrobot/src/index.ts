@@ -25,3 +25,9 @@ export type {
   TFRobotSocketFactoryInput,
   TFRobotSocketListener,
 } from "./types.js";
+
+export {
+  TFRobotRemoteToolTransport,
+  createTFRobotRemoteToolTransport,
+  type TFRobotRemoteToolOptions,
+} from "./remote-tool.js";

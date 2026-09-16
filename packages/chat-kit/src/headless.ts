@@ -11,6 +11,9 @@ export {
   isGatewayDeadlineExceeded,
   isGatewayOperationSupported,
   sanitizeDiagnosticText,
+  sanitizeChatDiagnosticText,
+  safeDiagnosticError,
+  formatChatDiagnostic,
 } from "@turingfocus/chat-protocol";
 export type {
   AnswerInteractionInput,
@@ -19,6 +22,8 @@ export type {
   AskUserInteractionRequest,
   Capabilities,
   ChatError,
+  ChatErrorDiagnostic,
+  ChatDiagnosticRecord,
   ChatLifecycle,
   ChatLifecycleStatus,
   ChatRecoveryAssurance,
@@ -66,6 +71,7 @@ export {
   rebaseComposerLongTexts,
   resolveComposerDraftText,
   type ChatClientOptions,
+  type ChatDiagnosticsOptions,
   type ChatClientSubscription,
   type ChatClientUnhandledError,
   type ChatClientUnhandledErrorSource,
@@ -134,4 +140,42 @@ export type {
   ConversationCacheEvent,
   CachedAttachmentResolver,
   ConversationCacheRecord,
+} from "@turingfocus/chat-runtime";
+
+export {
+  createTFRobotRemoteToolClient,
+  type TFRobotRemoteToolClientOptions,
+} from "./tfrobot-client.js";
+export { defineRemoteTool } from "@turingfocus/chat-protocol";
+export type {
+  RemoteToolJson,
+  RemoteToolDefinition,
+  RemoteToolErrorCode,
+  RemoteToolResult,
+  RemoteToolInvocation,
+  RemoteToolExecutionContext,
+  RemoteTool,
+  RemoteToolConnectionStatus,
+  RemoteToolConnectionError,
+  RemoteToolConnectionState,
+  RemoteToolObserver,
+  RemoteToolClock,
+  RemoteToolTransport,
+} from "@turingfocus/chat-protocol";
+export {
+  RemoteToolClient,
+  createRemoteToolClient,
+  type RemoteToolClientOptions,
+  type RemoteToolClientState,
+} from "@turingfocus/chat-runtime";
+export {
+  createTFRobotRemoteToolTransport,
+  type TFRobotRemoteToolOptions,
+} from "@turingfocus/chat-gateway-tfrobot";
+
+export {
+  AskUserRemoteTool,
+  createAskUserRemoteTool,
+  type AskUserRemoteToolOptions,
+  type AskUserRemoteToolEntry,
 } from "@turingfocus/chat-runtime";

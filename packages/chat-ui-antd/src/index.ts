@@ -2,6 +2,7 @@ export {
   ChatComposer,
   type ChatComposerInterruptAction,
   type ChatComposerProps,
+  type ChatComposerSendShortcut,
 } from "./chat-composer.js";
 export {
   ChatEventDetail,
@@ -72,3 +73,5 @@ export {
 } from "./resource-content.js";
 
 export type { ChatResourceLabels } from "./types.js";
+
+export type { ChatNoticeTiming } from "./chat-notices.js";

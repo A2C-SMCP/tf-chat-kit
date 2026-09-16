@@ -56,6 +56,47 @@ const message = (
 });
 
 describe("conversation cache", () => {
+  it("keeps C selected when cached A synchronization and its realtime events arrive late", async () => {
+    const memory = createMemoryChatGateway();
+    const a = memory.fixtures.conversation.id;
+    const base = memory.fixtures.initialSnapshot;
+    for (const id of ["b", "c"])
+      memory.controller.setSnapshot(snapshotFor(base, id));
+    const client = createChatClient({ gateway: memory.gateway });
+    await client.loadConversation({ ...options(), conversationId: a });
+    await client.loadConversation({ ...options(), conversationId: "b" });
+    const held = memory.controller.holdNext("loadConversation");
+    const loadingA = client.loadConversation({
+      ...options(),
+      conversationId: a,
+    });
+    try {
+      await held.started;
+      expect(client.getSnapshot()?.conversation.id).toBe(a);
+      expect(client.getSnapshot()?.capabilities.sendText).toBe(false);
+      expect(
+        (await client.loadConversation({ ...options(), conversationId: "c" }))
+          .ok,
+      ).toBe(true);
+      memory.controller.emitUpdateToAll({
+        kind: "timeline.upsert",
+        conversationId: a,
+        item: message("late-a", a, 10),
+      });
+      held.release();
+      expect((await loadingA).ok).toBe(false);
+      expect(client.getSnapshot()?.conversation.id).toBe("c");
+      expect(
+        client.getSnapshot()?.timeline.some((item) => item.id === "late-a"),
+      ).toBe(false);
+      expect(client.getCacheState().conversationId).toBe("c");
+    } finally {
+      held.release();
+      await loadingA;
+      await client.dispose(options());
+    }
+  });
+
   it("keeps interleaved history and live changes when an older reload response arrives", async () => {
     const memory = createMemoryChatGateway();
     const a = memory.fixtures.conversation.id;

@@ -281,10 +281,11 @@ class ContractSocket implements TFRobotSocket {
   #connectHold: ContractHold | undefined;
   #disposeOnCreate = false;
   #disposed = false;
+  #resourceDisposed = false;
   readonly #input: TFRobotSocketFactoryInput;
   readonly #listeners = new Map<string, Set<TFRobotSocketListener>>();
   readonly #state: ContractState;
-  readonly conversationId: string;
+  conversationId: string;
 
   constructor(
     state: ContractState,
@@ -302,6 +303,23 @@ class ContractSocket implements TFRobotSocket {
   }
 
   disconnect(): void {
+    this.#releaseSubscription();
+    this.#disposed = true;
+    this.connected = false;
+  }
+
+  emit(eventName: string, ...arguments_: unknown[]): void {
+    if (eventName === "join_conversation") {
+      this.conversationId = (
+        arguments_[0] as { conversation_id: string }
+      ).conversation_id;
+      const acknowledgement = arguments_[1];
+      if (typeof acknowledgement === "function")
+        void this.#join(acknowledgement as (value: boolean) => void);
+    }
+  }
+
+  #releaseSubscription(): void {
     const cleanupHold = this.#state.takeHold(
       this.#state.disposingPoint ?? "subscription.dispose",
     );
@@ -309,20 +327,9 @@ class ContractSocket implements TFRobotSocket {
     cleanupHold?.markCompleted();
     if (this.#connectHold !== undefined && !this.#connectHold.isReleased) {
       this.#disposeOnCreate = true;
-      this.connected = false;
-      return;
-    }
-    if (!this.#disposed) {
-      this.#disposed = true;
+    } else if (!this.#resourceDisposed) {
+      this.#resourceDisposed = true;
       this.#connectHold?.markDisposed();
-    }
-    this.connected = false;
-  }
-
-  emit(eventName: string, ...arguments_: unknown[]): void {
-    if (eventName === "join_conversation") {
-      const acknowledgement = arguments_[1];
-      if (typeof acknowledgement === "function") acknowledgement(true);
     }
   }
 
@@ -332,6 +339,7 @@ class ContractSocket implements TFRobotSocket {
 
   offAny(listener: TFRobotSocketAnyListener): void {
     this.#anyListeners.delete(listener);
+    if (this.#anyListeners.size === 0) this.#releaseSubscription();
   }
 
   on(eventName: string, listener: TFRobotSocketListener): void {
@@ -387,46 +395,46 @@ class ContractSocket implements TFRobotSocket {
   }
 
   async #connect(): Promise<void> {
+    try {
+      await this.#input.getAuth();
+    } catch (reason) {
+      this.#trigger("connect_error", reason);
+      return;
+    }
+    if (this.#disposed) return;
+    this.connected = true;
+    this.#trigger("connect");
+  }
+
+  async #join(acknowledge: (value: boolean) => void): Promise<void> {
+    this.#resourceDisposed = false;
+    this.#disposeOnCreate = false;
     this.#connectHold = this.#state.takeHold("subscribe");
     this.#connectHold?.markStarted();
     if (this.#connectHold !== undefined) {
       this.#connectHold.onRelease(() => {
-        if (!this.#disposeOnCreate || this.#disposed) return;
+        if (!this.#disposeOnCreate || this.#resourceDisposed) return;
         void Promise.resolve().then(() => {
-          if (this.#disposed) return;
-          this.#disposed = true;
+          if (this.#resourceDisposed) return;
+          this.#resourceDisposed = true;
           this.#connectHold?.markDisposed();
           this.#connectHold?.markCompleted();
         });
       });
       await this.#connectHold.released;
     }
-    try {
-      await this.#input.getAuth();
-    } catch (reason) {
-      if (!this.#disposeOnCreate) this.#trigger("connect_error", reason);
-      this.#connectHold?.markCompleted();
-      return;
-    }
     if (this.#disposeOnCreate) return;
     const failure = this.#state.takeFailure("subscribe");
     if (failure !== undefined) {
       this.#trigger("connect_error", failure);
-      this.#connectHold?.markCompleted();
-      return;
-    }
-    if (this.conversationId !== this.#state.fixtures.conversation.id) {
+    } else if (this.conversationId !== this.#state.fixtures.conversation.id) {
       this.#trigger("connect_error", {
         code: "not-found",
         message: "Conversation not found",
         retryable: false,
         conversationId: this.conversationId,
       } satisfies ChatError);
-      this.#connectHold?.markCompleted();
-      return;
-    }
-    this.connected = true;
-    this.#trigger("connect");
+    } else acknowledge(true);
     this.#connectHold?.markCompleted();
   }
 

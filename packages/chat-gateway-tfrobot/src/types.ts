@@ -64,6 +64,8 @@ export type TFRobotSocketAnyListener = (
  */
 export interface TFRobotSocket {
   readonly connected: boolean;
+  /** Whether the namespace will automatically recover from transport failures. */
+  readonly active?: boolean;
   connect(): void;
   disconnect(): void;
   emit(eventName: string, ...arguments_: unknown[]): unknown;

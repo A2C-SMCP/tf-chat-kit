@@ -1,3 +1,4 @@
+import { chatErrorDiagnosticParser } from "./diagnostics.js";
 import { z } from "zod/v4";
 import {
   toolPresentationParser,
@@ -135,6 +136,7 @@ const messageAuthorParser: z.ZodType<MessageAuthor> = z.object({
 });
 
 export const chatErrorParser: z.ZodType<ChatError> = z.object({
+  diagnostic: chatErrorDiagnosticParser.optional(),
   code: z.enum([
     "authentication",
     "authorization",

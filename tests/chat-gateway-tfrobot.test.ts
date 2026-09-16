@@ -4387,6 +4387,8 @@ describe("TFRobotChatGateway Socket boundary", () => {
           update.kind === "run.replace",
       ),
     ).toHaveLength(4);
+    expect(socket.connected).toBe(true);
+    await gateway.dispose({ deadlineAt: deadline() });
     expect(socket.connected).toBe(false);
   });
 
@@ -4480,11 +4482,11 @@ describe("TFRobotChatGateway Socket boundary", () => {
       });
       expect(errors.slice(2)).toMatchObject([
         {
-          conversationId: "[REDACTED]",
+          conversationId: "42",
           message: "Injected connect [REDACTED]",
         },
         {
-          conversationId: "[REDACTED]",
+          conversationId: "42",
           message: "Injected disconnect [REDACTED]",
         },
       ]);
@@ -5279,7 +5281,7 @@ describe("TFRobotChatGateway Socket boundary", () => {
     expect(secondSubscription.ok).toBe(true);
 
     firstSockets.sockets[0]!.trigger("chat_message", messageDto);
-    firstSockets.sockets[1]!.trigger("chat_message", {
+    firstSockets.sockets[0]!.trigger("chat_message", {
       ...messageDto,
       conversationId: 99,
     });

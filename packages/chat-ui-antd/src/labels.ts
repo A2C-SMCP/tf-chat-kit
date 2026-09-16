@@ -47,6 +47,8 @@ export const defaultChatUiLabels: ChatUiLabels = Object.freeze({
   capabilityUnavailableDescription:
     "This chat capability is not available in the current session.",
   capabilityUnavailableTitle: "Capability unavailable",
+  composerEnterHint: "Enter or Ctrl+Enter to send · Shift+Enter for a new line",
+  composerCtrlEnterHint: "Enter for a new line · Ctrl+Enter to send",
   composerLabel: "Message",
   composerPlaceholder: "Write a message",
   conversationListLabel: "Conversations",

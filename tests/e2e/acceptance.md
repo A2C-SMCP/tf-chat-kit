@@ -88,3 +88,48 @@ loaded image, actual audio/video playback, and downloaded file bytes with Chines
 The resource component suites cover English/Chinese port failures, cancellation and stale scopes;
 real local HTTP tests cover status classification and connection failures. No external seed or
 production resource is used.
+
+## Issue #82 session notices and diagnostics
+
+Use the Mock mode “服务端错误” action twice. The conversation keeps one fault banner,
+while Diagnostics retains both occurrences. Keyboard Enter opens the diagnostic modal;
+copy the current conversation and an individual record, close with Escape and verify
+focus returns to the trigger. Chat content and input remain separate from notices.
+
+Focused browser gate: `TF_CHAT_PLAYGROUND_PORT=3001 pnpm test:e2e tests/e2e/session-diagnostics.spec.ts`.
+Timing, recovery, cache and instance disposal are additionally covered by deterministic
+DOM/Runtime suites, with actual HTTP/Socket.IO metadata tested on ephemeral local ports.
+No server seed, external credentials or production data are required.
+
+## Issue #84 long-history redaction on JavaScriptCore
+
+`pnpm exec vitest run tests/chat-redaction-performance.test.ts` verifies credential
+semantics and preservation of long transport strings. On macOS with the system
+`jsc` helper, it also runs the production sanitizer after warmup on 12K, 24K and
+200K synthetic strings, with a one-second per-input budget and a subprocess
+timeout. The system-engine check is explicitly skipped where that helper is absent.
+
+Install the browser with `pnpm exec playwright install webkit`, then run
+`pnpm test:e2e tests/e2e/long-history-webkit.spec.ts`. CI installs WebKit alongside
+Chromium. This test uses WebKit and a real local HTTP/Socket.IO fixture to load
+200K characters through the public headless factory and Runtime. It verifies the
+five-second load deadline, complete non-sensitive tool text and removal of both
+embedded and session credentials from the snapshot. It does not intercept fetch
+or substitute the Gateway. No external seed or private history is used.
+
+The original macOS client/private conversation remains a separate host retest;
+this gate does not claim that the client has upgraded or that production history
+has been verified. There are no server DTO, host API or feature-flag changes.
+
+Verification on 2026-09-15: macOS 14.2 system JavaScriptCore processed 12,004 /
+24,004 / 200,005 characters in 2 / 2 / 48 ms after warmup, preserving the input.
+WebKit in the Playwright 1.62.1 Noble container loaded the 200K history fixture in
+557 ms. The bundled macOS WebKit build crashed before executing the test on this
+machine; the container result is separate from the system-JavaScriptCore result.
+When the local browser cannot start, the same test can use a container browser
+without mounting the repository (run the server in another terminal):
+
+```sh
+docker run --rm --init --shm-size=1g -p 127.0.0.1:3002:3002 mcr.microsoft.com/playwright:v1.62.1-noble npx -y playwright@1.62.1 run-server --port 3002 --host 0.0.0.0
+PW_TEST_CONNECT_WS_ENDPOINT=ws://127.0.0.1:3002/ PW_TEST_CONNECT_EXPOSE_NETWORK='<loopback>' pnpm test:e2e tests/e2e/long-history-webkit.spec.ts
+```

@@ -2,6 +2,8 @@ import { useCallback, useContext, useMemo, useSyncExternalStore } from "react";
 
 import type { ChatClient } from "@turingfocus/chat-runtime";
 import type {
+  AskUserRemoteTool,
+  AskUserRemoteToolEntry,
   ComposerDraft,
   ConversationCacheState,
   SetComposerDraftInput,
@@ -155,4 +157,64 @@ export const useConversationCache = (): ConversationCacheState => {
   );
   const read = useCallback(() => client.getCacheState(), [client]);
   return useSyncExternalStore(subscribe, read, read);
+};
+
+export const useChatDiagnostics = (conversationId?: string) => {
+  const client = useChatClient();
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const subscription = client.subscribeDiagnostics(listener);
+      return () => subscription.dispose();
+    },
+    [client],
+  );
+  const read = useCallback(
+    () => client.getDiagnostics(conversationId),
+    [client, conversationId],
+  );
+  return useSyncExternalStore(subscribe, read, read);
+};
+
+const EMPTY_ASK_USER_ENTRIES: readonly AskUserRemoteToolEntry[] = Object.freeze(
+  [],
+);
+/** Local RemoteTool requests are ephemeral and remain associated with their original conversation. */
+export const useAskUserRemoteTool = (conversationId: string) => {
+  const { askUser } = useChatContext();
+  const subscribe = useCallback(
+    (listener: () => void) => askUser?.subscribe(listener) ?? (() => {}),
+    [askUser],
+  );
+  const getSnapshot = useCallback(
+    () => askUser?.getSnapshot() ?? EMPTY_ASK_USER_ENTRIES,
+    [askUser],
+  );
+  const allEntries = useSyncExternalStore(
+    subscribe,
+    getSnapshot,
+    () => EMPTY_ASK_USER_ENTRIES,
+  );
+  const entries = useMemo(
+    () =>
+      allEntries.filter(
+        (entry) => entry.request.conversationId === conversationId,
+      ),
+    [allEntries, conversationId],
+  );
+  const answer = useCallback(
+    async (
+      input: Parameters<AskUserRemoteTool["answer"]>[1],
+    ): Promise<boolean> => askUser?.answer(conversationId, input) ?? false,
+    [askUser, conversationId],
+  );
+  const setDraft = useCallback(
+    (input: Parameters<AskUserRemoteTool["setDraft"]>[1]) => {
+      askUser?.setDraft(conversationId, input);
+    },
+    [askUser, conversationId],
+  );
+  return useMemo(
+    () => ({ entries, answer, setDraft }),
+    [entries, answer, setDraft],
+  );
 };

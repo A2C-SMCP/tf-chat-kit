@@ -26,6 +26,7 @@ import type {
 } from "./types.js";
 
 export interface ChatUiShellProps {
+  readonly nonReadyContent?: ReactNode | undefined;
   readonly children?: ReactNode;
   readonly className?: string | undefined;
   readonly compactNavigation?: ChatCompactNavigationConfig | undefined;
@@ -207,6 +208,7 @@ const CompactNavigationHeader = ({
 };
 
 export const ChatUiShell = ({
+  nonReadyContent,
   children,
   className,
   compactNavigation,
@@ -332,11 +334,11 @@ export const ChatUiShell = ({
           </header>
         )}
         <div style={{ flex: 1, minHeight: 0 }}>
-          {contentState.kind === "ready" ? (
-            children
-          ) : (
-            <ChatStateView labels={labels} state={contentState} />
-          )}
+          {contentState.kind === "ready"
+            ? children
+            : (nonReadyContent ?? (
+                <ChatStateView labels={labels} state={contentState} />
+              ))}
         </div>
       </main>
     </section>
