@@ -1,6 +1,6 @@
 {
   "name": "@turingfocus/chat-protocol",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Host-agnostic chat models, validation contracts, and gateway ports",
   "license": "MIT",
   "repository": {

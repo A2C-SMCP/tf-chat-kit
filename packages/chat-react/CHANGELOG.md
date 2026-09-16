@@ -1,5 +1,15 @@
 # @turingfocus/chat-react
 
+## 0.8.2
+
+### Patch Changes
+
+- fdceb0a: Add an optional Headless RemoteTool provider with typed host handlers, registration acknowledgement, reconnect registration, bounded execution and cooperative cancellation. Report same-name registration conflicts explicitly. Add a built-in Ask User tool with conversation cards, draft preservation, validated answers and terminal feedback. Hosts supply trusted request-to-conversation routing; the current Server does not provide that routing automatically.
+- 5b41649: Add bounded per-instance diagnostics with safe transport metadata and operation correlation. Reduce connection and cache notice interruptions, keep blocking failures visible, and provide scoped copyable diagnostics and local command failures without changing connection or cache authority.
+- Updated dependencies [fdceb0a]
+- Updated dependencies [5b41649]
+  - @turingfocus/chat-runtime@0.8.2
+
 ## 0.8.1
 
 ### Patch Changes
