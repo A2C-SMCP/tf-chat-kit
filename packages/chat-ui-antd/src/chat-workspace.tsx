@@ -1,3 +1,4 @@
+import { ChatNotices } from "./chat-notices.js";
 import { Alert, Button, Input, Modal, Space, Typography } from "antd";
 import {
   useCallback,
@@ -219,6 +220,33 @@ export const ChatWorkspace = ({
   return (
     <>
       <ChatUiShell
+        nonReadyContent={
+          workspace.snapshot.selectionStatus === "loading" ||
+          workspace.snapshot.selectionStatus === "error" ? (
+            <ChatNotices
+              key={
+                workspace.snapshot.selectionError?.conversationId ??
+                workspace.snapshot.pendingConversationId ??
+                workspace.snapshot.selectedConversationId ??
+                "initial"
+              }
+              conversationId={
+                workspace.snapshot.selectionError?.conversationId ??
+                workspace.snapshot.pendingConversationId ??
+                workspace.snapshot.selectedConversationId
+              }
+              loading={workspace.snapshot.selectionStatus === "loading"}
+              error={workspace.snapshot.selectionError}
+              onRetry={retrySelection}
+              timing={conversationViewProps?.noticeTiming}
+              labels={labels}
+              getDeadlineAt={getDeadlineAt}
+              onRequestAuthentication={
+                conversationViewProps?.onRequestAuthentication
+              }
+            />
+          ) : undefined
+        }
         className={className}
         contentState={contentState}
         conversationListError={

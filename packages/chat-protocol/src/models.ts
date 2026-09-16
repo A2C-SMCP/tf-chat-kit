@@ -1,3 +1,4 @@
+import type { ChatErrorDiagnostic } from "./diagnostics.js";
 import {
   agentEventParser,
   askUserInteractionAnswerParser,
@@ -321,6 +322,7 @@ export type ChatErrorCode =
   | "validation";
 
 export interface ChatError {
+  readonly diagnostic?: ChatErrorDiagnostic | undefined;
   readonly code: ChatErrorCode;
   readonly message: string;
   readonly retryable: boolean;

@@ -99,3 +99,35 @@ export {
 export type { ToolPresentation, ToolAttachment } from "./presentation.js";
 
 export * from "./resources.js";
+
+export {
+  safeDiagnosticError,
+  formatChatDiagnostic,
+  sanitizeChatDiagnosticText,
+} from "./diagnostics.js";
+export type {
+  ChatErrorDiagnostic,
+  ChatDiagnosticRecord,
+} from "./diagnostics.js";
+
+export {
+  defineRemoteTool,
+  remoteToolDefinitionSchema,
+  remoteToolInvocationSchema,
+  remoteToolResultSchema,
+} from "./remote-tool.js";
+export type {
+  RemoteToolJson,
+  RemoteToolDefinition,
+  RemoteToolErrorCode,
+  RemoteToolResult,
+  RemoteToolInvocation,
+  RemoteToolExecutionContext,
+  RemoteTool,
+  RemoteToolConnectionStatus,
+  RemoteToolConnectionError,
+  RemoteToolConnectionState,
+  RemoteToolObserver,
+  RemoteToolClock,
+  RemoteToolTransport,
+} from "./remote-tool.js";

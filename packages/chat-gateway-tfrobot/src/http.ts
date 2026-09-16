@@ -1,4 +1,8 @@
 import {
+  safeDiagnosticError,
+  type ChatErrorDiagnostic,
+} from "@turingfocus/chat-protocol";
+import {
   chatErrorSchema,
   createGatewayDeadlineExceededError,
   isGatewayDeadlineExceeded,
@@ -82,6 +86,7 @@ const responseMessage = (
 };
 
 interface RequestInput<T> {
+  readonly diagnosticOperation?: string;
   readonly body?: unknown;
   readonly formData?: FormData | undefined;
   readonly conversationId?: string | undefined;
@@ -115,6 +120,108 @@ export class TFRobotHttpClient {
   }
 
   async request<T>(input: RequestInput<T>): Promise<GatewayResult<T>> {
+    const start = this.#now();
+    const context: {
+      value: ChatErrorDiagnostic;
+      credentials: readonly string[];
+    } = {
+      credentials: [],
+      value: {
+        phase: "session",
+        operation: input.diagnosticOperation ?? input.operation,
+        method: input.method,
+        // Only fixed route segments survive. IDs, query values and host URLs do not.
+        path:
+          "/" +
+          input.path
+            .split(/[/?#]/u)
+            .filter(Boolean)
+            .map((segment) =>
+              [
+                "v1",
+                "chat",
+                "dashboard",
+                "remote",
+                "source",
+                "cos",
+                "conversations",
+                "messages",
+                "events",
+                "status",
+                "interrupt",
+                "cancel",
+                "upload",
+                "attachments",
+                "answer",
+                "interaction",
+                "runs",
+              ].includes(segment)
+                ? segment
+                : ":id",
+            )
+            .join("/"),
+        timeoutMs: Math.max(0, input.options.deadlineAt - start),
+      },
+    };
+    const result = await this.#request(input, context);
+    if (result.ok) return result;
+    const rawError: ChatError = {
+      ...result.error,
+      diagnostic: {
+        ...result.error.diagnostic,
+        ...context.value,
+        elapsedMs: Math.max(0, this.#now() - start),
+        reasonCode:
+          result.error.code === "timeout"
+            ? "deadline-exceeded"
+            : context.value.httpStatus !== undefined &&
+                context.value.httpStatus >= 400
+              ? `http-${context.value.httpStatus}`
+              : context.value.businessCode !== undefined
+                ? `business-${context.value.businessCode}`
+                : result.error.code,
+        outcome:
+          context.value.phase === "session"
+            ? "not-started"
+            : (result.error.code === "timeout" ||
+                  result.error.code === "network") &&
+                input.method !== "GET"
+              ? "unknown"
+              : "failed",
+      },
+    };
+    const knownMessages = [
+      "Failed to fetch",
+      "fetch failed",
+      "Unauthorized",
+      "Forbidden",
+      "Not Found",
+      "Internal Server Error",
+      "Request timeout",
+      "TFRobot response envelope is invalid",
+      "TFRobot response data is invalid",
+    ] as const;
+    const originalMessage = knownMessages.find(
+      (message) => message === result.error.message,
+    );
+    const error = sanitizeCredentialError(
+      { ...rawError, diagnostic: { ...rawError.diagnostic, originalMessage } },
+      context.credentials,
+    );
+    try {
+      void Promise.resolve(
+        this.#options.onDiagnostic?.(safeDiagnosticError(error)),
+      ).catch(() => undefined);
+    } catch {
+      /* Isolated diagnostic sink. */
+    }
+    return { ok: false, error };
+  }
+
+  async #request<T>(
+    input: RequestInput<T>,
+    context: { value: ChatErrorDiagnostic; credentials: readonly string[] },
+  ): Promise<GatewayResult<T>> {
     if (this.#disposed) {
       return {
         ok: false,
@@ -199,6 +306,7 @@ export class TFRobotHttpClient {
       } else {
         credentialValues = [session.adminKey];
       }
+      context.credentials = credentialValues;
       if (input.conversationId !== undefined) {
         errorConversationId = sanitizeCredentialText(
           input.conversationId,
@@ -219,6 +327,7 @@ export class TFRobotHttpClient {
           : input.body === undefined
             ? undefined
             : JSON.stringify(input.body);
+      context.value = { ...context.value, phase: "request" };
       const responseOutcome = await awaitBounded(
         () =>
           this.#fetch(url, {
@@ -241,6 +350,16 @@ export class TFRobotHttpClient {
       }
       if (responseOutcome.kind === "error") throw responseOutcome.reason;
       const response = responseOutcome.value;
+      context.value = {
+        ...context.value,
+        phase: "response",
+        httpStatus: response.status,
+        requestId: response.headers.get("x-request-id") ?? undefined,
+        traceId:
+          response.headers.get("x-trace-id") ??
+          response.headers.get("traceparent") ??
+          undefined,
+      };
       const payloadOutcome = await awaitBounded(() => response.json(), {
         deadlineAt: input.options.deadlineAt,
         now: this.#now,
@@ -254,6 +373,16 @@ export class TFRobotHttpClient {
       }
       const payload: unknown =
         payloadOutcome.kind === "error" ? undefined : payloadOutcome.value;
+      if (
+        payload !== null &&
+        typeof payload === "object" &&
+        "code" in payload &&
+        (typeof payload.code === "string" || typeof payload.code === "number")
+      )
+        context.value = {
+          ...context.value,
+          businessCode: String(payload.code),
+        };
       if (!response.ok) {
         const error = chatErrorSchema.parse({
           code: statusErrorCode(response.status),

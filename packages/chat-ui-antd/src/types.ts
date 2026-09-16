@@ -83,6 +83,19 @@ export interface ChatResourceLabels {
 }
 
 export interface ChatUiLabels {
+  readonly diagnostics?: string;
+  readonly copyDiagnostic?: string;
+  readonly diagnosticCopied?: string;
+  readonly diagnosticCopyFailed?: string;
+  readonly diagnosticDetails?: string;
+  readonly noDiagnostics?: string;
+  readonly activeFaults?: string;
+  readonly signInAgain?: string;
+  readonly recoveredComplete?: string;
+  readonly recoveredBestEffort?: string;
+  readonly formatChatError?: (
+    error: import("@turingfocus/chat-protocol").ChatError,
+  ) => ReactNode;
   readonly cacheSyncing?: string;
   readonly cacheStale?: string;
   readonly cacheSyncFailed?: string;
@@ -100,6 +113,8 @@ export interface ChatUiLabels {
   readonly askUserUnavailable: ReactNode;
   readonly capabilityUnavailableDescription: ReactNode;
   readonly capabilityUnavailableTitle: ReactNode;
+  readonly composerEnterHint?: string | undefined;
+  readonly composerCtrlEnterHint?: string | undefined;
   readonly composerLabel: string;
   readonly composerPlaceholder: string;
   readonly conversationListLabel: string;

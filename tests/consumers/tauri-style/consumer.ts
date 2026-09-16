@@ -26,6 +26,8 @@ import {
   ChatWorkspace,
   createChatClient,
   createTFRobotChatGateway,
+  createTFRobotChatClient,
+  type TFRobotSocketListener,
   useChatClient,
   useChatSnapshot,
   type ChatClient,
@@ -187,6 +189,12 @@ const TauriRuntimeView = ({
     },
     createElement(ChatWorkspace, {
       conversationViewProps: {
+        noticeTiming: {
+          progressDelayMs: 2000,
+          disconnectDelayMs: 5000,
+          recoveredDurationMs: 3000,
+          bestEffortDurationMs: 5000,
+        },
         defaultEventDetailMode: eventDetailMode,
         defaultEventDetailSplitRatio: 0.6,
       },
@@ -639,7 +647,111 @@ const verifyPackedConversationCache = async (): Promise<void> => {
   }
 };
 
+const verifyPackedConnectionReuse = async (): Promise<void> => {
+  let connections = 0;
+  let disconnects = 0;
+  const joins: string[] = [];
+  const listeners = new Map<string, Set<TFRobotSocketListener>>();
+  const client = createTFRobotChatClient({
+    baseUrl: "https://tauri-reuse.example/",
+    serverProfile: { kind: "current-server" },
+    sessionProvider: {
+      getSession: () => ({ kind: "bearer", token: "tauri-reuse-session" }),
+    },
+    messageCreatorProvider: () => ({ uid: "tauri", name: "Tauri" }),
+    fetch: async (input) => {
+      const path = new URL(String(input)).pathname;
+      const data = path.endsWith("/status")
+        ? { working: false, taskId: null }
+        : path.endsWith("/messages")
+          ? { messages: [], events: [], cursor: null }
+          : {
+              conversations: ["1", "2"].map((conversationId) => ({
+                conversationId,
+                title: conversationId,
+                description: null,
+                updateTimestamp: 1_800_000_000_000,
+              })),
+              cursor: null,
+            };
+      return new Response(
+        JSON.stringify({ code: 200, message: "Success", data }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    },
+    socketFactory: () => {
+      connections += 1;
+      let connected = false;
+      return {
+        get connected() {
+          return connected;
+        },
+        connect() {
+          connected = true;
+          for (const callback of listeners.get("connect") ?? []) callback();
+        },
+        disconnect() {
+          connected = false;
+          disconnects += 1;
+        },
+        on(event, callback) {
+          const callbacks = listeners.get(event) ?? new Set();
+          callbacks.add(callback);
+          listeners.set(event, callbacks);
+        },
+        off(event, callback) {
+          listeners.get(event)?.delete(callback);
+        },
+        emit(event, ...args) {
+          if (event === "join_conversation") {
+            joins.push(
+              (args[0] as { conversation_id: string }).conversation_id,
+            );
+            (args[1] as () => void)();
+          }
+        },
+      };
+    },
+  });
+  try {
+    for (const conversationId of ["1", "2", "1"]) {
+      const result = await client.loadConversation({
+        conversationId,
+        deadlineAt: deadlineAt(),
+      });
+      check(
+        result.ok && client.getSnapshot()?.conversation.id === conversationId,
+        "Tauri packed client must switch to the requested conversation",
+      );
+      check(
+        client.getSnapshot()?.lifecycle?.status === "degraded",
+        "Empty ACK must retain the current-server assurance",
+      );
+    }
+    check(
+      connections === 1 && disconnects === 0,
+      "Tauri packed client must reuse its healthy transport across cache-first switching",
+    );
+    check(
+      joins.join(",") === "1,2,1",
+      "Connection reuse must still join each selected conversation",
+    );
+    check(
+      [...listeners.values()].every((callbacks) => callbacks.size <= 1),
+      "Switches must not accumulate physical listeners",
+    );
+  } finally {
+    await client.dispose({ deadlineAt: deadlineAt() });
+  }
+  check(
+    disconnects === 1 &&
+      [...listeners.values()].every((callbacks) => callbacks.size === 0),
+    "Tauri Gateway disposal must close the cached transport and all listeners",
+  );
+};
+
 export const runTauriConsumerVerification = async (): Promise<void> => {
+  await verifyPackedConnectionReuse();
   await verifyPackedConversationCache();
   await verifyIndependentParityConsumer();
   await verifyLargeToolHistory();

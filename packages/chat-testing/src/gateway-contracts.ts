@@ -1,3 +1,4 @@
+import { chatErrorSchema } from "@turingfocus/chat-protocol";
 import type {
   AnswerInteractionInput,
   AnswerInteractionSuccess,
@@ -714,7 +715,7 @@ export const createGatewayContractCases = (
           deadlineAt: deadlineFrom(controller.now()),
         });
         assertEqual(
-          loaded,
+          coreFailure(loaded),
           { ok: false, error: fixtures.authenticationError },
           "authentication failures must remain structured",
         );
@@ -740,7 +741,7 @@ export const createGatewayContractCases = (
 
         await controller.disconnect(fixtures.disconnectError);
         assertEqual(
-          errors,
+          errors.map(coreError),
           [fixtures.disconnectError],
           "active observers must receive the structured disconnect error",
         );
@@ -810,7 +811,7 @@ export const createGatewayContractCases = (
         await operationHold.started;
         await controller.advanceTimeTo(operationDeadline);
         assertEqual(
-          await pendingLoad,
+          coreFailure(await pendingLoad),
           {
             ok: false,
             error: createGatewayDeadlineExceededError(fixtures.conversation.id),
@@ -820,7 +821,7 @@ export const createGatewayContractCases = (
         operationHold.release();
         await operationHold.completed;
         assertEqual(
-          await pendingLoad,
+          coreFailure(await pendingLoad),
           {
             ok: false,
             error: createGatewayDeadlineExceededError(fixtures.conversation.id),
@@ -869,7 +870,7 @@ export const createGatewayContractCases = (
         await subscriptionHold.started;
         await controller.advanceTimeTo(subscriptionDeadline);
         assertEqual(
-          await pendingSubscription,
+          coreFailure(await pendingSubscription),
           {
             ok: false,
             error: createGatewayDeadlineExceededError(fixtures.conversation.id),
@@ -1032,3 +1033,19 @@ export const createGatewayContractCases = (
       },
     ),
   ]);
+
+/** Adapters may attach optional diagnostics; the pre-existing error contract remains exact. */
+function coreError(error: ChatError): Omit<ChatError, "diagnostic"> {
+  const { diagnostic, ...core } = chatErrorSchema.parse(error);
+  void diagnostic;
+  return core;
+}
+function coreFailure<T>(
+  result:
+    | { readonly ok: true; readonly value: T }
+    | { readonly ok: false; readonly error: ChatError },
+) {
+  return result.ok
+    ? result
+    : { ok: false as const, error: coreError(result.error) };
+}

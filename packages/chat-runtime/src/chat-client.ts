@@ -1,3 +1,9 @@
+import { DiagnosticStore, type ChatDiagnosticsOptions } from "./diagnostics.js";
+import {
+  safeDiagnosticError,
+  type ChatDiagnosticRecord,
+  type ChatErrorDiagnostic,
+} from "@turingfocus/chat-protocol";
 import {
   answerInteractionInputSchema,
   getTimelineItemKey,
@@ -78,6 +84,7 @@ import {
 } from "./composer-draft.js";
 
 export interface ChatClientOptions {
+  readonly diagnostics?: ChatDiagnosticsOptions | undefined;
   /** Instance-local memory caching is enabled by default; false preserves uncached loading. */
   readonly cache?: ConversationCacheOptions | false;
   /** The instance-owned transport port. ChatClient disposes it on shutdown. */
@@ -180,6 +187,7 @@ const runCleanup = async (
  */
 export class ChatClient {
   readonly #gateway: ChatGateway;
+  readonly #diagnostics: DiagnosticStore;
   readonly #cache: ConversationCache | undefined;
   readonly #cacheListeners = new Set<() => void>();
   #cacheRequestId = 0;
@@ -225,6 +233,7 @@ export class ChatClient {
 
   constructor(options: ChatClientOptions) {
     this.#gateway = options.gateway;
+    this.#diagnostics = new DiagnosticStore(options.diagnostics);
     this.#cache =
       options.cache === false
         ? undefined
@@ -232,6 +241,26 @@ export class ChatClient {
             {
               ...options.cache,
               onEvent: (event) => {
+                if (
+                  event.kind === "storage-error" ||
+                  event.kind === "invalid-record" ||
+                  event.kind === "write-conflict"
+                ) {
+                  this.recordDiagnostic(
+                    {
+                      code: "unknown",
+                      message: "Cache storage failed",
+                      conversationId: event.conversationId,
+                      retryable: false,
+                      diagnostic: {
+                        operation: "cacheStorage",
+                        phase: "storage",
+                        reasonCode: event.kind,
+                      },
+                    },
+                    "runtime",
+                  );
+                }
                 if (
                   event.kind === "storage-error" ||
                   event.kind === "invalid-record" ||
@@ -260,9 +289,199 @@ export class ChatClient {
         this.#reportUnhandledError({ cause, source: "listener" });
       },
     });
+    this.#snapshotStore.subscribe((snapshot) =>
+      this.#recordSnapshotDiagnostics(snapshot),
+    );
     if (options.cache !== false && options.cache?.storage !== undefined) {
       this.#snapshotStore.subscribe(() => this.#scheduleCacheWrite());
     }
+  }
+
+  #snapshotDiagnosticSlots:
+    | {
+        conversationId: string;
+        legacy?: string | undefined;
+        run?: string | undefined;
+      }
+    | undefined;
+  #recordSnapshotDiagnostics(snapshot: ChatSnapshot): void {
+    const conversationId = snapshot.conversation.id;
+    const previous =
+      this.#snapshotDiagnosticSlots?.conversationId === conversationId
+        ? this.#snapshotDiagnosticSlots
+        : undefined;
+    const ensure = (error: ChatError, id: string, runId?: string) => {
+      if (
+        this.#diagnostics
+          .read()
+          .some(
+            (record) =>
+              record.id === id &&
+              !record.resolved &&
+              (record.conversationId === conversationId ||
+                record.scope.kind === "global"),
+          )
+      )
+        return;
+      this.#diagnostics.record(
+        {
+          ...error,
+          conversationId,
+          diagnostic: {
+            ...error.diagnostic,
+            errorId: id,
+            runId: error.diagnostic?.runId ?? runId,
+            generation:
+              error.diagnostic?.generation ?? snapshot.lifecycle?.generation,
+          },
+        },
+        "domain",
+        { kind: "conversation", id: conversationId },
+        id,
+      );
+    };
+    for (const occurrence of snapshot.activeErrors ?? []) {
+      if (
+        this.#diagnostics
+          .read()
+          .some(
+            (record) =>
+              (record.id === occurrence.id ||
+                record.id === occurrence.error.diagnostic?.errorId) &&
+              (record.conversationId === conversationId ||
+                record.scope.kind === "global"),
+          )
+      )
+        continue;
+      this.#diagnostics.record(
+        {
+          ...occurrence.error,
+          conversationId:
+            occurrence.scope.kind === "global" ? undefined : conversationId,
+          diagnostic: {
+            ...occurrence.error.diagnostic,
+            errorId: occurrence.id,
+            generation: occurrence.generation,
+          },
+        },
+        occurrence.source,
+        occurrence.scope,
+        occurrence.id,
+      );
+    }
+    const legacy =
+      snapshot.activeErrors === undefined && snapshot.error
+        ? (snapshot.error.diagnostic?.errorId ??
+          previous?.legacy ??
+          this.#diagnostics.nextId())
+        : undefined;
+    const run = snapshot.run?.error
+      ? (snapshot.run.error.diagnostic?.errorId ?? `run:${snapshot.run.id}`)
+      : undefined;
+    if (legacy && snapshot.error) ensure(snapshot.error, legacy);
+    if (run && snapshot.run?.error)
+      ensure(snapshot.run.error, run, snapshot.run.id);
+    if (previous?.legacy && previous.legacy !== legacy)
+      this.#diagnostics.resolve(previous.legacy, conversationId);
+    if (previous?.run && previous.run !== run)
+      this.#diagnostics.resolve(previous.run, conversationId);
+    this.#snapshotDiagnosticSlots = { conversationId, legacy, run };
+  }
+
+  getDiagnostics(conversationId?: string): readonly ChatDiagnosticRecord[] {
+    return this.#diagnostics.read(conversationId);
+  }
+  subscribeDiagnostics(listener: () => void): { dispose(): void } {
+    return { dispose: this.#diagnostics.subscribe(listener) };
+  }
+  /** Records a standard local operation failure, never arbitrary log data. */
+  recordDiagnostic(
+    error: ChatError,
+    source: ChatErrorSource = "command",
+  ): ChatError {
+    const errorId = error.diagnostic?.errorId ?? this.#diagnostics.nextId();
+    const safe = safeDiagnosticError({
+      ...error,
+      diagnostic: { ...error.diagnostic, errorId },
+    });
+    this.#diagnostics.record(
+      safe,
+      source,
+      safe.conversationId === undefined
+        ? { kind: "global" }
+        : { kind: "conversation", id: safe.conversationId },
+      errorId,
+    );
+    return safe;
+  }
+  async #observeOperation<T>(
+    operation: string,
+    conversationId: string,
+    action: () => Promise<GatewayResult<T>>,
+  ): Promise<GatewayResult<T>> {
+    const operationId = this.#diagnostics.nextId();
+    const lifecycle =
+      this.getSnapshot()?.conversation.id === conversationId
+        ? this.getSnapshot()?.lifecycle
+        : undefined;
+    const context: ChatErrorDiagnostic = {
+      operation,
+      operationId,
+      runId:
+        this.getSnapshot()?.conversation.id === conversationId
+          ? this.getSnapshot()?.run?.id
+          : undefined,
+      generation: lifecycle?.generation,
+      reconnectAttempt: lifecycle?.reconnectAttempt,
+      recoveryComplete: lifecycle?.recovery?.complete,
+      recoveryAssurance: lifecycle?.recovery?.assurance,
+    };
+    let result: GatewayResult<T>;
+    try {
+      result = await action();
+    } catch {
+      result = {
+        ok: false,
+        error: {
+          code: "unknown",
+          message: "Chat operation failed unexpectedly",
+          retryable: false,
+        },
+      };
+    }
+    if (result.ok) {
+      if (operation === "loadConversation" || operation === "subscribe") {
+        for (const record of this.#diagnostics.read(conversationId)) {
+          if (record.error.diagnostic?.operation === operation)
+            this.#diagnostics.resolve(record.id, conversationId);
+        }
+      }
+      return result;
+    }
+    const error: ChatError = {
+      ...result.error,
+      conversationId,
+      diagnostic: {
+        ...context,
+        ...result.error.diagnostic,
+        operation,
+        operationId,
+        errorId: operationId,
+        outcome:
+          result.error.diagnostic?.outcome ??
+          (result.error.code === "timeout" &&
+          (operation === "sendText" || operation === "sendMessage")
+            ? "unknown"
+            : "failed"),
+      },
+    };
+    this.#diagnostics.record(
+      error,
+      operation === "subscribe" ? "subscription" : "command",
+      { kind: "command", id: operationId },
+      operationId,
+    );
+    return { ok: false, error };
   }
 
   getCacheState(): ConversationCacheState {
@@ -975,7 +1194,11 @@ export class ChatClient {
     }
     // Register the observer before loading the snapshot so notifications that
     // occur at the snapshot boundary are buffered instead of being lost.
-    const subscribed = await this.#subscribeGateway(input, notificationQueue);
+    const subscribed = await this.#observeOperation(
+      "subscribe",
+      input.conversationId,
+      () => this.#subscribeGateway(input, notificationQueue),
+    );
     if (this.#disposed || requestId !== this.#loadRequestId) {
       this.#clearPendingLoad(requestId);
       await this.#discardGatewaySubscription(subscribed, input);
@@ -986,7 +1209,11 @@ export class ChatClient {
       );
     }
 
-    let loaded = await this.#gateway.loadConversation(input);
+    let loaded = await this.#observeOperation(
+      "loadConversation",
+      input.conversationId,
+      () => this.#gateway.loadConversation(input),
+    );
     if (loaded.ok && loaded.value.conversation.id === input.conversationId) {
       loaded = await this.#bridgeCachedHistory(input, loaded.value, requestId);
     }
@@ -1112,8 +1339,13 @@ export class ChatClient {
     }
 
     const generation = this.#generation;
-    const result = await this.#gateway.sendText(input);
-    if (!result.ok) this.#reportError(result.error, generation, "command");
+    const result = await this.#observeOperation(
+      "sendText",
+      input.conversationId,
+      () => this.#gateway.sendText(input),
+    );
+    if (!result.ok)
+      this.#reportError(result.error, generation, "command", true);
     return result;
   }
 
@@ -1169,9 +1401,13 @@ export class ChatClient {
     }
     const generation = this.#generation;
     const operation = (async (): Promise<GatewayResult<SendMessageSuccess>> => {
-      const result = await this.#gateway.sendMessage!(command);
+      const result = await this.#observeOperation(
+        "sendMessage",
+        command.conversationId,
+        () => this.#gateway.sendMessage!(command),
+      );
       if (!result.ok && !this.#disposed)
-        this.#reportError(result.error, generation, "command");
+        this.#reportError(result.error, generation, "command", true);
       return result;
     })();
     if (inFlightKey !== undefined) {
@@ -1252,7 +1488,11 @@ export class ChatClient {
     }
     this.#interactionAnswersInFlight.add(inFlightKey);
     try {
-      const result = await this.#gateway.answerInteraction(command);
+      const result = await this.#observeOperation(
+        "answerInteraction",
+        command.conversationId,
+        () => this.#gateway.answerInteraction!(command),
+      );
       const current = this.#snapshotStore.state?.snapshot;
       const sameActiveConversation =
         !this.#disposed &&
@@ -1285,7 +1525,7 @@ export class ChatClient {
       }
       if (!result.ok) {
         if (hasSameInteractionIdentity(currentPending, pending)) {
-          this.#reportError(result.error, this.#generation, "command");
+          this.#reportError(result.error, this.#generation, "command", true);
         }
         return result;
       }
@@ -1346,8 +1586,13 @@ export class ChatClient {
     // Bind "interrupt the current run" to the run observed above. Otherwise a
     // Gateway that resolves the omitted runId after an async boundary could
     // accidentally interrupt a replacement run.
-    const result = await this.#gateway.interrupt(
-      input.runId === undefined ? { ...input, runId } : input,
+    const result = await this.#observeOperation(
+      "interrupt",
+      input.conversationId,
+      () =>
+        this.#gateway.interrupt(
+          input.runId === undefined ? { ...input, runId } : input,
+        ),
     );
     if (
       !result.ok &&
@@ -1355,7 +1600,7 @@ export class ChatClient {
       this.#snapshotStore.state.snapshot.conversation.id ===
         input.conversationId
     ) {
-      this.#reportError(result.error, generation, "command");
+      this.#reportError(result.error, generation, "command", true);
     }
     return result;
   }
@@ -1368,6 +1613,7 @@ export class ChatClient {
     this.#cacheListeners.clear();
     this.#cacheRequestId += 1;
     this.#disposed = true;
+    this.#diagnostics.dispose();
     this.#conversationEpoch += 1;
     this.#generation += 1;
     this.#historyRequestId += 1;
@@ -1384,6 +1630,7 @@ export class ChatClient {
     this.#pendingLoadRequestId = undefined;
     this.#pendingHandoff = undefined;
     this.#snapshotStore.close();
+    this.#snapshotDiagnosticSlots = undefined;
     const subscription = this.#gatewaySubscription;
     this.#gatewaySubscription = undefined;
 
@@ -1489,7 +1736,11 @@ export class ChatClient {
     const generation = this.#generation;
     const requestId = ++this.#historyRequestId;
     const baselineCursor = active.value.pageInfo.previousCursor;
-    const loaded = await this.#gateway.loadConversation(input);
+    const loaded = await this.#observeOperation(
+      "loadHistory",
+      input.conversationId,
+      () => this.#gateway.loadConversation(input),
+    );
     if (!loaded.ok) {
       if (
         this.#disposed ||
@@ -1504,7 +1755,7 @@ export class ChatClient {
           input.conversationId,
         );
       }
-      this.#reportError(loaded.error, generation, "command");
+      this.#reportError(loaded.error, generation, "command", true);
       return loaded;
     }
     if (
@@ -1708,16 +1959,79 @@ export class ChatClient {
     ) {
       return;
     }
+    const reportedErrorId =
+      update.kind === "error.reported"
+        ? (update.errorId ??
+          update.error.diagnostic?.errorId ??
+          this.#diagnostics.nextId())
+        : undefined;
+    if (update.kind === "error.reported") {
+      const error = {
+        ...update.error,
+        conversationId:
+          update.scope?.kind === "global"
+            ? undefined
+            : (update.conversationId ?? update.error.conversationId),
+        diagnostic: {
+          ...update.error.diagnostic,
+          generation: update.generation ?? generation,
+          errorId: reportedErrorId,
+        },
+      };
+      this.#diagnostics.record(
+        error,
+        update.source ?? "runtime",
+        update.scope ??
+          (error.conversationId === undefined
+            ? { kind: "global" }
+            : { kind: "conversation", id: error.conversationId }),
+        reportedErrorId,
+      );
+    } else if (update.kind === "error.resolved") {
+      const occurrence = this.getSnapshot()?.activeErrors?.find(
+        (item) => item.id === update.errorId,
+      );
+      const diagnosticId =
+        occurrence?.error.diagnostic?.errorId ?? update.errorId;
+      const record = this.#diagnostics
+        .read()
+        .find(
+          (item) =>
+            item.id === diagnosticId &&
+            (item.conversationId === update.conversationId ||
+              item.scope.kind === "global"),
+        );
+      this.#diagnostics.resolve(
+        diagnosticId,
+        record === undefined ? update.conversationId : record.conversationId,
+      );
+    }
     const state = this.#snapshotStore.latestState()!;
     const prepared =
-      this.#cache !== undefined &&
-      update.kind === "snapshot.replace" &&
-      update.snapshot.conversation.id === state.snapshot.conversation.id
+      update.kind === "error.reported"
         ? {
             ...update,
-            snapshot: mergeCachedHistory(update.snapshot, state.snapshot),
+            error: {
+              ...update.error,
+              conversationId:
+                update.scope?.kind === "global"
+                  ? undefined
+                  : (update.conversationId ?? update.error.conversationId),
+              diagnostic: {
+                ...update.error.diagnostic,
+                errorId: reportedErrorId,
+                generation: update.generation,
+              },
+            },
           }
-        : update;
+        : this.#cache !== undefined &&
+            update.kind === "snapshot.replace" &&
+            update.snapshot.conversation.id === state.snapshot.conversation.id
+          ? {
+              ...update,
+              snapshot: mergeCachedHistory(update.snapshot, state.snapshot),
+            }
+          : update;
     this.#snapshotStore.commit(
       this.#guardInteractionTransition(
         state,
@@ -1795,6 +2109,7 @@ export class ChatClient {
     error: ChatError,
     generation: number,
     source: ChatErrorSource = "runtime",
+    alreadyRecorded = false,
   ): void {
     if (
       this.#disposed ||
@@ -1807,8 +2122,21 @@ export class ChatClient {
       return;
     }
     const state = this.#snapshotStore.latestState()!;
-    const immutableError = cloneImmutable(error);
-    const errorId = `runtime:${generation}:error:${++this.#errorSequence}`;
+    const errorId =
+      error.diagnostic?.errorId ??
+      `runtime:${generation}:error:${++this.#errorSequence}`;
+    const lifecycle = state.snapshot.lifecycle;
+    const immutableError = cloneImmutable({
+      ...error,
+      diagnostic: {
+        generation: lifecycle?.generation,
+        reconnectAttempt: lifecycle?.reconnectAttempt,
+        recoveryComplete: lifecycle?.recovery?.complete,
+        recoveryAssurance: lifecycle?.recovery?.assurance,
+        ...error.diagnostic,
+        errorId,
+      },
+    });
     const existingOccurrences =
       state.snapshot.activeErrors ??
       (state.snapshot.error === undefined
@@ -1840,9 +2168,25 @@ export class ChatClient {
               },
       generation,
     });
+    if (!alreadyRecorded)
+      this.#diagnostics.record(
+        immutableError,
+        source,
+        occurrence.scope,
+        errorId,
+      );
+    const retained = existingOccurrences.filter(
+      (item) =>
+        !(
+          item.id === occurrence.id &&
+          JSON.stringify(item.scope) === JSON.stringify(occurrence.scope) &&
+          item.error.diagnostic?.operationId ===
+            occurrence.error.diagnostic?.operationId
+        ),
+    );
     this.#snapshotStore.commit(
       updateSnapshotState(state, {
-        activeErrors: Object.freeze([...existingOccurrences, occurrence]),
+        activeErrors: Object.freeze([...retained, occurrence]),
         error: occurrence.error,
       }),
     );

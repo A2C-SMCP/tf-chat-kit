@@ -6,6 +6,7 @@ import {
   OwnedChatProvider,
   useChatClient,
   useChatSnapshot,
+  useChatDiagnostics,
   type ChatClientFactory,
 } from "@turingfocus/chat-react";
 import { createChatClient, type ChatClient } from "@turingfocus/chat-runtime";
@@ -117,6 +118,11 @@ const OfficeConversationProbe = ({
   const client = useChatClient();
   const snapshot = useChatSnapshot();
   const conversationId = snapshot?.conversation.id ?? "empty";
+  const diagnostics = useChatDiagnostics(conversationId);
+  check(
+    diagnostics === client.getDiagnostics(conversationId),
+    "Office diagnostics must use the instance store without Ant Design",
+  );
   fixture.renderedConversationIds.push(conversationId);
 
   useEffect(() => {

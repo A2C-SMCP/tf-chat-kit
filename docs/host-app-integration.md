@@ -166,6 +166,18 @@ export const getChatDeadlineAt = deadlineAt;
 - React/UI 只看到通用 `ChatAttachmentUploader`。非 TFRobot 后端或具有平台上传策略的宿主可向
   `ChatProvider` 传入自己的 uploader；不要在 UI 中读取 Gateway、Token 或固定 COS 路径。
 
+#### 会话切换与连接复用
+
+同一 Gateway 实例、固定服务端与机器人路由、相同认证材料下，健康的 Socket.IO 连接会跨会话复用。
+切换仍会订阅目标会话并加载服务端数据；命中缓存时立即展示只读内容，完成同步后才恢复操作。
+订阅释放只清理该订阅的监听和异步任务，Gateway 释放才关闭保留的健康连接；宿主须按实例生命周期调用 dispose。
+认证材料变化会使旧连接失效，即使新会话的预检失败，也不会继续使用旧身份。路由变化应创建新实例。
+
+当前 TFRobotServer 没有可靠的 leave 操作，连接存活期间可能保留访问过的房间。
+Gateway 隔离其他会话的事件；跨会话复用后，缺少会话标识的应用事件（含未知事件和无归属的协议 error）
+不会被猜测为当前会话数据。连接级断线和认证错误仍正常呈现。此行为与服务端真正退订不同，
+也不承诺补齐未持久化的事件；需要可靠退订的集成应等待相应服务端契约。
+
 #### `current-server` 兼容档位
 
 默认 `verified` 档位对空 join ACK 失败关闭，并要求 Server 在重连时明确证明 replay 完整。若目标部署仍是当前缺少 join ACK 和 durable replay cursor/outbox 的 TFRobotServer，宿主可显式配置：
@@ -611,3 +623,40 @@ Chat Kit 负责：
 ## 多会话缓存与可选持久化
 
 默认启用实例隔离的内存缓存，省略 scope 也可使用；持久化、隔离存储、附件重新验证和清理接口见[缓存接入指南](baselines/issue-77/integration.md)。需要保持原加载行为的宿主可设置 `cache: false`。
+
+## Session notices and diagnostics (#82)
+
+`ChatConversationView` and `ChatWorkspace.conversationViewProps` accept `noticeTiming`:
+`progressDelayMs` (2000), `disconnectDelayMs` (5000), `recoveredDurationMs` (3000), and
+`bestEffortDurationMs` (5000). Values must be finite between 0 and 60000 ms; invalid
+values use the default. Hovering or focusing a recovery notice pauses its remaining
+time. Notices live inside the panel and never enter conversation history.
+
+`onRequestAuthentication` is an optional host callback; Kit does not implement login.
+Send/interrupt/answer rights still come from the live Runtime and capabilities.
+A timed-out send with an unknown result asks the user to check history before sending
+again. There is no automatic replay.
+
+Create a client with `diagnostics: { appVersion, onRecord }` to supply the host version
+and receive safe records. Existing Gateway `onDiagnostic` and `onLifecycleDiagnostic`
+callbacks remain independent. `client.getDiagnostics(conversationId)` and
+`client.subscribeDiagnostics(listener)` also work without React; React hosts can use
+`useChatDiagnostics(conversationId)`. Omitting the ID in the headless API selects all
+records in that instance, including global cache failures. A diagnostic subscription
+returns a `dispose()` handle.
+
+Records remain in memory after notices close and faults resolve: at most 50 records,
+8 KiB per record and 128 KiB total UTF-8 JSON per client. Disposal clears the store.
+Repeated occurrences retain first context, first/latest time and count. No credentials,
+request headers, message bodies or arbitrary response/details payloads are exported.
+Unverified original error text is omitted; a small allowlist of known transport error
+messages can be retained. Missing fields are explicitly shown as not provided.
+Server Request/Trace IDs are distinct from local operation/error IDs. Browser CORS
+header exposure may make response IDs unavailable; Kit does not infer them.
+
+Use `formatChatDiagnostic(record)` from Protocol (or the headless facade) for the same
+safe JSON representation as the built-in copy action. New optional UI labels include
+`diagnostics`, `copyDiagnostic`, `diagnosticCopied`, `diagnosticCopyFailed`,
+`diagnosticDetails`, `noDiagnostics`, `activeFaults`, `signInAgain`,
+`recoveredComplete`, `recoveredBestEffort` and `formatChatError`.
+The formatter receives the safe standard error, never raw transport data.

@@ -463,9 +463,9 @@ describe("RobotServer Playground authenticated lifecycle", () => {
       expect(await fixture.sockets.inputs[0]!.getAuth()).toEqual(expectedAuth);
 
       await fixture.session.reconnect();
-      expect(fixture.sockets.sockets).toHaveLength(2);
-      expect(fixture.sockets.sockets[0]!.disconnectCalls).toBe(1);
-      expect(await fixture.sockets.inputs[1]!.getAuth()).toEqual(expectedAuth);
+      expect(fixture.sockets.sockets).toHaveLength(1);
+      expect(fixture.sockets.sockets[0]!.disconnectCalls).toBe(0);
+      expect(await fixture.sockets.inputs[0]!.getAuth()).toEqual(expectedAuth);
       expect(fixture.session.getState()).toMatchObject({
         connected: true,
         contentState: { kind: "ready" },
@@ -485,6 +485,7 @@ describe("RobotServer Playground authenticated lifecycle", () => {
       );
 
       fixture.sockets.sockets.at(-1)!.trigger("error", {
+        conversationId: "43",
         message: "A non-fatal Socket protocol diagnostic",
       });
       expect(fixture.session.getState()).toMatchObject({

@@ -26,6 +26,9 @@ interface AskUserFormValues {
 
 export interface AskUserInteractionCardProps {
   readonly answerDisabled: boolean;
+  readonly draft?: AskUserInteractionAnswer["answers"] | undefined;
+  readonly onDraftChange?:
+    ((answer: AskUserInteractionAnswer) => void) | undefined;
   readonly labels: ChatUiLabels;
   readonly onAnswer: (answer: AskUserInteractionAnswer) => Promise<boolean>;
   readonly onChatAboutThis?:
@@ -64,6 +67,8 @@ const normalizeAnswers = (
 
 export const AskUserInteractionCard = ({
   answerDisabled,
+  draft,
+  onDraftChange,
   labels,
   onAnswer,
   onChatAboutThis,
@@ -102,16 +107,18 @@ export const AskUserInteractionCard = ({
     ],
   );
 
-  const initialAnswers = request.questions.map((question) =>
-    question.defaultValue === undefined
-      ? undefined
-      : question.multiple
-        ? Array.isArray(question.defaultValue)
-          ? question.defaultValue
-          : [question.defaultValue]
-        : Array.isArray(question.defaultValue)
-          ? question.defaultValue[0]
-          : question.defaultValue,
+  const initialAnswers = request.questions.map(
+    (question) =>
+      draft?.[question.id] ??
+      (question.defaultValue === undefined
+        ? undefined
+        : question.multiple
+          ? Array.isArray(question.defaultValue)
+            ? question.defaultValue
+            : [question.defaultValue]
+          : Array.isArray(question.defaultValue)
+            ? question.defaultValue[0]
+            : question.defaultValue),
   );
 
   return (
@@ -125,6 +132,14 @@ export const AskUserInteractionCard = ({
         form={form}
         initialValues={{ answers: initialAnswers }}
         layout="vertical"
+        onValuesChange={(_changed, values: AskUserFormValues) =>
+          onDraftChange?.({
+            requestId: request.requestId,
+            revision: request.revision,
+            action: "submit",
+            answers: normalizeAnswers(values.answers, request.questions),
+          })
+        }
         onFinish={(values) => answer("submit", values)}
       >
         {request.questions.map((question, questionIndex) => (

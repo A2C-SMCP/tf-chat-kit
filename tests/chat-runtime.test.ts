@@ -702,7 +702,7 @@ describe("ChatClient Ask User interactions", () => {
     ).resolves.toMatchObject({ ok: true });
     hold.release();
 
-    await expect(answering).resolves.toEqual({
+    await expect(answering).resolves.toMatchObject({
       ok: true,
       value: memory.fixtures.answerInteractionSuccess,
     });
@@ -749,14 +749,14 @@ describe("ChatClient Ask User interactions", () => {
     ).resolves.toMatchObject({ ok: true });
     hold.release();
 
-    await expect(answering).resolves.toEqual({
+    await expect(answering).resolves.toMatchObject({
       ok: false,
       error: answerError,
     });
     expect(client.getSnapshot()?.pendingInteraction).toEqual(
       memory.fixtures.askUserRequest,
     );
-    expect(client.getSnapshot()?.error).toEqual(answerError);
+    expect(client.getSnapshot()?.error).toMatchObject(answerError);
     await client.dispose({ deadlineAt: deadlineAt() });
   });
 
@@ -3054,7 +3054,7 @@ describe("ChatClient lifecycle and merge behavior", () => {
       text: "Will fail",
       deadlineAt: deadlineAt(),
     });
-    expect(result).toEqual({ ok: false, error });
+    expect(result).toMatchObject({ ok: false, error });
     const exposed = client.getSnapshot()!.error!;
     expect(Object.isFrozen(exposed)).toBe(true);
     expect(Object.isFrozen(exposed.details)).toBe(true);

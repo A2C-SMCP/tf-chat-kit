@@ -66,3 +66,20 @@ export type {
   CachedAttachmentResolver,
 } from "./conversation-cache.js";
 export type { ConversationCacheRecord } from "./cache-record.js";
+
+export type { ChatDiagnosticsOptions } from "./diagnostics.js";
+export type { ChatDiagnosticRecord } from "@turingfocus/chat-protocol";
+
+export {
+  RemoteToolClient,
+  createRemoteToolClient,
+  type RemoteToolClientOptions,
+  type RemoteToolClientState,
+} from "./remote-tool-client.js";
+
+export {
+  AskUserRemoteTool,
+  createAskUserRemoteTool,
+  type AskUserRemoteToolOptions,
+  type AskUserRemoteToolEntry,
+} from "./ask-user-remote-tool.js";
