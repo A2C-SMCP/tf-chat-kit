@@ -113,6 +113,8 @@ export interface ChatUiLabels {
   readonly askUserUnavailable: ReactNode;
   readonly capabilityUnavailableDescription: ReactNode;
   readonly capabilityUnavailableTitle: ReactNode;
+  readonly composerEnterHint?: string | undefined;
+  readonly composerCtrlEnterHint?: string | undefined;
   readonly composerLabel: string;
   readonly composerPlaceholder: string;
   readonly conversationListLabel: string;

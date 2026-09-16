@@ -28,6 +28,7 @@ export {
   type AskUserInteractionResultViewProps,
   type ChatComposerInterruptAction,
   type ChatComposerProps,
+  type ChatComposerSendShortcut,
   type ChatNoticeTiming,
   type ChatContentState,
   type ChatConversationListItem,

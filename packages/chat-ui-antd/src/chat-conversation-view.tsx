@@ -24,7 +24,10 @@ import {
   useConversationCache,
 } from "@turingfocus/chat-react";
 
-import { ChatComposer } from "./chat-composer.js";
+import {
+  ChatComposer,
+  type ChatComposerSendShortcut,
+} from "./chat-composer.js";
 import { chatErrorNoticeKey } from "./dismissible-chat-alert.js";
 import {
   ChatEventDetail,
@@ -60,6 +63,7 @@ import {
 export type { ChatUiCommand, ChatUiCommandFailure };
 
 export interface ChatConversationViewProps {
+  readonly sendShortcut?: ChatComposerSendShortcut | undefined;
   readonly noticeTiming?: ChatNoticeTiming | undefined;
   readonly onRequestAuthentication?: (() => void) | undefined;
   readonly className?: string | undefined;
@@ -142,6 +146,7 @@ const equalChatConversationViewSnapshot = (
     left.timeline === right.timeline);
 
 export const ChatConversationView = ({
+  sendShortcut,
   className,
   noticeTiming,
   onRequestAuthentication,
@@ -595,6 +600,7 @@ export const ChatConversationView = ({
         <span role="status">{labels.cacheAttachmentUnavailable}</span>
       ) : null}
       <ChatComposer
+        sendShortcut={sendShortcut}
         renderUploadError={(error) => (
           <ChatErrorNotice
             error={error}

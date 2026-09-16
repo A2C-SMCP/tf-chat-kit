@@ -2,6 +2,7 @@ export {
   ChatComposer,
   type ChatComposerInterruptAction,
   type ChatComposerProps,
+  type ChatComposerSendShortcut,
 } from "./chat-composer.js";
 export {
   ChatEventDetail,
