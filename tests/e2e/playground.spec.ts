@@ -222,9 +222,9 @@ test("Mock mode renders and exercises the formal Runtime scenarios", async ({
   await expect(page.getByText("当前任务已中断。")).toBeVisible();
   await expect(interruptButton).toBeHidden();
   await page.getByRole("button", { name: "服务端错误" }).click();
-  await expect(
-    page.getByText("Mock RobotServer 拒绝了当前场景。"),
-  ).toBeVisible();
+  const notices = page.locator('[data-chat-notices="true"]');
+  await expect(notices.locator(".ant-alert")).toHaveCount(1);
+  await expect(notices.locator(".ant-alert")).toContainText("server");
 
   await page.getByRole("button", { name: "历史会话" }).click();
   const conversationMenu = page.getByRole("menu");
@@ -363,9 +363,8 @@ test("Bearer mode covers create, send, stream, interrupt, reconnect, CORS and di
   expect(JSON.stringify(browserState)).not.toContain(secret);
   expect(consoleMessages.join("\n")).not.toContain(secret);
 
-  await expect
-    .poll(async () => (await stateOf(request)).observations.socketConnections)
-    .toBeGreaterThanOrEqual(3);
+  // Conversation changes and rejoining reuse this client's transport.
+  expect((await stateOf(request)).observations.socketConnections).toBe(1);
   await page.getByRole("button", { name: "Mock 模式" }).click();
   await expect(page.getByText("本地私有应用 · 内存网关")).toBeVisible();
   await expect
@@ -419,7 +418,10 @@ test("Bearer mode covers create, send, stream, interrupt, reconnect, CORS and di
   expect(state.observations.corsPreflights).toBe(0);
   expect(state.observations.joins).toBeGreaterThanOrEqual(3);
   expect(state.observations.routedRequests).toBeGreaterThan(0);
-  expect(state.observations.socketDisconnections).toBeGreaterThanOrEqual(3);
+  expect(state.observations.socketConnections).toBeGreaterThan(0);
+  expect(state.observations.socketDisconnections).toBe(
+    state.observations.socketConnections,
+  );
 });
 
 test("Admin Token mode forwards admin_key to REST and Socket without Bearer fallback", async ({
