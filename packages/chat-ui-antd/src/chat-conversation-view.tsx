@@ -16,6 +16,7 @@ import {
   type ChatSnapshot,
 } from "@turingfocus/chat-protocol";
 import {
+  useAskUserRemoteTool,
   useChatAttachmentUploader,
   useChatClient,
   useChatSelector,
@@ -35,6 +36,7 @@ import {
 } from "./chat-event-detail.js";
 import {
   AskUserInteractionCard,
+  AskUserInteractionResultView,
   type AskUserChatAboutThisRequest,
 } from "./ask-user-interaction.js";
 import { ChatRunStatus } from "./chat-run-status.js";
@@ -170,6 +172,7 @@ export const ChatConversationView = ({
     selectChatConversationViewSnapshot,
     equalChatConversationViewSnapshot,
   );
+  const remoteAskUser = useAskUserRemoteTool(snapshot?.conversationId ?? "");
   const attachmentUploader = useChatAttachmentUploader();
   const composer = useComposerDraft(snapshot?.conversationId ?? "");
   const activeRecoveryUnverified =
@@ -524,6 +527,39 @@ export const ChatConversationView = ({
             onDismiss={() => dismissFailure(failure.command)}
           />
         ))}
+      {remoteAskUser.entries.length === 0 ? null : (
+        <div
+          role="region"
+          aria-label={String(labels.askUserLabel)}
+          style={{
+            flex: "0 1 auto",
+            minHeight: 0,
+            maxHeight: "40%",
+            overflowY: "auto",
+          }}
+        >
+          {remoteAskUser.entries.map((entry) => (
+            <div
+              key={entry.request.requestId}
+              style={{ padding: token.paddingXS }}
+            >
+              {entry.result === undefined ? (
+                <AskUserInteractionCard
+                  answerDisabled={false}
+                  labels={labels}
+                  onAnswer={remoteAskUser.answer}
+                  draft={entry.draft}
+                  onDraftChange={remoteAskUser.setDraft}
+                  onChatAboutThis={onChatAboutThis}
+                  request={entry.request}
+                />
+              ) : (
+                <AskUserInteractionResultView result={entry.result} />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       {snapshot.pendingInteraction === undefined ? null : (
         <div style={{ padding: token.paddingXS }}>
           <AskUserInteractionCard

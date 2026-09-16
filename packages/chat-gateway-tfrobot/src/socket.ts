@@ -250,7 +250,7 @@ const sameRun = (first: Run | null | undefined, second: Run | null): boolean =>
     first.canInterrupt === second.canInterrupt &&
     first.startedAt === second.startedAt);
 
-const socketAuthRejectionCode = (
+export const socketAuthRejectionCode = (
   reason: unknown,
 ): "authentication" | "authorization" | undefined => {
   if (reason === null || typeof reason !== "object") return undefined;
@@ -311,7 +311,7 @@ const belongsToForeignConversation = (
   return target !== undefined && target !== conversationId;
 };
 
-const authOf = (session: TFRobotSession): TFRobotSocketAuth => {
+export const authOf = (session: TFRobotSession): TFRobotSocketAuth => {
   const auth: Record<string, string> = {};
   const [field, value] =
     session.kind === "bearer"
@@ -333,6 +333,13 @@ type TimedAcknowledgement = ((...args: unknown[]) => void) & {
   readonly [ACK_TIMEOUT]: number;
 };
 
+/** Internal adapter metadata; lets all namespace owners bound native ACK retention. */
+export const withSocketAckTimeout = (
+  callback: (...args: unknown[]) => void,
+  timeoutMs: number,
+): ((...args: unknown[]) => void) =>
+  Object.assign(callback, { [ACK_TIMEOUT]: timeoutMs });
+
 export const createSocketIoFactoryWith =
   (connect: typeof io): TFRobotSocketFactory =>
   ({ getAuth, namespaceUrl, path }) => {
@@ -351,6 +358,9 @@ export const createSocketIoFactoryWith =
     return {
       get connected() {
         return socket.connected;
+      },
+      get active() {
+        return socket.active;
       },
       connect: () => {
         socket.connect();

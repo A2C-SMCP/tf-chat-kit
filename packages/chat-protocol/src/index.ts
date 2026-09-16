@@ -109,3 +109,25 @@ export type {
   ChatErrorDiagnostic,
   ChatDiagnosticRecord,
 } from "./diagnostics.js";
+
+export {
+  defineRemoteTool,
+  remoteToolDefinitionSchema,
+  remoteToolInvocationSchema,
+  remoteToolResultSchema,
+} from "./remote-tool.js";
+export type {
+  RemoteToolJson,
+  RemoteToolDefinition,
+  RemoteToolErrorCode,
+  RemoteToolResult,
+  RemoteToolInvocation,
+  RemoteToolExecutionContext,
+  RemoteTool,
+  RemoteToolConnectionStatus,
+  RemoteToolConnectionError,
+  RemoteToolConnectionState,
+  RemoteToolObserver,
+  RemoteToolClock,
+  RemoteToolTransport,
+} from "./remote-tool.js";

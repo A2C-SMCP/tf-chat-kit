@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import type { ChatClient } from "@turingfocus/chat-runtime";
+import type { AskUserRemoteTool, ChatClient } from "@turingfocus/chat-runtime";
 import type { ChatAttachmentUploader } from "./attachment-upload.js";
 
 import {
@@ -32,6 +32,8 @@ export interface ChatProviderProps {
   readonly children?: ReactNode;
   /** A host-owned client. ChatProvider never disposes this instance. */
   readonly client: ChatClient;
+  /** Host-owned controller; the host also owns its RemoteToolClient and disposal. */
+  readonly askUser?: AskUserRemoteTool | undefined;
   readonly attachmentUploader?: ChatAttachmentUploader | undefined;
   /** Snapshot used by React during server rendering and hydration. */
   readonly serverSnapshot?: ChatSnapshotValue | undefined;
@@ -39,13 +41,14 @@ export interface ChatProviderProps {
 
 export const ChatProvider = ({
   children,
+  askUser,
   attachmentUploader,
   client,
   serverSnapshot = null,
 }: ChatProviderProps) => {
   const value = useMemo<ChatContextValue>(
-    () => ({ client, serverSnapshot, attachmentUploader }),
-    [attachmentUploader, client, serverSnapshot],
+    () => ({ client, serverSnapshot, attachmentUploader, askUser }),
+    [attachmentUploader, client, serverSnapshot, askUser],
   );
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;

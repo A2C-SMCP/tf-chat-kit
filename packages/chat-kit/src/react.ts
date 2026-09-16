@@ -8,6 +8,7 @@ export {
   ChatProvider,
   OwnedChatProvider,
   useChatClient,
+  useAskUserRemoteTool,
   useChatDiagnostics,
   useChatAttachmentUploader,
   useComposerDraft,

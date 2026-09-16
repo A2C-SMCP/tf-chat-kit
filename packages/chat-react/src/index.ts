@@ -69,3 +69,5 @@ export {
 } from "@turingfocus/chat-runtime";
 
 export { useChatDiagnostics } from "./hooks.js";
+
+export { useAskUserRemoteTool } from "./hooks.js";

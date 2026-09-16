@@ -141,3 +141,41 @@ export type {
   CachedAttachmentResolver,
   ConversationCacheRecord,
 } from "@turingfocus/chat-runtime";
+
+export {
+  createTFRobotRemoteToolClient,
+  type TFRobotRemoteToolClientOptions,
+} from "./tfrobot-client.js";
+export { defineRemoteTool } from "@turingfocus/chat-protocol";
+export type {
+  RemoteToolJson,
+  RemoteToolDefinition,
+  RemoteToolErrorCode,
+  RemoteToolResult,
+  RemoteToolInvocation,
+  RemoteToolExecutionContext,
+  RemoteTool,
+  RemoteToolConnectionStatus,
+  RemoteToolConnectionError,
+  RemoteToolConnectionState,
+  RemoteToolObserver,
+  RemoteToolClock,
+  RemoteToolTransport,
+} from "@turingfocus/chat-protocol";
+export {
+  RemoteToolClient,
+  createRemoteToolClient,
+  type RemoteToolClientOptions,
+  type RemoteToolClientState,
+} from "@turingfocus/chat-runtime";
+export {
+  createTFRobotRemoteToolTransport,
+  type TFRobotRemoteToolOptions,
+} from "@turingfocus/chat-gateway-tfrobot";
+
+export {
+  AskUserRemoteTool,
+  createAskUserRemoteTool,
+  type AskUserRemoteToolOptions,
+  type AskUserRemoteToolEntry,
+} from "@turingfocus/chat-runtime";
