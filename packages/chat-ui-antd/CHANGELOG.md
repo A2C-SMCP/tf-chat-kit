@@ -1,5 +1,23 @@
 # @turingfocus/chat-ui-antd
 
+## 0.8.2
+
+### Patch Changes
+
+- bf2963d: Change the default composer behavior to Enter for a newline and Ctrl+Enter to send on every platform, including macOS. Cmd+Enter does not send. Hosts that need Enter-to-send must explicitly set `sendShortcut="enter"`; Ctrl+Enter also sends in that mode, while Shift+Enter always inserts a newline.
+
+  Expose `sendShortcut` through ChatComposer, ChatConversationView and ChatWorkspace's conversationViewProps, with localized accessible hints. Preserve drafts and attachments when switching modes. Protect IME composition and its final keydown boundary, suppress repeated shortcuts, and share upload/in-flight guards between keyboard and button submissions.
+
+  Release decision: ship this explicitly approved default-interaction change in 0.8.2. The patch version does not imply that the default shortcut is unchanged; existing hosts must opt into `sendShortcut="enter"` to preserve Enter-to-send.
+
+- fdceb0a: Add an optional Headless RemoteTool provider with typed host handlers, registration acknowledgement, reconnect registration, bounded execution and cooperative cancellation. Report same-name registration conflicts explicitly. Add a built-in Ask User tool with conversation cards, draft preservation, validated answers and terminal feedback. Hosts supply trusted request-to-conversation routing; the current Server does not provide that routing automatically.
+- 5b41649: Add bounded per-instance diagnostics with safe transport metadata and operation correlation. Reduce connection and cache notice interruptions, keep blocking failures visible, and provide scoped copyable diagnostics and local command failures without changing connection or cache authority.
+- Updated dependencies [f1772a0]
+- Updated dependencies [fdceb0a]
+- Updated dependencies [5b41649]
+  - @turingfocus/chat-protocol@0.8.2
+  - @turingfocus/chat-react@0.8.2
+
 ## 0.8.1
 
 ### Patch Changes
