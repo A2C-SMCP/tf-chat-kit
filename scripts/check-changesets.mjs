@@ -375,7 +375,7 @@ try {
     consumedChangesets.length === 0
       ? { releases: [] }
       : {
-          releases: Object.values(PACKAGE_POLICY).map(({ name }) => ({
+          releases: Object.keys(basePackageManifests).map((name) => ({
             name,
             type: /** @type {const} */ ("patch"),
             oldVersion: String(basePackageManifests[name]?.["version"]),

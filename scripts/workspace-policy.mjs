@@ -89,11 +89,28 @@ const FACADE_EXPORT_POLICY = Object.freeze({
   "./react": "react",
   "./antd": "antd",
 });
+const AUTH_EXPORT_POLICY = Object.freeze({
+  ".": "index",
+  "./headless": "headless",
+  "./tfrobot": "tfrobot",
+  "./react": "react",
+  "./antd": "antd",
+});
 const FACADE_PEER_META_POLICY = Object.freeze({
   antd: Object.freeze({ optional: true }),
   react: Object.freeze({ optional: true }),
   "react-dom": Object.freeze({ optional: true }),
 });
+
+export const FIXED_PACKAGE_NAMES = Object.freeze([
+  "@turingfocus/chat-protocol",
+  "@turingfocus/chat-runtime",
+  "@turingfocus/chat-gateway-tfrobot",
+  "@turingfocus/chat-react",
+  "@turingfocus/chat-ui-antd",
+  "@turingfocus/chat-kit",
+  "@turingfocus/chat-testing",
+]);
 
 /** @type {Readonly<Record<string, PackageRule>>} */
 export const PACKAGE_POLICY = Object.freeze({
@@ -180,13 +197,26 @@ export const PACKAGE_POLICY = Object.freeze({
     peerDependencies: {},
     allowedExternalDependencies: {},
   },
+  "chat-auth": {
+    name: "@turingfocus/chat-auth",
+    internalDependencies: [],
+    allowedNodeBuiltins: [],
+    peerDependencies: {
+      antd: ">=5.23.4 <6.0.0",
+      react: ">=18.2.0 <19.0.0",
+      "react-dom": ">=18.2.0 <19.0.0",
+    },
+    allowedExternalDependencies: {
+      peerDependencies: ["antd", "react", "react-dom"],
+    },
+  },
 });
 
 const CHANGESET_CONFIG_POLICY = Object.freeze({
   $schema: "https://unpkg.com/@changesets/config@3.1.4/schema.json",
   changelog: "@changesets/cli/changelog",
   commit: false,
-  fixed: [Object.values(PACKAGE_POLICY).map(({ name }) => name)],
+  fixed: [FIXED_PACKAGE_NAMES],
   linked: [],
   access: "public",
   baseBranch: "main",
@@ -2302,22 +2332,28 @@ export function validateWorkspaceSnapshot(snapshot) {
   validateDependencySources("root", snapshot.rootManifest, errors);
   validateRootOverrides(snapshot.rootManifest, errors);
 
-  const packageVersions = [
-    ...new Set(snapshot.packages.map(({ manifest }) => manifest.version)),
+  const fixedVersions = [
+    ...new Set(
+      snapshot.packages
+        .filter(({ manifest }) =>
+          FIXED_PACKAGE_NAMES.includes(manifest.name ?? ""),
+        )
+        .map(({ manifest }) => manifest.version),
+    ),
   ];
-  const displayedVersions = packageVersions.map((version) =>
+  const displayedVersions = fixedVersions.map((version) =>
     typeof version === "string" ? version : "<missing>",
   );
-  if (packageVersions.length !== 1) {
+  if (fixedVersions.length !== 1) {
     errors.push(
-      `workspace package versions must match; found ${sorted(displayedVersions).join(", ")}`,
+      `workspace package versions must match within the fixed group; found ${sorted(displayedVersions).join(", ")}`,
     );
   } else if (
-    typeof packageVersions[0] !== "string" ||
-    !isZeroMajorVersion(packageVersions[0])
+    typeof fixedVersions[0] !== "string" ||
+    !isZeroMajorVersion(fixedVersions[0])
   ) {
     errors.push(
-      `workspace package version must be valid 0.x SemVer; found ${displayedVersions[0]}`,
+      `fixed workspace package version must be valid 0.x SemVer; found ${displayedVersions[0]}`,
     );
   }
 
@@ -2400,6 +2436,27 @@ export function validateWorkspaceSnapshot(snapshot) {
         );
       }
     }
+    if (entry.directory === "chat-auth") {
+      if (
+        JSON.stringify(sorted(Object.keys(manifest.exports ?? {}))) !==
+        JSON.stringify(sorted(Object.keys(AUTH_EXPORT_POLICY)))
+      ) {
+        errors.push(
+          `${label}: exports must expose exactly the root, headless, tfrobot, react, and antd auth entries`,
+        );
+      }
+      for (const [specifier, fileName] of Object.entries(AUTH_EXPORT_POLICY)) {
+        const exported = manifest.exports?.[specifier];
+        if (
+          exported?.types !== `./dist/${fileName}.d.ts` ||
+          exported.import !== `./dist/${fileName}.js`
+        ) {
+          errors.push(
+            `${label}: export ${specifier} must expose dist/${fileName} declarations and ESM`,
+          );
+        }
+      }
+    }
 
     validateApprovedScripts(label, manifest, {}, errors);
     validatePublishScripts(label, manifest, errors);
@@ -2466,6 +2523,7 @@ export function validateWorkspaceSnapshot(snapshot) {
         entry.directory !== "chat-react" &&
         entry.directory !== "chat-ui-antd" &&
         entry.directory !== "chat-kit" &&
+        entry.directory !== "chat-auth" &&
         dependencies["react"]
       ) {
         errors.push(
@@ -2475,6 +2533,7 @@ export function validateWorkspaceSnapshot(snapshot) {
       if (
         entry.directory !== "chat-ui-antd" &&
         entry.directory !== "chat-kit" &&
+        entry.directory !== "chat-auth" &&
         dependencies["antd"]
       ) {
         errors.push(`${label}: Ant Design is only allowed in chat-ui-antd`);

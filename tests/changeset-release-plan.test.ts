@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { assembleWorkspaceReleasePlan } from "../scripts/changeset-release-plan.mjs";
-import { PACKAGE_POLICY } from "../scripts/workspace-policy.mjs";
+import {
+  FIXED_PACKAGE_NAMES,
+  PACKAGE_POLICY,
+} from "../scripts/workspace-policy.mjs";
 
 const packageManifests = Object.fromEntries(
   Object.values(PACKAGE_POLICY).map(({ name, internalDependencies }) => [
@@ -37,9 +40,9 @@ describe("Changesets fixed-group release planning", () => {
         ],
       });
 
-      expect(plan.releases).toHaveLength(Object.keys(PACKAGE_POLICY).length);
+      expect(plan.releases).toHaveLength(FIXED_PACKAGE_NAMES.length);
       expect(plan.releases.map(({ newVersion }) => newVersion)).toEqual(
-        Array(Object.keys(PACKAGE_POLICY).length).fill(version),
+        Array(FIXED_PACKAGE_NAMES.length).fill(version),
       );
     },
   );

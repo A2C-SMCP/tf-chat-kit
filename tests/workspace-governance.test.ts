@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { assertSupportedNodeVersion } from "../scripts/check-node-version.mjs";
 import {
   collectSourceFiles,
+  FIXED_PACKAGE_NAMES,
   loadWorkspaceSnapshot,
   validateWorkspaceSnapshot,
 } from "../scripts/workspace-policy.mjs";
@@ -42,8 +43,12 @@ describe("workspace governance", () => {
 
   it("rejects unified version drift", async () => {
     const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
-    const currentVersion = snapshot.packages[0]!.manifest.version;
-    snapshot.packages[0]!.manifest.version =
+    const fixedPackage = snapshot.packages.find(({ manifest }) =>
+      FIXED_PACKAGE_NAMES.includes(manifest.name ?? ""),
+    );
+    if (!fixedPackage) throw new Error("Missing fixed package fixture");
+    const currentVersion = fixedPackage.manifest.version;
+    fixedPackage.manifest.version =
       currentVersion === "0.0.0" ? "0.0.1" : "0.0.0";
 
     expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(

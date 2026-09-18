@@ -29,6 +29,7 @@ V1 不承诺 Fluent UI、Web Component、AG-UI、账号登录系统或为每个�
 | `@turingfocus/chat-ui-antd`         | Ant Design 成品 UI 与默认渲染器             |
 | `@turingfocus/chat-kit`             | Headless、React 与 Ant Design 统一门面      |
 | `@turingfocus/chat-testing`         | 内存 Gateway、fixtures 和契约测试工具       |
+| `@turingfocus/chat-auth`             | 可选 Headless 认证、TFRobot 适配与默认 UI    |
 
 核心依赖方向为：
 
@@ -37,10 +38,11 @@ chat-ui-antd -> chat-react -> chat-runtime -> chat-protocol
 chat-ui-antd -------------------------------> chat-protocol
                          chat-gateway-tfrobot -> chat-protocol
 chat-kit -> chat-ui-antd/chat-react/chat-runtime/chat-gateway-tfrobot/chat-protocol
+chat-auth (可选，独立；react/antd 为可选 peer UI)
                                   chat-testing -> chat-protocol
 ```
 
-普通宿主只需安装 `@turingfocus/chat-kit`：非 React 使用 `/headless`，自定义 React UI 使用 `/react`，成品 UI 使用根入口或 `/antd`。高级消费者仍可按需安装叶子包；`chat-testing` 是独立开发依赖，不进入生产门面。
+普通宿主只需安装 `@turingfocus/chat-kit`：非 React 使用 `/headless`，自定义 React UI 使用 `/react`，成品 UI 使用根入口或 `/antd`。需要认证时再安装可选的 `@turingfocus/chat-auth`：认证状态与 transport 使用 `/headless`，TFRobotServer 适配使用 `/tfrobot`，React/Ant Design 默认 UI 分别使用 `/react` 与 `/antd`。高级消费者仍可按需安装叶子包；`chat-testing` 是独立开发依赖，不进入生产门面。
 
 任何 Chat Kit 包都不得反向依赖 TFRobotFront 或其他宿主项目。
 

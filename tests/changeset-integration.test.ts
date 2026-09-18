@@ -13,7 +13,10 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { generateConsumedReleaseOutput } from "../scripts/changeset-release-output.mjs";
-import { PACKAGE_POLICY } from "../scripts/workspace-policy.mjs";
+import {
+  FIXED_PACKAGE_NAMES,
+  PACKAGE_POLICY,
+} from "../scripts/workspace-policy.mjs";
 
 const workspaceRoot = process.cwd();
 const changesetExecutable = path.join(
@@ -33,6 +36,9 @@ const versionReleaseScript = path.join(
   "version-release.mjs",
 );
 const packageEntries = Object.entries(PACKAGE_POLICY);
+const fixedPackageEntries = packageEntries.filter(([, { name }]) =>
+  FIXED_PACKAGE_NAMES.includes(name),
+);
 
 const runGit = (rootDirectory: string, args: string[]) =>
   execFileSync("git", args, {
@@ -77,7 +83,7 @@ async function createReleaseFixture(): Promise<ReleaseFixture> {
     $schema: "https://unpkg.com/@changesets/config/schema.json",
     changelog: "@changesets/cli/changelog",
     commit: false,
-    fixed: [packageEntries.map(([, { name }]) => name)],
+    fixed: [fixedPackageEntries.map(([, { name }]) => name)],
     linked: [],
     access: "public",
     baseBranch: "main",
@@ -141,7 +147,11 @@ async function createReleaseFixture(): Promise<ReleaseFixture> {
 }
 
 const expectedInitialReleaseFiles = packageEntries
-  .map(([directory]) => `packages/${directory}/CHANGELOG.md`)
+  .flatMap(([directory, { name }]) =>
+    FIXED_PACKAGE_NAMES.includes(name)
+      ? [`packages/${directory}/CHANGELOG.md`]
+      : [`packages/${directory}/package.json`],
+  )
   .sort();
 
 describe("changeset release integration", () => {
@@ -158,10 +168,14 @@ describe("changeset release integration", () => {
       );
       for (const [, { name }] of packageEntries) {
         expect(output.packageManifests[name]).toMatchObject({
-          version: "0.1.0",
+          version: FIXED_PACKAGE_NAMES.includes(name) ? "0.1.0" : "0.0.0",
         });
-        expect(output.changelogs[name]).toContain(`# ${name}`);
-        expect(output.changelogs[name]).toContain("## 0.1.0");
+        if (FIXED_PACKAGE_NAMES.includes(name)) {
+          expect(output.changelogs[name]).toContain(`# ${name}`);
+          expect(output.changelogs[name]).toContain("## 0.1.0");
+        } else {
+          expect(output.changelogs[name]).toBe("");
+        }
       }
       expect(
         runGit(fixture.directory, ["worktree", "list", "--porcelain"]),
@@ -178,7 +192,7 @@ describe("changeset release integration", () => {
         cwd: fixture.directory,
         stdio: ["ignore", "pipe", "pipe"],
       });
-      for (const [packageDirectory] of packageEntries) {
+      for (const [packageDirectory, { name }] of packageEntries) {
         const packageDirectoryPath = path.join(
           fixture.directory,
           "packages",
@@ -192,14 +206,16 @@ describe("changeset release integration", () => {
             ),
           ),
         ).toMatchObject({
-          version: "0.1.0",
+          version: FIXED_PACKAGE_NAMES.includes(name) ? "0.1.0" : "0.0.0",
         });
-        expect(
-          await readFile(
-            path.join(packageDirectoryPath, "CHANGELOG.md"),
-            "utf8",
-          ),
-        ).toContain("## 0.1.0");
+        if (FIXED_PACKAGE_NAMES.includes(name)) {
+          expect(
+            await readFile(
+              path.join(packageDirectoryPath, "CHANGELOG.md"),
+              "utf8",
+            ),
+          ).toContain("## 0.1.0");
+        }
       }
       runGit(fixture.directory, ["add", "--all"]);
       runGit(fixture.directory, ["commit", "-m", "version packages"]);
@@ -244,7 +260,7 @@ describe("changeset release integration", () => {
         stdio: ["ignore", "pipe", "pipe"],
       });
 
-      for (const [packageDirectory] of packageEntries) {
+      for (const [packageDirectory, { name }] of packageEntries) {
         expect(
           JSON.parse(
             await readFile(
@@ -258,7 +274,7 @@ describe("changeset release integration", () => {
             ),
           ),
         ).toMatchObject({
-          version: "0.2.0",
+          version: FIXED_PACKAGE_NAMES.includes(name) ? "0.2.0" : "0.0.0",
         });
       }
     } finally {

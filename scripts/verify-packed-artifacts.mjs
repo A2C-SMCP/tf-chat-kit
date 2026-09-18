@@ -279,6 +279,10 @@ const tfrobotfrontStyleConsumerDirectory = path.join(
   verificationRoot,
   "tfrobotfront-style-consumer",
 );
+const authHeadlessConsumerDirectory = path.join(
+  verificationRoot,
+  "auth-headless-consumer",
+);
 
 try {
   await Promise.all([
@@ -290,6 +294,7 @@ try {
     mkdir(officeStyleConsumerDirectory),
     mkdir(tauriStyleConsumerDirectory),
     mkdir(tfrobotfrontStyleConsumerDirectory),
+    mkdir(authHeadlessConsumerDirectory),
   ]);
   if (packageSource === "packed") {
     for (const packedPackage of packManifest.packages) {
@@ -435,6 +440,49 @@ try {
       manifest: consumerManifest,
       sourceFiles: { "index.ts": packageSmokeSource },
       tsconfig: packageSmokeTsconfig,
+    },
+    packManifest.packages,
+  );
+
+  const authHeadlessConsumerManifest = {
+    name: "tf-chat-kit-auth-headless-consumer",
+    version: "0.0.0",
+    private: true,
+    type: "module",
+    packageManager: "pnpm@10.34.5",
+    dependencies: {
+      "@turingfocus/chat-auth": packageFiles["@turingfocus/chat-auth"],
+    },
+    devDependencies: {
+      typescript: "5.9.3",
+    },
+    pnpm: { overrides: { "@turingfocus/chat-auth": packageFiles["@turingfocus/chat-auth"] } },
+  };
+  await verifyConsumerProject(
+    {
+      directory: authHeadlessConsumerDirectory,
+      manifest: authHeadlessConsumerManifest,
+      packageNames: ["@turingfocus/chat-auth"],
+      forbiddenPackageMarkers: ["react@", "antd@", "react-dom@"],
+      sourceFiles: {
+        "index.ts": [
+          'import { createAuthClient } from "@turingfocus/chat-auth/headless";',
+          'import { createTfRobotAuthTransport } from "@turingfocus/chat-auth/tfrobot";',
+          'if (typeof createAuthClient !== "function" || typeof createTfRobotAuthTransport !== "function") throw new Error("Auth headless exports unavailable");',
+          'console.log("Verified packed auth headless without React or Ant Design.");',
+          "",
+        ].join("\n"),
+      },
+      tsconfig: {
+        compilerOptions: {
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          outDir: "dist",
+          strict: true,
+          target: "ES2022",
+        },
+        include: ["index.ts"],
+      },
     },
     packManifest.packages,
   );
