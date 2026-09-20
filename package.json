@@ -54,7 +54,7 @@
     "typecheck": "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false && tsc -p playground/tsconfig.json --pretty false",
     "changeset": "changeset",
     "changeset:status": "changeset status",
-    "dev:playground": "vite --config playground/vite.config.ts --port 3000 --strictPort",
+    "dev:playground": "vite --config playground/vite.config.ts --port 4311 --strictPort",
     "version-packages": "changeset version"
   },
   "devDependencies": {

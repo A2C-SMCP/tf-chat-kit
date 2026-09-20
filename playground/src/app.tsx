@@ -47,12 +47,40 @@ import {
   readPlaygroundEventDetailSplitRatio,
   writePlaygroundEventDetailSplitRatio,
 } from "./playground-layout-preferences.js";
-import { RobotServerConnectionPanel } from "./robotserver-panel.js";
+import {
+  RobotServerConnectionPanel,
+  type RobotServerConnectionPrefill,
+} from "./robotserver-panel.js";
+import {
+  createPlaygroundAuthClient,
+  PlaygroundAuthGate,
+} from "./playground-auth.js";
+import {
+  loadManagerRobotDirectory,
+  type PlaygroundRobotDescriptor,
+} from "./manager-directory.js";
+import { createManagerRobotServerConnection } from "./manager-robotserver-session.js";
+import {
+  createAuthClient,
+  type AuthClient,
+} from "../../packages/chat-auth/src/headless.js";
+import { createTfRobotAuthTransport } from "../../packages/chat-auth/src/tfrobot.js";
 import {
   createRobotServerPlaygroundSession,
   ROBOTSERVER_TEST_CONVERSATION_PREFIX,
   type RobotServerConnectionConfig,
 } from "./robotserver-session.js";
+
+declare const __TF_CHAT_PLAYGROUND_ALLOWED_SERVER_ORIGINS__: string;
+
+const allowedManagerServerOrigins = (): readonly string[] =>
+  (typeof __TF_CHAT_PLAYGROUND_ALLOWED_SERVER_ORIGINS__ === "string"
+    ? __TF_CHAT_PLAYGROUND_ALLOWED_SERVER_ORIGINS__
+    : ""
+  )
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
 
 export interface PlaygroundAppProps {
   readonly createSession?: (() => PlaygroundSession) | undefined;
@@ -524,12 +552,36 @@ export const PlaygroundApp = ({
   createSession = createMockPlaygroundSession,
   createRobotServerSession = createRobotServerPlaygroundSession,
 }: PlaygroundAppProps) => {
-  const [mode, setMode] = useState<"mock" | "robotserver">("mock");
+  const [authClient, setAuthClient] = useState<AuthClient>(
+    createPlaygroundAuthClient,
+  );
+  const authClientRef = useRef(authClient);
+  const loginGeneration = useRef(0);
+  const authDisposeTimer = useRef<ReturnType<typeof setTimeout>>();
+  const [managerBaseUrl, setManagerBaseUrl] = useState<string | null>(null);
+  const [selectedRobotId, setSelectedRobotId] = useState("research-assistant");
+  const [selectedRobot, setSelectedRobot] = useState<
+    PlaygroundRobotDescriptor | undefined
+  >();
+  const [chatMode, setChatMode] = useState<"mock" | "robotserver">("mock");
+  const [connectionPanelOpen, setConnectionPanelOpen] = useState(false);
   const [sessionPlan, setSessionPlan] = useState<{
     readonly create: () => PlaygroundSession;
     readonly kind: "mock" | "robotserver";
   } | null>(() => ({ create: createSession, kind: "mock" }));
   const [session, setSession] = useState<PlaygroundSession | null>(null);
+
+  useEffect(() => {
+    if (authDisposeTimer.current !== undefined) {
+      clearTimeout(authDisposeTimer.current);
+      authDisposeTimer.current = undefined;
+    }
+    return () => {
+      authDisposeTimer.current = setTimeout(() => {
+        void authClientRef.current.dispose();
+      }, 0);
+    };
+  }, []);
 
   useEffect(() => {
     if (sessionPlan === null) {
@@ -546,52 +598,158 @@ export const PlaygroundApp = ({
   }, [sessionPlan]);
 
   const chooseMock = () => {
-    setMode("mock");
+    loginGeneration.current += 1;
+    setChatMode("mock");
+    setConnectionPanelOpen(false);
     setSessionPlan({ create: createSession, kind: "mock" });
   };
   const chooseRobotServer = () => {
-    setMode("robotserver");
+    setChatMode("robotserver");
+    setConnectionPanelOpen(true);
     setSessionPlan(null);
   };
   const connectRobotServer = (config: RobotServerConnectionConfig) => {
-    setMode("robotserver");
+    setChatMode("robotserver");
+    setConnectionPanelOpen(false);
     setSessionPlan({
       create: () => createRobotServerSession(config),
       kind: "robotserver",
     });
   };
+  const connectManagerRobot = async (): Promise<void> => {
+    if (managerBaseUrl === null || selectedRobot === undefined) {
+      throw new Error("请先登录 Manager 并选择机器人。");
+    }
+    const config = await createManagerRobotServerConnection({
+      client: authClient,
+      managerBaseUrl,
+      robot: selectedRobot,
+      proxyOrigin: window.location.origin,
+      allowedServerOrigins: allowedManagerServerOrigins(),
+    });
+    connectRobotServer(config);
+  };
+  const replaceMockSession = () => {
+    setSessionPlan({ create: createSession, kind: "mock" });
+  };
+  const loginWithManager = async (
+    environment: "staging" | "production" | "custom",
+    baseUrl: string,
+    identifier: string,
+    password: string,
+  ) => {
+    const trimmedBaseUrl = baseUrl.trim();
+    if (!trimmedBaseUrl || !identifier.trim() || !password)
+      throw new Error("请填写 Manager 地址、账号和密码");
+    const generation = ++loginGeneration.current;
+    const client = createAuthClient({
+      // AuthClient only has canonical staging/production scopes; a custom
+      // URL uses staging semantics while retaining its explicit transport URL.
+      environment: environment === "production" ? "production" : "staging",
+      transport: createTfRobotAuthTransport({ baseUrl: trimmedBaseUrl }),
+    });
+    try {
+      await client.login({ identifier: identifier.trim(), password });
+      if (generation !== loginGeneration.current) {
+        await client.dispose();
+        return;
+      }
+      const previous = authClientRef.current;
+      authClientRef.current = client;
+      setAuthClient(client);
+      setManagerBaseUrl(trimmedBaseUrl.replace(/\/$/u, ""));
+      await previous.dispose().catch(() => undefined);
+    } catch (error) {
+      await client.dispose();
+      throw error;
+    }
+  };
+  const loadManagerRobots = useCallback(
+    async (
+      organizationId: string,
+    ): Promise<readonly PlaygroundRobotDescriptor[]> => {
+      if (managerBaseUrl === null) return [];
+      return loadManagerRobotDirectory(
+        authClient,
+        managerBaseUrl,
+        organizationId,
+      );
+    },
+    [authClient, managerBaseUrl],
+  );
 
-  if (mode === "robotserver" && sessionPlan?.kind !== "robotserver") {
-    return (
-      <RobotServerConnectionPanel
-        onCancel={chooseMock}
-        onConnect={connectRobotServer}
-      />
-    );
-  }
+  const handleLogout = () => {
+    loginGeneration.current += 1;
+    setManagerBaseUrl(null);
+    setSelectedRobot(undefined);
+    setSelectedRobotId("research-assistant");
+    if (chatMode === "robotserver") chooseMock();
+  };
 
-  if (session === null) {
-    return (
-      <div aria-label="正在加载调试台" className="playground-fallback">
-        <Spin size="large" />
-      </div>
-    );
-  }
-
-  return (
+  const chatContent = connectionPanelOpen ? (
+    <RobotServerConnectionPanel
+      managerConnect={
+        managerBaseUrl === null || selectedRobot === undefined
+          ? undefined
+          : {
+              disabled: !selectedRobot.canAutoConnect,
+              hint: selectedRobot.canAutoConnect
+                ? "使用当前 Manager 用户和所选机器人自动换取 RobotServer 用户 Token。"
+                : "当前机器人缺少 robotAccountId，请使用下方手工连接。",
+              onConnect: connectManagerRobot,
+            }
+      }
+      prefill={((): RobotServerConnectionPrefill | undefined => {
+        if (selectedRobot === undefined) return undefined;
+        let serverOrigin: string | undefined;
+        if (selectedRobot.socketBaseUrl !== undefined) {
+          try {
+            serverOrigin = new URL(selectedRobot.socketBaseUrl).origin;
+          } catch {
+            serverOrigin = undefined;
+          }
+        }
+        return {
+          ...(selectedRobot.namespace === undefined
+            ? {}
+            : { namespace: selectedRobot.namespace }),
+          ...(selectedRobot.robotId === undefined
+            ? {}
+            : { robotId: selectedRobot.robotId }),
+          ...(serverOrigin === undefined ? {} : { serverOrigin }),
+        };
+      })()}
+      onCancel={chooseMock}
+      onConnect={connectRobotServer}
+    />
+  ) : session === null ? (
+    <div aria-label="正在加载调试台" className="playground-fallback">
+      <Spin size="large" />
+    </div>
+  ) : (
     <PlaygroundWorkspace
       onChooseMock={chooseMock}
       onChooseRobotServer={chooseRobotServer}
-      onReplace={
-        session.kind === "mock"
-          ? () =>
-              setSessionPlan({
-                create: createSession,
-                kind: "mock",
-              })
-          : undefined
-      }
+      onReplace={session.kind === "mock" ? replaceMockSession : undefined}
       session={session}
     />
+  );
+
+  return (
+    <PlaygroundAuthGate
+      client={authClient}
+      onLogout={handleLogout}
+      onRealLogin={loginWithManager}
+      loadRobots={managerBaseUrl === null ? undefined : loadManagerRobots}
+      onSelectionChange={(_organizationId, robot) => {
+        setSelectedRobotId(robot.id);
+        setSelectedRobot(robot);
+        if (chatMode === "mock") replaceMockSession();
+        else if (chatMode === "robotserver") chooseMock();
+      }}
+      robotId={selectedRobotId}
+    >
+      {chatContent}
+    </PlaygroundAuthGate>
   );
 };

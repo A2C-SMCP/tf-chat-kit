@@ -239,6 +239,77 @@ input {
   min-width: 168px;
 }
 
+.playground-auth-panel {
+  width: min(100% - 32px, 520px);
+  margin: 72px auto;
+  padding: 28px;
+  background: #ffffff;
+  border: 1px solid #dbe4f0;
+  border-radius: 16px;
+  box-shadow: 0 18px 50px rgb(15 23 42 / 8%);
+}
+
+.playground-host-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-height: 100vh;
+  padding: 1px 0 32px;
+}
+
+.playground-host-shell .playground-auth-panel {
+  margin-bottom: 0;
+}
+
+.playground-host-shell .playground-page {
+  margin-top: 0;
+}
+
+.playground-auth-panel .ant-form {
+  margin-top: 24px;
+}
+
+.playground-auth-mode {
+  display: flex;
+  margin: 20px 0;
+}
+
+.playground-auth-mode .ant-radio-button-wrapper {
+  flex: 1;
+  text-align: center;
+}
+
+.playground-auth-environment {
+  display: flex;
+}
+
+.playground-auth-environment .ant-radio-button-wrapper {
+  flex: 1;
+  text-align: center;
+}
+
+.playground-auth-real-mode {
+  margin-top: 24px;
+}
+
+.playground-auth-toolbar {
+  width: min(100% - 32px, 1440px);
+  margin: 18px auto 0;
+  padding: 12px 16px;
+  background: #ffffff;
+  border: 1px solid #dbe4f0;
+  border-radius: 12px;
+}
+
+.playground-auth-toolbar select {
+  min-width: 156px;
+  padding: 6px 10px;
+  color: #172033;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+}
+
 @media (max-width: 760px) {
   .playground-page {
     width: min(100% - 20px, 1440px);

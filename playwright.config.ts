@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const playgroundPort = process.env["TF_CHAT_PLAYGROUND_PORT"] ?? "3000";
+const playgroundPort = process.env["TF_CHAT_PLAYGROUND_PORT"] ?? "4311";
 const playgroundOrigin = `http://localhost:${playgroundPort}`;
 
 export default defineConfig({

@@ -59,7 +59,7 @@ const validDraft = (
   httpBaseUrl: "https://robot.example/api/",
   namespace: "",
   platformId: "platform-7",
-  proxyOrigin: "http://localhost:3000",
+  proxyOrigin: "http://localhost:4311",
   robotId: "",
   serverOrigin: "",
   socketNamespaceUrl: "wss://robot.example/chat",
@@ -304,14 +304,14 @@ describe("RobotServer Playground configuration", () => {
         robotId: "de-eed9dc12a94b492ea8e7",
         serverOrigin: "https://staging.turingfocus.cn",
       },
-      "http://localhost:3000",
+      "http://localhost:4311",
     );
     expect(result).toEqual({
       ok: true,
       value: {
         apiOrigin: "https://api.staging.turingfocus.cn",
         httpBaseUrl:
-          "http://localhost:3000/__tfrobot_proxy/https%3A%2F%2Fapi.staging.turingfocus.cn/tfrobot/tfrs-org-18/de-eed9dc12a94b492ea8e7",
+          "http://localhost:4311/__tfrobot_proxy/https%3A%2F%2Fapi.staging.turingfocus.cn/tfrobot/tfrs-org-18/de-eed9dc12a94b492ea8e7",
         namespace: "tfrs-org-18",
         robotId: "de-eed9dc12a94b492ea8e7",
         robotType: "tfrobot",
@@ -344,7 +344,7 @@ describe("RobotServer Playground configuration", () => {
         robotId: "e2e-robot",
         serverOrigin: "http://localhost:4310",
       },
-      "http://localhost:3000",
+      "http://localhost:4311",
       ["http://localhost:4310"],
     );
     expect(result).toMatchObject({

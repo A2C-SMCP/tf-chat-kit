@@ -23,7 +23,8 @@ interface ProxyTarget {
   readonly kind: "chat" | "login";
   readonly namespace: string;
   readonly robotId: string;
-  readonly robotType: "tfrobot";
+  readonly robotType: string;
+  readonly routingHeaders: Readonly<Record<string, string>>;
   readonly upstreamUrl: URL;
 }
 
@@ -86,7 +87,9 @@ const parseTarget = (requestUrl: string): ProxyTarget | undefined => {
   const prefix = `${ROBOTSERVER_PROXY_PREFIX}/`;
   if (!rawPathname.startsWith(prefix)) return undefined;
   const rawParts = rawPathname.slice(prefix.length).split("/");
-  if (/%(?:2e|2f|5c)/iu.test(rawParts.slice(4).join("/"))) {
+  const rawTail = rawParts.slice(4);
+  const rawPathTail = rawTail[0] === "headers" ? rawTail.slice(2) : rawTail;
+  if (/%(?:2e|2f|5c)/iu.test(rawPathTail.join("/"))) {
     return undefined;
   }
   const url = new URL(requestUrl, "http://playground.invalid");
@@ -95,7 +98,7 @@ const parseTarget = (requestUrl: string): ProxyTarget | undefined => {
   const [encodedOrigin, robotType, namespace, robotId, ...rest] = parts;
   if (
     encodedOrigin === undefined ||
-    robotType !== "tfrobot" ||
+    !ROUTING_SEGMENT.test(robotType ?? "") ||
     !ROUTING_SEGMENT.test(namespace ?? "") ||
     !ROUTING_SEGMENT.test(robotId ?? "")
   ) {
@@ -115,7 +118,41 @@ const parseTarget = (requestUrl: string): ProxyTarget | undefined => {
     return undefined;
   }
 
-  const pathname = `/${rest.join("/")}`;
+  let routeHeaders: Readonly<Record<string, string>> = {};
+  let pathParts = rest;
+  if (pathParts[0] === "headers") {
+    const encodedHeaders = pathParts[1];
+    if (encodedHeaders === undefined) return undefined;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(decodeURIComponent(encodedHeaders)) as unknown;
+    } catch {
+      return undefined;
+    }
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed)
+    ) {
+      return undefined;
+    }
+    const entries = Object.entries(parsed as Record<string, unknown>);
+    if (
+      entries.some(
+        ([name, value]) =>
+          !/^x-tf-[a-z0-9-]+$/iu.test(name) ||
+          typeof value !== "string" ||
+          value.length === 0 ||
+          value.length > 512 ||
+          /[\r\n]/u.test(value),
+      )
+    ) {
+      return undefined;
+    }
+    routeHeaders = Object.fromEntries(entries as Array<[string, string]>);
+    pathParts = pathParts.slice(2);
+  }
+  const pathname = `/${pathParts.join("/")}`;
   const kind =
     pathname === LOGIN_PATH && url.search.length === 0 ? "login" : "chat";
   if (kind === "chat" && !CHAT_PATH.test(pathname)) return undefined;
@@ -131,7 +168,8 @@ const parseTarget = (requestUrl: string): ProxyTarget | undefined => {
     kind,
     namespace: namespace!,
     robotId: robotId!,
-    robotType,
+    robotType: robotType!,
+    routingHeaders: routeHeaders,
     upstreamUrl,
   };
 };
@@ -339,6 +377,9 @@ const proxyRequest = async (
     "X-TF-RobotId": target.robotId,
     "X-TF-RobotType": target.robotType,
   });
+  for (const [name, value] of Object.entries(target.routingHeaders)) {
+    headers.set(name, value);
+  }
   if (target.kind === "chat" && authorization !== undefined) {
     headers.set("Authorization", authorization);
   }

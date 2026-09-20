@@ -6,6 +6,8 @@ export interface TFRobotTargetInput {
   readonly namespace: string;
   readonly robotId: string;
   readonly serverOrigin: string;
+  readonly robotType?: string | undefined;
+  readonly routingHeaders?: Readonly<Record<string, string>> | undefined;
 }
 
 export interface TFRobotTarget {
@@ -13,7 +15,7 @@ export interface TFRobotTarget {
   readonly httpBaseUrl: string;
   readonly namespace: string;
   readonly robotId: string;
-  readonly robotType: "tfrobot";
+  readonly robotType: string;
   readonly serverOrigin: string;
   readonly socketNamespaceUrl: string;
   readonly socketPath: string;
@@ -54,6 +56,19 @@ const apiOriginForServer = (serverUrl: URL): string => {
   return apiUrl.origin;
 };
 
+const safeRoutingHeaders = (
+  headers: Readonly<Record<string, string>> | undefined,
+): Readonly<Record<string, string>> =>
+  Object.fromEntries(
+    Object.entries(headers ?? {}).filter(
+      ([name, value]) =>
+        /^x-tf-[a-z0-9-]+$/iu.test(name) &&
+        value.length > 0 &&
+        value.length <= 512 &&
+        !/[\r\n]/u.test(value),
+    ),
+  );
+
 export const parseTFRobotTarget = (
   input: TFRobotTargetInput,
   proxyOrigin: string,
@@ -89,7 +104,13 @@ export const parseTFRobotTarget = (
     };
   }
 
-  const robotType = "tfrobot" as const;
+  const robotType = input.robotType?.trim() || "tfrobot";
+  if (!ROUTING_SEGMENT.test(robotType)) {
+    return {
+      ok: false,
+      message: "Robot Type 只能包含小写字母、数字与连字符。",
+    };
+  }
   const apiOrigin = apiOriginForServer(serverUrl);
   const proxyTarget = [
     ROBOTSERVER_PROXY_PREFIX,
@@ -97,6 +118,14 @@ export const parseTFRobotTarget = (
     robotType,
     namespace,
     robotId,
+    ...(Object.keys(safeRoutingHeaders(input.routingHeaders)).length === 0
+      ? []
+      : [
+          "headers",
+          encodeURIComponent(
+            JSON.stringify(safeRoutingHeaders(input.routingHeaders)),
+          ),
+        ]),
   ].join("/");
 
   return {

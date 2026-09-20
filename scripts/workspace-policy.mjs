@@ -248,7 +248,7 @@ const ROOT_SCRIPT_POLICY = Object.freeze({
   typecheck:
     "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false && tsc -p playground/tsconfig.json --pretty false",
   "dev:playground":
-    "vite --config playground/vite.config.ts --port 3000 --strictPort",
+    "vite --config playground/vite.config.ts --port 4311 --strictPort",
   changeset: "changeset",
   "changeset:status": "changeset status",
   "version-packages": "changeset version",

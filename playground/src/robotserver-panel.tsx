@@ -39,10 +39,24 @@ const loadDefaultDebugPrefill: RobotServerDebugPrefillLoader = async (
 };
 
 export interface RobotServerConnectionPanelProps {
+  readonly prefill?: RobotServerConnectionPrefill | undefined;
+  readonly managerConnect?:
+    | {
+        readonly disabled?: boolean | undefined;
+        readonly hint?: string | undefined;
+        readonly onConnect: () => Promise<void>;
+      }
+    | undefined;
   readonly loadDebugPrefill?: RobotServerDebugPrefillLoader | undefined;
   readonly loginWithPassword?: PasswordLogin | undefined;
   readonly onCancel: () => void;
   readonly onConnect: (config: RobotServerConnectionConfig) => void;
+}
+
+export interface RobotServerConnectionPrefill {
+  readonly namespace?: string | undefined;
+  readonly robotId?: string | undefined;
+  readonly serverOrigin?: string | undefined;
 }
 
 const allowedServerOrigins = (): readonly string[] =>
@@ -55,6 +69,8 @@ const allowedServerOrigins = (): readonly string[] =>
     .filter(Boolean);
 
 export const RobotServerConnectionPanel = ({
+  prefill,
+  managerConnect,
   loadDebugPrefill = loadDefaultDebugPrefill,
   loginWithPassword = loginRobotServerWithPassword,
   onCancel,
@@ -68,12 +84,13 @@ export const RobotServerConnectionPanel = ({
   const [error, setError] = useState<string>();
   const [httpBaseUrl, setHttpBaseUrl] = useState("");
   const [loading, setLoading] = useState(false);
-  const [namespace, setNamespace] = useState("");
+  const [managerLoading, setManagerLoading] = useState(false);
+  const [namespace, setNamespace] = useState(prefill?.namespace ?? "");
   const [platformId, setPlatformId] = useState("");
   const [prefillError, setPrefillError] = useState<string>();
-  const [robotId, setRobotId] = useState("");
+  const [robotId, setRobotId] = useState(prefill?.robotId ?? "");
   const [secret, setSecret] = useState("");
-  const [serverOrigin, setServerOrigin] = useState("");
+  const [serverOrigin, setServerOrigin] = useState(prefill?.serverOrigin ?? "");
   const [socketNamespaceUrl, setSocketNamespaceUrl] = useState("");
   const [socketPath, setSocketPath] = useState("");
   const debugPrefillController = useRef<AbortController>();
@@ -131,6 +148,13 @@ export const RobotServerConnectionPanel = ({
       });
     return () => controller.abort();
   }, [loadDebugPrefill]);
+
+  useEffect(() => {
+    if (userEdited.current) return;
+    setNamespace(prefill?.namespace ?? "");
+    setRobotId(prefill?.robotId ?? "");
+    setServerOrigin(prefill?.serverOrigin ?? "");
+  }, [prefill?.namespace, prefill?.robotId, prefill?.serverOrigin]);
 
   const markEdited = (): void => {
     userEdited.current = true;
@@ -233,6 +257,37 @@ export const RobotServerConnectionPanel = ({
               : "填写机器人路由信息并选择鉴权方式。密码或 Token 只在当前页面内存中使用，刷新即清除。"}
           </Typography.Paragraph>
         </div>
+
+        {managerConnect === undefined ? null : (
+          <Space direction="vertical" size={4}>
+            <Button
+              disabled={managerConnect.disabled || managerLoading}
+              loading={managerLoading}
+              onClick={() => {
+                setError(undefined);
+                setManagerLoading(true);
+                void managerConnect
+                  .onConnect()
+                  .catch((reason: unknown) => {
+                    setError(
+                      reason instanceof Error
+                        ? reason.message
+                        : "Manager 一键连接失败",
+                    );
+                  })
+                  .finally(() => setManagerLoading(false));
+              }}
+              type="primary"
+            >
+              Manager 一键连接
+            </Button>
+            {managerConnect.hint === undefined ? null : (
+              <Typography.Text type="secondary">
+                {managerConnect.hint}
+              </Typography.Text>
+            )}
+          </Space>
+        )}
 
         {error === undefined ? null : (
           <Alert message={error} showIcon type="error" />

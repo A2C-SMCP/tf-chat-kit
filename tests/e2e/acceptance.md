@@ -4,11 +4,22 @@ All automated scenarios run only against the repository-owned Memory Gateway or
 the approximate HTTP/Socket.IO service. A real RobotServer remains an optional
 manual compatibility target and is never required by CI.
 
+## Issue #97 identity and ChatKit separation
+
+| Acceptance criterion                                                                                                                   | Evidence                                                                                                                                                                                                               |
+| -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mock ChatKit can render before login and remains independent from identity state                                                       | `Mock ChatKit does not require login and the identity toolbar can log out`                                                                                                                                             |
+| Identity supports Mock/Manager, staging/production/custom Manager, account or organization context, robot directory and logout         | The three Manager browser scenarios plus the logout flow in `tests/e2e/playground.spec.ts`                                                                                                                             |
+| Manager robot directory keeps employee ID, robot ID and robot account ID distinct, and strips legacy token fields from routing headers | `tests/playground-manager-directory.test.ts`                                                                                                                                                                           |
+| RobotServer mode keeps the existing explicit credential form and releases the previous ChatKit instance before reconnecting            | Bearer/Admin/password RobotServer scenarios and the existing lifecycle assertions                                                                                                                                      |
+| Manager bearer is not silently reused as a RobotServer credential; automatic connection remains capability-gated                       | Manager connection-info plus RFC 8693 exchange tests verify `robot:{robotAccountId}`, `chat:read chat:send`, `token_profile=session`, short-token caching, and the manual fallback for robots without `robotAccountId` |
+| Public ChatKit package boundaries and authentication ownership remain unchanged                                                        | No public ChatKit runtime/UI package API was changed by this feature; the separate `chat-auth` transport compatibility fixes remain host-independent and are covered by their own tests                                |
+
 ## Parent #10
 
 | Acceptance criterion                                                                                                              | Evidence                                                                                                                         |
 | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Local Playground at `http://localhost:3000` using the formal Runtime, React, and Ant Design packages                              | Playwright starts the private Vite app on port 3000; workspace aliases and the production build are checked by `pnpm check`.     |
+| Local Playground at `http://localhost:4311` using the formal Runtime, React, and Ant Design packages                              | Playwright starts the private Vite app on port 4311; workspace aliases and the production build are checked by `pnpm check`.     |
 | Mock mode covers conversations, messages, streaming, interrupt, and errors without an external project                            | `Mock mode renders and exercises the formal Runtime scenarios`.                                                                  |
 | Real mode derives HTTP/Socket settings from service origin, Namespace and Robot ID, and accepts password/Bearer/Admin credentials | Password, Bearer and Admin Playwright scenarios plus parser/proxy tests; direct endpoints and creator overrides remain advanced. |
 | A compatible RobotServer supports query, create, send, realtime updates, and interrupt                                            | `Bearer mode covers create, send, stream, interrupt, reconnect, CORS and disposal`.                                              |
@@ -49,7 +60,7 @@ manual compatibility target and is never required by CI.
 
 ## Issue #58 capability demonstrations
 
-Start `pnpm dev:playground`, open `http://localhost:3000`, and use the **能力演示**
+Start `pnpm dev:playground`, open `http://localhost:4311`, and use the **能力演示**
 buttons in Mock mode. Switching scenarios replaces the current local demo timeline and cancels
 pending mock streaming; the input draft remains. **重建实例** resets the demo and its private-resource
 failure simulation. RobotServer mode does not expose these mock fixtures or document/resource ports.
@@ -62,7 +73,7 @@ failure simulation. RobotServer mode does not expose these mock fixtures or docu
 | 长结果与事件导航 | Full received result expansion, both transition tabs, follow latest vs manual selection; 390px modal and no horizontal overflow |
 | 文档引用         | Injected source selection, reference draft placeholder, sending both original text paragraphs through Runtime                   |
 
-Run `TF_CHAT_PLAYGROUND_PORT=3001 pnpm test:e2e` while keeping the manual playground on port 3000.
+Run `TF_CHAT_PLAYGROUND_PORT=4312 pnpm test:e2e` while keeping the manual playground on port 4311.
 The four added tests live in `capability-scenarios.spec.ts`; screenshots are written under `test-results/`
 for tool detail, media, references and mobile inspection. They exercise real Chromium media playback,
 clipboard and download APIs, with no route interception or external data. This is local browser
@@ -96,7 +107,7 @@ while Diagnostics retains both occurrences. Keyboard Enter opens the diagnostic 
 copy the current conversation and an individual record, close with Escape and verify
 focus returns to the trigger. Chat content and input remain separate from notices.
 
-Focused browser gate: `TF_CHAT_PLAYGROUND_PORT=3001 pnpm test:e2e tests/e2e/session-diagnostics.spec.ts`.
+Focused browser gate: `TF_CHAT_PLAYGROUND_PORT=4312 pnpm test:e2e tests/e2e/session-diagnostics.spec.ts`.
 Timing, recovery, cache and instance disposal are additionally covered by deterministic
 DOM/Runtime suites, with actual HTTP/Socket.IO metadata tested on ephemeral local ports.
 No server seed, external credentials or production data are required.

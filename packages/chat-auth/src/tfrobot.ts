@@ -46,7 +46,7 @@ type AuthResponse = {
 const defaultFetch: TfRobotFetch = async (input, init) => {
   if (typeof globalThis.fetch !== "function")
     throw new TfRobotAuthError("network", "Fetch is unavailable");
-  return (globalThis.fetch(input, init) as unknown) as AuthResponse;
+  return globalThis.fetch(input, init) as unknown as AuthResponse;
 };
 
 const objectOf = (value: unknown): Record<string, unknown> =>
@@ -65,24 +65,50 @@ const stringField = (
   return undefined;
 };
 
+const scalarStringField = (
+  value: Record<string, unknown>,
+  ...names: string[]
+): string | undefined => {
+  for (const name of names) {
+    const candidate = value[name];
+    if (
+      (typeof candidate === "string" && candidate.length > 0) ||
+      (typeof candidate === "number" && Number.isFinite(candidate))
+    )
+      return String(candidate);
+  }
+  return undefined;
+};
+
+const dataFrom = (value: unknown): unknown => {
+  const record = objectOf(value);
+  return record["data"] === undefined ? value : record["data"];
+};
+
 const accountFrom = (value: unknown): AccountContext => {
   const record = objectOf(value);
-  const userId = stringField(record, "userId", "uid", "user_id");
-  const accountId = stringField(record, "accountId", "id", "account_id");
+  const userId = scalarStringField(record, "userId", "uid", "user_id", "id");
+  const accountId = scalarStringField(record, "accountId", "id", "account_id");
   if (userId === undefined || accountId === undefined) {
     throw new TfRobotAuthError(
       "invalid_response",
       "TFRobot auth response did not contain an account",
     );
   }
-  const organizationId = stringField(
+  const organizationId = scalarStringField(
     record,
     "organizationId",
     "organization_id",
     "orgId",
     "org_id",
   );
-  const displayName = stringField(record, "displayName", "name", "username");
+  const displayName = stringField(
+    record,
+    "displayName",
+    "accountName",
+    "name",
+    "username",
+  );
   return {
     userId,
     accountId,
@@ -123,8 +149,9 @@ const resultFrom = (
   payload: unknown,
   session: AuthSession | null,
 ): LoginResult => {
-  const record = objectOf(payload);
-  const accounts = accountsFrom(payload);
+  const data = dataFrom(payload);
+  const record = objectOf(data);
+  const accounts = accountsFrom(data);
   if (
     accounts.length > 1 ||
     record["accountSelectionRequired"] === true ||
@@ -132,7 +159,7 @@ const resultFrom = (
   ) {
     return { kind: "account-selection-required", accounts };
   }
-  const accountValue = record["account"] ?? record["user"] ?? payload;
+  const accountValue = record["account"] ?? record["user"] ?? data;
   const account = accountFrom(accountValue);
   if (
     record["onboardingRequired"] === true ||
@@ -154,7 +181,8 @@ export const createTfRobotAuthTransport = (
 ): AuthTransport => {
   const parsedBaseUrl = new URL(options.baseUrl);
   if (
-    (parsedBaseUrl.protocol !== "http:" && parsedBaseUrl.protocol !== "https:") ||
+    (parsedBaseUrl.protocol !== "http:" &&
+      parsedBaseUrl.protocol !== "https:") ||
     parsedBaseUrl.username !== "" ||
     parsedBaseUrl.password !== "" ||
     parsedBaseUrl.search !== "" ||
@@ -185,10 +213,11 @@ export const createTfRobotAuthTransport = (
     } catch {
       payload = undefined;
     }
+    const serverMessage = stringField(objectOf(payload), "message", "detail");
     if (response.status === 401)
       throw new TfRobotAuthError(
         "authentication_required",
-        "Authentication is required",
+        serverMessage ?? "Authentication is required",
         401,
       );
     if (response.status === 403)
@@ -206,13 +235,14 @@ export const createTfRobotAuthTransport = (
     if (response.status < 200 || response.status >= 300)
       throw new TfRobotAuthError(
         "unknown",
-        "TFRobot authentication request failed",
+        serverMessage ?? "TFRobot authentication request failed",
         response.status,
       );
     return payload;
   };
 
   let currentSession: AuthSession | null = null;
+  let pendingTempToken: string | undefined;
   const authHeaders = () =>
     currentSession === null
       ? {}
@@ -225,34 +255,47 @@ export const createTfRobotAuthTransport = (
 
   return {
     async login(input: LoginInput) {
+      const identifier = input.identifier.trim();
+      const credentials = identifier.includes("@")
+        ? { email: identifier, password: input.password }
+        : { phone: identifier, password: input.password };
       const payload = await request(
         "/auth/login-by-password",
-        json({
-          identifier: input.identifier,
-          ["password"]: input.password,
-        }),
+        json(credentials),
       );
-      const session = tokenFrom(payload);
-      if (session !== null) currentSession = session;
+      const data = dataFrom(payload);
+      const session = tokenFrom(data);
+      pendingTempToken = stringField(objectOf(data), "tempToken", "temp_token");
+      if (session !== null) {
+        currentSession = session;
+        pendingTempToken = undefined;
+      }
       return resultFrom(payload, session);
     },
     async selectAccount(accountId: string) {
-      const payload = await request(
-        "/auth/select-account",
-        json({ accountId }),
-      );
-      const session = tokenFrom(payload);
-      if (session !== null) currentSession = session;
+      const body =
+        pendingTempToken === undefined
+          ? { accountId }
+          : { tempToken: pendingTempToken, accountId };
+      const payload = await request("/auth/select-account", json(body));
+      const data = dataFrom(payload);
+      const session = tokenFrom(data);
+      if (session !== null) {
+        currentSession = session;
+        pendingTempToken = undefined;
+      }
       return resultFrom(payload, session ?? currentSession);
     },
     async getCurrentAccount() {
       return accountFrom(
-        await request("/api/v1/auth/me", { headers: authHeaders() }),
+        dataFrom(await request("/api/v1/auth/me", { headers: authHeaders() })),
       );
     },
     async listAccounts() {
       return accountsFrom(
-        await request("/api/v1/accounts/my", { headers: authHeaders() }),
+        dataFrom(
+          await request("/api/v1/accounts/my", { headers: authHeaders() }),
+        ),
       );
     },
     async switchAccount(accountId: string) {
@@ -260,10 +303,14 @@ export const createTfRobotAuthTransport = (
         "/api/v1/auth/switch-account",
         json({ accountId }),
       );
-      const session = tokenFrom(payload);
+      const data = dataFrom(payload);
+      const session = tokenFrom(data);
       if (session !== null) currentSession = session;
       const accountValue =
-        objectOf(payload)["account"] ?? objectOf(payload)["user"] ?? payload;
+        objectOf(data)["identity"] ??
+        objectOf(data)["account"] ??
+        objectOf(data)["user"] ??
+        data;
       return accountFrom(accountValue);
     },
     async getSession() {

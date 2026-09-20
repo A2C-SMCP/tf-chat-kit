@@ -1,4 +1,8 @@
-import type { ChatError, ChatSnapshot } from "@turingfocus/chat-protocol";
+import type {
+  ChatError,
+  ChatSnapshot,
+  SessionProvider,
+} from "@turingfocus/chat-protocol";
 import {
   createChatClient,
   createConversationWorkspaceController,
@@ -39,6 +43,7 @@ export interface RobotServerConnectionTargetDraft {
   readonly platformId: string;
   readonly proxyOrigin: string;
   readonly robotId: string;
+  readonly routingHeaders?: Readonly<Record<string, string>> | undefined;
   readonly serverOrigin: string;
   readonly socketNamespaceUrl: string;
   readonly socketPath: string;
@@ -61,7 +66,9 @@ export interface RobotServerConnectionTargetConfig {
 }
 
 export interface RobotServerConnectionConfig extends RobotServerConnectionTargetConfig {
-  readonly credential: TFRobotSession;
+  readonly credential?: TFRobotSession | undefined;
+  readonly sessionProvider?: SessionProvider<TFRobotSession> | undefined;
+  readonly disposeSession?: (() => void | Promise<void>) | undefined;
 }
 
 export type RobotServerConnectionValidation =
@@ -113,12 +120,17 @@ export const validateRobotServerTarget = (
         namespace: draft.namespace,
         robotId: draft.robotId,
         serverOrigin: draft.serverOrigin,
+        ...(draft.routingHeaders === undefined
+          ? {}
+          : { routingHeaders: draft.routingHeaders }),
       },
       draft.proxyOrigin,
       draft.allowedServerOrigins,
     );
     if (!target.ok) return target;
     ({ httpBaseUrl, socketNamespaceUrl, socketPath } = target.value);
+    if (draft.socketPath.trim().length > 0)
+      socketPath = draft.socketPath.trim();
   } else {
     const parsedHttpBaseUrl = parseEndpoint(draft.httpBaseUrl, [
       "http:",
@@ -145,7 +157,11 @@ export const validateRobotServerTarget = (
       };
     }
     socketPath = draft.socketPath.trim();
-    if (!socketPath.startsWith("/") || /\s/u.test(socketPath)) {
+    if (
+      !socketPath.startsWith("/") ||
+      /\s/u.test(socketPath) ||
+      socketPath.includes("..")
+    ) {
       return {
         ok: false,
         message: "Socket Path 必须以 / 开头，且不能包含空白字符。",
@@ -153,6 +169,16 @@ export const validateRobotServerTarget = (
     }
     httpBaseUrl = parsedHttpBaseUrl;
     socketNamespaceUrl = parsedSocketNamespaceUrl;
+  }
+  if (
+    !socketPath.startsWith("/") ||
+    /\s/u.test(socketPath) ||
+    socketPath.includes("..")
+  ) {
+    return {
+      ok: false,
+      message: "Socket Path 必须是安全的绝对路径。",
+    };
   }
   const platformId = draft.platformId.trim();
   const creatorName = draft.creatorName.trim() || "CurrentUser";
@@ -276,6 +302,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
   #intentRevision = 0;
   #lastClientSnapshot: ChatSnapshot | null = null;
   readonly #listeners = new Set<() => void>();
+  readonly #disposeSession: (() => void | Promise<void>) | undefined;
   readonly #ownedTestConversationIds = new Set<string>();
   readonly #testConversationCreations = new Set<
     ReturnType<ConversationWorkspaceController["createConversation"]>
@@ -297,6 +324,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
     dependencies: RobotServerSessionDependencies,
   ) {
     this.#now = dependencies.now ?? Date.now;
+    this.#disposeSession = config.disposeSession;
     const gatewayOptions: TFRobotGatewayOptions = {
       baseUrl: config.httpBaseUrl,
       fetch: dependencies.fetch,
@@ -307,9 +335,16 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
       ...(config.platformId === undefined
         ? {}
         : { platformId: config.platformId }),
-      sessionProvider: {
-        getSession: () => config.credential,
-      },
+      sessionProvider:
+        config.sessionProvider ??
+        ({
+          getSession: () => {
+            if (config.credential === undefined) {
+              throw new Error("RobotServer 凭据未配置");
+            }
+            return config.credential;
+          },
+        } satisfies SessionProvider<TFRobotSession>),
       socketFactory: dependencies.socketFactory,
       socketNamespaceUrl: config.socketNamespaceUrl,
       socketPath: config.socketPath,
@@ -585,6 +620,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
     this.#listeners.clear();
     this.attachmentUploader.dispose();
     await this.client.dispose({ deadlineAt: this.#now() + REQUEST_TIMEOUT_MS });
+    await this.#disposeSession?.();
   }
 
   #handleError(error: ChatError): void {

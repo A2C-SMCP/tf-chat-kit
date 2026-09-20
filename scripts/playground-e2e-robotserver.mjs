@@ -5,7 +5,7 @@ import { Server as SocketServer } from "socket.io";
 const HOST = "127.0.0.1";
 const PORT = 4310;
 const PLAYGROUND_ORIGIN =
-  process.env["TF_CHAT_PLAYGROUND_ORIGIN"] ?? "http://localhost:3000";
+  process.env["TF_CHAT_PLAYGROUND_ORIGIN"] ?? "http://localhost:4311";
 /** @typedef {{ conversationId: number; description: null; title: string; updateTimestamp: number }} ConversationDto */
 /** @typedef {{ activeSockets: number; adminRequests: number; bearerRequests: number; contentTypeRequests: number; conversationDeletes: number; conversationRenames: number; corsPreflights: number; interrupts: number; invalidOrigins: number; joins: number; passwordLogins: number; rejectedRest: { missing: number; wrong: number }; rejectedSockets: { missing: number; wrong: number }; routedRequests: number; socketConnections: number; socketDisconnections: number }} Observations */
 /** @type {Map<string, ConversationDto>} */
