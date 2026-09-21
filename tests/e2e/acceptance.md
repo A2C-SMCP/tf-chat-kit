@@ -8,11 +8,13 @@ manual compatibility target and is never required by CI.
 
 | Acceptance criterion                                                                                                                   | Evidence                                                                                                                                                                                                               |
 | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Playground landing page separates Chat Kit debugging from Manager identity and robot workflows                                         | `PlaygroundApp` renders two explicit module cards; Chat Kit starts Mock without login, while 登录与机器人 owns Manager auth, organization/robot selection and the quick-chat entry.                                    |
 | Mock ChatKit can render before login and remains independent from identity state                                                       | `Mock ChatKit does not require login and the identity toolbar can log out`                                                                                                                                             |
 | Identity supports Mock/Manager, staging/production/custom Manager, account or organization context, robot directory and logout         | The three Manager browser scenarios plus the logout flow in `tests/e2e/playground.spec.ts`                                                                                                                             |
 | Manager robot directory keeps employee ID, robot ID and robot account ID distinct, and strips legacy token fields from routing headers | `tests/playground-manager-directory.test.ts`                                                                                                                                                                           |
 | RobotServer mode keeps the existing explicit credential form and releases the previous ChatKit instance before reconnecting            | Bearer/Admin/password RobotServer scenarios and the existing lifecycle assertions                                                                                                                                      |
 | Manager bearer is not silently reused as a RobotServer credential; automatic connection remains capability-gated                       | Manager connection-info plus RFC 8693 exchange tests verify `robot:{robotAccountId}`, `chat:read chat:send`, `token_profile=session`, short-token caching, and the manual fallback for robots without `robotAccountId` |
+| Manager automatic connection exchanges the token through the browser fetch in a real browser                                           | `真实用户模式的 Token Exchange 走浏览器 fetch 并建立当前机器人会话` plus the receiver-contract unit test in `tests/manager-token-exchange.test.ts`                                                                     |
 | Public ChatKit package boundaries and authentication ownership remain unchanged                                                        | No public ChatKit runtime/UI package API was changed by this feature; the separate `chat-auth` transport compatibility fixes remain host-independent and are covered by their own tests                                |
 
 ## Parent #10
@@ -60,10 +62,11 @@ manual compatibility target and is never required by CI.
 
 ## Issue #58 capability demonstrations
 
-Start `pnpm dev:playground`, open `http://localhost:4311`, and use the **能力演示**
-buttons in Mock mode. Switching scenarios replaces the current local demo timeline and cancels
-pending mock streaming; the input draft remains. **重建实例** resets the demo and its private-resource
-failure simulation. RobotServer mode does not expose these mock fixtures or document/resource ports.
+Start `pnpm dev:playground`, open `http://localhost:4311`, enter **Chat Kit 调试**, and use the
+**能力演示** buttons in Mock mode. Switching scenarios replaces the current local demo timeline and
+cancels pending mock streaming; the input draft remains. Return to the Playground landing page and
+re-enter Chat Kit to create a fresh demo instance. RobotServer mode does not expose these mock
+fixtures or document/resource ports.
 
 | Scenario         | Browser acceptance                                                                                                              |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |

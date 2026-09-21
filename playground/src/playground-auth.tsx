@@ -105,6 +105,7 @@ export const createPlaygroundAuthClient = (): AuthClient =>
 const OrganizationAndRobotPicker = ({
   loadRobots,
   onRobotChange,
+  onSelectionReset,
   onSelectionChange,
   robotId,
 }: {
@@ -114,6 +115,7 @@ const OrganizationAndRobotPicker = ({
       ) => Promise<readonly PlaygroundRobotDescriptor[]>)
     | undefined;
   readonly onRobotChange: (robotId: string) => void;
+  readonly onSelectionReset: () => void;
   readonly onSelectionChange: (
     organizationId: string,
     robot: PlaygroundRobotDescriptor,
@@ -127,6 +129,7 @@ const OrganizationAndRobotPicker = ({
     readonly PlaygroundRobotDescriptor[] | undefined
   >();
   const robotRequest = useRef(0);
+  const accountSwitchRequest = useRef(0);
   const remoteSelectionKey = useRef<string>();
   useEffect(() => {
     if (account === undefined) return;
@@ -193,9 +196,13 @@ const OrganizationAndRobotPicker = ({
         aria-label="选择组织"
         onChange={(event) => {
           const accountId = event.target.value;
+          const requestId = ++accountSwitchRequest.current;
+          onSelectionReset();
+          onRobotChange("");
           void client
             .switchAccount(accountId)
             .then((nextAccount) => {
+              if (requestId !== accountSwitchRequest.current) return;
               const nextRobots =
                 loadRobots === undefined
                   ? (robotsByOrganization[accountId] ?? []).map(mockRobot)
@@ -259,6 +266,7 @@ const PlaygroundAuthGateContent = ({
   client,
   onLogout,
   onRealLogin,
+  onSelectionReset,
   onSelectionChange,
   loadRobots,
   robotId: selectedRobotId,
@@ -275,6 +283,7 @@ const PlaygroundAuthGateContent = ({
     organizationId: string,
     robot: PlaygroundRobotDescriptor,
   ) => void;
+  readonly onSelectionReset: () => void;
   readonly loadRobots?:
     | ((
         organizationId: string,
@@ -447,6 +456,7 @@ const PlaygroundAuthGateContent = ({
           <OrganizationSwitcher />
           <OrganizationAndRobotPicker
             onRobotChange={setRobotId}
+            onSelectionReset={onSelectionReset}
             onSelectionChange={onSelectionChange}
             loadRobots={loadRobots}
             robotId={robotId}
@@ -472,6 +482,7 @@ export const PlaygroundAuthGate = ({
   client,
   onLogout,
   onRealLogin,
+  onSelectionReset,
   onSelectionChange,
   loadRobots,
   robotId,
@@ -489,6 +500,7 @@ export const PlaygroundAuthGate = ({
     organizationId: string,
     robot: PlaygroundRobotDescriptor,
   ) => void;
+  readonly onSelectionReset: () => void;
   readonly loadRobots?:
     | ((
         organizationId: string,
@@ -502,6 +514,7 @@ export const PlaygroundAuthGate = ({
         client={client}
         onLogout={onLogout}
         onRealLogin={onRealLogin}
+        onSelectionReset={onSelectionReset}
         onSelectionChange={onSelectionChange}
         loadRobots={loadRobots}
         robotId={robotId}

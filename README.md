@@ -91,9 +91,13 @@ pnpm check
 pnpm pack:workspace
 ```
 
-`pnpm dev:playground` 会在 `http://localhost:4311` 启动仓库私有演示应用。Playground 将身份与聊天后端分成两个独立区域：身份区域可以选择 Mock 或真实用户模式；真实用户模式可选择 staging、正式或自定义 Manager 地址，默认使用 staging，使用 Manager 的用户级用户名/密码登录接口，登录后读取该用户的账号、组织与机器人目录，并支持登出。自定义地址仅属于本地 Playground 宿主，不改变公开 `chat-auth` 的固定环境契约。聊天区域可以在无需登录的 Mock ChatKit 和 RobotServer ChatKit 之间切换；Manager 身份与 Mock 聊天可以组合使用。选择包含 `robotAccountId` 的运行中 Manager 机器人后，RobotServer 连接页提供“Manager 一键连接”：先读取 `connection-info`，再按 RFC 8693 使用 Manager 用户 JWT 换取 `robot:{robotAccountId}` 的 session-profile 用户 Token，最后把短 Token 交给 ChatKit 的 HTTP/Socket 会话提供器；Manager JWT 不会作为 RobotServer 凭据发送。缺少该元数据的机器人仍可使用手工连接表单。
-正式 Runtime、React、Ant Design UI 与 Memory Gateway，提供会话创建/重命名/删除/切换、历史、流式回复、
-中断、错误、断线和重连场景。新增“能力演示”入口提供工具呈现、媒体资源、Markdown、长结果导航和文档引用五组可交互示例，详见 [Playground 验收说明](tests/e2e/acceptance.md#issue-58-capability-demonstrations)。RobotServer 模式使用全中文单列表单，填写 RobotServer 服务地址、
+`pnpm dev:playground` 会在 `http://localhost:4311` 启动仓库私有演示应用。进入 Playground 后先选择一个独立模块：
+
+- **Chat Kit 调试**：不依赖 Manager 登录。默认进入 Mock ChatKit，用于验证正式 Runtime、React、Ant Design UI、Memory Gateway、会话历史、流式回复、中断、错误、断线和重连；也可以切换到 RobotServer 模式，手工填写地址、Namespace、Robot ID 与凭据，验证真实 HTTP/Socket Gateway。
+- **登录与机器人**：专注 Manager 用户登录、staging/正式/自定义环境、组织切换、机器人切换和登出。登录后只展示当前组织/机器人信息与一个“当前机器人快速对话”入口，不承载完整 ChatKit 能力演示。选择包含 `robotAccountId` 的 Manager 机器人后，可以一键读取 `connection-info`，按 RFC 8693 使用 Manager 用户 JWT 换取 `robot:{robotAccountId}` 的 session-profile 用户 Token，再建立一条最小 RobotServer 会话；Manager JWT 不会作为 RobotServer 凭据发送。
+
+自定义 Manager 地址仅属于本地 Playground 宿主，不改变公开 `chat-auth` 的固定环境契约。缺少 `robotAccountId` 的机器人不会提供可用的自动连接；如果 Manager 的 `connection-info` 缺失或不完整，连接时会显示明确错误，需要完整调试时请返回 **Chat Kit 调试** 使用手工 RobotServer 连接表单。
+Chat Kit 调试模块还提供会话创建/重命名/删除/切换、历史、中断、错误、断线和重连场景；新增“能力演示”入口提供工具呈现、媒体资源、Markdown、长结果导航和文档引用五组可交互示例，详见 [Playground 验收说明](tests/e2e/acceptance.md#issue-58-capability-demonstrations)。RobotServer 模式使用全中文单列表单，填写 RobotServer 服务地址、
 Namespace 与 Robot ID 后，Playground 会推导 API 域名和 Socket namespace/path，并由仅存在于本地
 Vite 开发服务中的同源代理为聊天请求注入 RobotServer 路由头。鉴权可使用管理员密码、Admin Token
 或用户 Token；管理员密码只用于调用 `/v1/auth/login` 换取短期 Admin Token，不会进入聊天会话。

@@ -47,6 +47,7 @@ const fillConnection = async (
   auth: "admin" | "bearer" | "password",
   credential: string,
 ) => {
+  await enterChatKit(page);
   await page.getByRole("button", { name: "RobotServer 模式" }).click();
   await page.getByLabel("RobotServer 服务地址").fill(ROBOTSERVER);
   await page.getByLabel("Namespace").fill("e2e-ns");
@@ -72,7 +73,27 @@ const fillConnection = async (
   await page.getByRole("button", { name: "连接 RobotServer" }).click();
 };
 
+const enterChatKit = async (page: Page) => {
+  const entry = page.locator("article.playground-module-card").first();
+  if (await entry.count()) {
+    await entry.click();
+  }
+  await expect(
+    page.getByRole("heading", { name: "Chat Kit 调试台" }),
+  ).toBeVisible();
+};
+
+const enterManager = async (page: Page) => {
+  const entry = page.locator("article.playground-module-card").nth(1);
+  if (await entry.count()) {
+    await entry.click();
+  }
+  await expect(page.getByRole("heading", { name: "身份与目录" })).toBeVisible();
+};
+
 const loginPlayground = async (page: Page) => {
+  await enterManager(page);
+  await page.getByText("Mock 模式", { exact: true }).click();
   await page.getByLabel("登录", { exact: true }).fill("demo-user");
   await page.getByLabel("Password", { exact: true }).fill("demo-password");
   await page.locator('button[type="submit"]').click();
@@ -123,7 +144,14 @@ const composerSendButton = (page: Page) =>
     .locator('[data-chat-composer=""]')
     .getByRole("button", { name: /发\s*送(?:中)?$/ });
 
-const installManagerRoute = async (page: Page, origin: string) => {
+const installManagerRoute = async (
+  page: Page,
+  origin: string,
+  options: {
+    readonly connectable?: boolean | undefined;
+    readonly onTokenExchange?: ((body: URLSearchParams) => void) | undefined;
+  } = {},
+) => {
   await page.route(`${origin}/**`, async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
@@ -164,14 +192,84 @@ const installManagerRoute = async (page: Page, origin: string) => {
       });
       return;
     }
+    if (path === "/api/v1/oauth/token") {
+      options.onTokenExchange?.(
+        new URLSearchParams(route.request().postData() ?? ""),
+      );
+      await route.fulfill({
+        json: { access_token: "bearer-good", expires_in: 3_600 },
+      });
+      return;
+    }
+    if (path.endsWith("/connection-info")) {
+      await route.fulfill({
+        json: {
+          data: {
+            namespace: "e2e-ns",
+            rid: "e2e-robot",
+            robotType: "tfrobot",
+            socketBaseURL: ROBOTSERVER,
+          },
+        },
+      });
+      return;
+    }
     expect(route.request().headers()["authorization"]).toBe(
       "Bearer manager-user-token",
     );
     await route.fulfill({
-      json: { data: { items: [{ robotId: "robot-real" }] } },
+      json: {
+        data: {
+          items: [
+            options.connectable === true
+              ? {
+                  id: "de-e2e",
+                  name: "通用",
+                  robotAccountId: "one-person-org-3:000001",
+                  robotId: "e2e-robot",
+                  status: "running",
+                  templateType: "tfrserver",
+                }
+              : { robotId: "robot-real" },
+          ],
+        },
+      },
     });
   });
 };
+
+test("真实用户模式的 Token Exchange 走浏览器 fetch 并建立当前机器人会话", async ({
+  page,
+}) => {
+  const exchanges: URLSearchParams[] = [];
+  await installManagerRoute(page, "https://api-staging.turingfocus.cn", {
+    connectable: true,
+    onTokenExchange: (body) => exchanges.push(body),
+  });
+  await page.goto("/");
+  await enterManager(page);
+  await page.getByText("真实用户模式", { exact: true }).click();
+  await page.getByLabel("用户账号").fill("real-user");
+  await page.getByLabel("用户密码").fill("real-password");
+  await page.getByRole("button", { name: "用户登录" }).click();
+  await expect(page.getByText("当前机器人：通用")).toBeVisible();
+
+  await page.getByRole("button", { name: "连接当前机器人并开始对话" }).click();
+  await expect(page.getByText("当前机器人对话", { exact: true })).toBeVisible();
+  await expect(page.getByText("Manager 当前机器人")).toBeVisible();
+  await expect(
+    page.getByText("无法连接 Manager Token Exchange 接口。"),
+  ).toHaveCount(0);
+
+  expect(exchanges).toHaveLength(1);
+  expect(exchanges[0]?.get("grant_type")).toBe(
+    "urn:ietf:params:oauth:grant-type:token-exchange",
+  );
+  expect(exchanges[0]?.get("subject_token")).toBe("manager-user-token");
+  expect(exchanges[0]?.get("audience")).toBe("robot:one-person-org-3:000001");
+  expect(exchanges[0]?.get("scope")).toBe("chat:read chat:send");
+  expect(exchanges[0]?.get("token_profile")).toBe("session");
+});
 
 test.beforeEach(async ({ request }) => {
   await request.post(`${ROBOTSERVER}/__test/reset`);
@@ -181,6 +279,10 @@ test("真实用户模式默认选择 staging 环境，也支持切换自定义�
   page,
 }) => {
   await page.goto("/");
+  await enterManager(page);
+  await expect(
+    page.getByRole("heading", { name: "Chat Kit 调试台" }),
+  ).toHaveCount(0);
   await page.getByText("真实用户模式", { exact: true }).click();
   await expect(page.getByText("staging", { exact: true })).toBeVisible();
   await expect(page.getByText("正式", { exact: true })).toBeVisible();
@@ -197,12 +299,17 @@ test("真实用户模式默认选择 staging 环境，也支持切换自定义�
 test("真实用户模式可以直接使用 staging Manager 登录", async ({ page }) => {
   await installManagerRoute(page, "https://api-staging.turingfocus.cn");
   await page.goto("/");
+  await enterManager(page);
   await page.getByText("真实用户模式", { exact: true }).click();
   await page.getByLabel("用户账号").fill("real-user");
   await page.getByLabel("用户密码").fill("real-password");
   await page.getByRole("button", { name: "用户登录" }).click();
   await expect(page.getByText("当前组织：org-real")).toBeVisible();
   await expect(page.getByText("当前机器人：robot-real")).toBeVisible();
+  await expect(page.getByText("当前机器人快速对话")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Chat Kit 调试台" }),
+  ).toHaveCount(0);
 });
 
 test("真实用户模式使用 Manager 账号并加载组织与机器人目录", async ({
@@ -210,6 +317,7 @@ test("真实用户模式使用 Manager 账号并加载组织与机器人目录",
 }) => {
   await installManagerRoute(page, "https://manager.example.com");
   await page.goto("/");
+  await enterManager(page);
   await page.getByText("真实用户模式", { exact: true }).click();
   await page.getByText("自定义", { exact: true }).click();
   await page
@@ -227,37 +335,21 @@ test("Mock ChatKit does not require login and the identity toolbar can log out",
   page,
 }) => {
   await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: "Chat Kit 调试台" }),
-  ).toBeVisible();
+  await enterChatKit(page);
   await expect(page.getByText("欢迎使用本地 Chat Kit 调试台。")).toBeVisible();
 
+  await page.getByRole("button", { name: "返回 Playground" }).click();
   await loginPlayground(page);
   await expect(page.getByRole("button", { name: "退出登录" })).toBeVisible();
   await page.getByRole("button", { name: "退出登录" }).click();
   await expect(page.getByRole("heading", { name: "身份与目录" })).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Chat Kit 调试台" }),
-  ).toBeVisible();
 });
 
 test("Mock mode renders and exercises the formal Runtime scenarios", async ({
   page,
 }) => {
   await page.goto("/");
-  await loginPlayground(page);
-  await expect(
-    page.locator('select[aria-label="选择组织"] option[value="org-beta"]'),
-  ).toBeAttached();
-  await page.getByLabel("选择组织", { exact: true }).selectOption("org-beta");
-  await page
-    .getByLabel("选择机器人", { exact: true })
-    .selectOption("release-helper");
-  await expect(page.getByText("当前组织：org-beta")).toBeVisible();
-  await expect(page.getByText("当前机器人：release-helper")).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Chat Kit 调试台" }),
-  ).toBeVisible();
+  await enterChatKit(page);
   await expect(page.getByText("本地私有应用 · 内存网关")).toBeVisible();
   await expect(page.getByText("欢迎使用本地 Chat Kit 调试台。")).toBeVisible();
   const conversationList = page.locator('aside[aria-label="会话列表"]');
@@ -295,7 +387,7 @@ test("Mock mode renders and exercises the formal Runtime scenarios", async ({
     ),
   ).toBe("0.7");
   await page.reload();
-  await loginPlayground(page);
+  await enterChatKit(page);
   await expect(splitHandle).toHaveAttribute("aria-valuenow", "70");
   await mockEvent.click();
   await expect(page.locator('aside[aria-label="事件详情"]')).toContainText(
@@ -500,7 +592,7 @@ test("Bearer mode covers create, send, stream, interrupt, reconnect, CORS and di
   // Conversation changes and rejoining reuse this client's transport.
   expect((await stateOf(request)).observations.socketConnections).toBe(1);
   await page.getByRole("button", { name: "Mock 模式" }).click();
-  await loginPlayground(page);
+  await expect(page.getByText("本地私有应用 · 内存网关")).toBeVisible();
   await expect(page.getByText("本地私有应用 · 内存网关")).toBeVisible();
   await expect
     .poll(async () => (await stateOf(request)).observations.activeSockets)
@@ -518,7 +610,7 @@ test("Bearer mode covers create, send, stream, interrupt, reconnect, CORS and di
   await fillConnection(page, "bearer", secret);
   await expect(page.getByText("本地私有应用 · TFROBOT 网关")).toBeVisible();
   await page.reload();
-  await loginPlayground(page);
+  await enterChatKit(page);
   await expect(page.getByText("本地私有应用 · 内存网关")).toBeVisible();
   await expect(page.getByLabel("用户 Token")).toHaveCount(0);
   await expect

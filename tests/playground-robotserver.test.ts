@@ -79,6 +79,19 @@ const validConfig = (
   return result.value;
 };
 
+const enterChatKit = async (container: HTMLElement) => {
+  const button = [
+    ...container.querySelectorAll<HTMLButtonElement>("button"),
+  ].find(
+    (candidate) => candidate.textContent?.includes("进入 Chat Kit") === true,
+  );
+  expect(button).toBeDefined();
+  await act(async () => {
+    button!.click();
+    await Promise.resolve();
+  });
+};
+
 const envelope = (data: unknown): Response =>
   new Response(JSON.stringify({ code: 200, message: "Success", data }), {
     status: 200,
@@ -1379,6 +1392,7 @@ describe("RobotServer Playground page security boundary", () => {
         );
         await Promise.resolve();
       });
+      await enterChatKit(container);
       const robotMode = [...container.querySelectorAll("button")].find(
         (button) => button.textContent === "RobotServer 模式",
       );
@@ -1530,6 +1544,7 @@ describe("RobotServer Playground page security boundary", () => {
         );
         await Promise.resolve();
       });
+      await enterChatKit(container);
       const robotMode = [...container.querySelectorAll("button")].find(
         (button) => button.textContent === "RobotServer 模式",
       );
