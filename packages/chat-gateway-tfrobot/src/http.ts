@@ -114,8 +114,16 @@ export class TFRobotHttpClient {
     this.#baseUrl = new URL(
       options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`,
     );
+    // Browsers brand-check `fetch`: a host-provided reference stored as-is and
+    // invoked as `this.#fetch(...)` throws "Illegal invocation" before the
+    // request leaves the page. Wrapping drops that foreign receiver, the
+    // default transport keeps resolving `globalThis.fetch` lazily per call and
+    // an empty `fetch` option keeps falling back to the global one.
+    const injectedFetch = options.fetch;
     this.#fetch =
-      options.fetch ?? ((input, init) => globalThis.fetch(input, init));
+      injectedFetch == null
+        ? (input, init) => globalThis.fetch(input, init)
+        : (input, init) => injectedFetch(input, init);
     this.#now = options.now ?? Date.now;
   }
 

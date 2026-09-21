@@ -971,6 +971,38 @@ describe("TFRobotChatGateway REST boundary", () => {
     }
   });
 
+  it("invokes a host-provided fetch without a foreign receiver", async () => {
+    // Hosts may hand their own transport to the gateway. Browsers brand-check
+    // `fetch`, so the gateway must not turn that reference into an instance
+    // method of the HTTP client, which would throw "Illegal invocation" in a
+    // real browser even though Node accepts any receiver.
+    const hostFetch = vi.fn(function (this: typeof globalThis | undefined) {
+      if (this !== undefined && this !== globalThis) {
+        throw new TypeError("Failed to execute 'fetch': Illegal invocation");
+      }
+      return Promise.resolve(
+        envelope({ conversations: [conversationDto], cursor: null }),
+      );
+    });
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/api/",
+      fetch: hostFetch as unknown as typeof globalThis.fetch,
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+    });
+    try {
+      await expect(
+        gateway.listConversations({ deadlineAt: deadline() }),
+      ).resolves.toMatchObject({
+        ok: true,
+        value: { conversations: [{ id: "42" }] },
+      });
+      expect(hostFetch).toHaveBeenCalledOnce();
+    } finally {
+      await gateway.dispose({ deadlineAt: deadline() });
+    }
+  });
+
   it.each([
     {
       credentialHeader: "Authorization",

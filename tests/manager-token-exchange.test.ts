@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   ManagerRobotTokenExchangeError,
@@ -11,6 +11,62 @@ const request = {
 };
 
 describe("Manager RobotServer token exchange", () => {
+  it("calls the browser fetch without a foreign receiver", async () => {
+    // Chromium brand-checks `Window.fetch`: a foreign receiver throws
+    // "Illegal invocation", while Node happily accepts any receiver. Both the
+    // global transport and the transport injected by hosts such as the
+    // playground must therefore avoid binding the call to another object.
+    const calls: string[] = [];
+    const brandedFetch = function (
+      this: unknown,
+      input: RequestInfo | URL,
+    ): Promise<Response> {
+      if (this !== undefined && this !== globalThis) {
+        throw new TypeError("Illegal invocation");
+      }
+      calls.push(String(input));
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ access_token: "branded-token", expires_in: 60 }),
+          { status: 200 },
+        ),
+      );
+    } as unknown as typeof globalThis.fetch;
+    const options = {
+      getManagerUserJwt: async () => "manager-jwt",
+      robotAccountId: "org:robot-7",
+      tokenUrl: "https://manager.example/api/v1/oauth/token",
+    };
+
+    vi.stubGlobal("fetch", brandedFetch);
+    try {
+      expect(await new ManagerRobotTokenSource(options).getToken()).toBe(
+        "branded-token",
+      );
+      expect(
+        await new ManagerRobotTokenSource({
+          ...options,
+          fetch: brandedFetch,
+        }).getToken(),
+      ).toBe("branded-token");
+      // Hosts that pass an empty option (for example `fetch: cfg.fetch ?? null`
+      // from plain JavaScript) keep the documented fallback to the global one.
+      expect(
+        await new ManagerRobotTokenSource({
+          ...options,
+          fetch: null as unknown as typeof globalThis.fetch,
+        }).getToken(),
+      ).toBe("branded-token");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(calls).toEqual([
+      "https://manager.example/api/v1/oauth/token",
+      "https://manager.example/api/v1/oauth/token",
+      "https://manager.example/api/v1/oauth/token",
+    ]);
+  });
+
   it("sends the client-compatible RFC 8693 form and caches the short token", async () => {
     let calls = 0;
     let captured:

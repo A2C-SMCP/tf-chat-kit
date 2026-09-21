@@ -38,8 +38,9 @@ export class ManagerRobotTokenExchangeError extends Error {
     code: ManagerRobotTokenErrorCode,
     message: string,
     status?: number,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = "ManagerRobotTokenExchangeError";
     this.code = code;
     this.status = status;
@@ -131,17 +132,28 @@ export class ManagerRobotTokenSource implements SessionProvider<TFRobotSession> 
       throw new TypeError("只支持 session Token Profile");
     }
     this.#tokenUrl = normalizeTokenUrl(options.tokenUrl);
-    this.#fetch = options.fetch ?? globalThis.fetch;
+    // Browsers brand-check `fetch`: a host-provided reference stored as-is and
+    // invoked as an instance method throws "Illegal invocation" before the
+    // request leaves the page. Wrapping drops that foreign receiver, while the
+    // default transport keeps resolving `globalThis.fetch` lazily per call and
+    // an empty `fetch` option keeps falling back to it.
+    const injectedFetch = options.fetch;
+    this.#fetch =
+      injectedFetch == null
+        ? (input, init) => globalThis.fetch(input, init)
+        : (input, init) => injectedFetch(input, init);
     this.#getManagerUserJwt = options.getManagerUserJwt;
     this.#now = options.now ?? Date.now;
   }
 
-  async getSession(_request: SessionRequest): Promise<TFRobotSession> {
+  async getSession(request: SessionRequest): Promise<TFRobotSession> {
+    void request;
     const token = await this.getToken();
     return { kind: "bearer", token };
   }
 
-  onSessionInvalid(_invalidation: SessionInvalidation): void {
+  onSessionInvalid(invalidation: SessionInvalidation): void {
+    void invalidation;
     this.invalidate();
   }
 
@@ -197,10 +209,12 @@ export class ManagerRobotTokenSource implements SessionProvider<TFRobotSession> 
         },
         body,
       });
-    } catch {
+    } catch (error) {
       throw new ManagerRobotTokenExchangeError(
         "network",
         "无法连接 Manager Token Exchange 接口。",
+        undefined,
+        { cause: error },
       );
     }
     if (!response.ok) {
