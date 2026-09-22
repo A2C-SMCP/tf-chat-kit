@@ -1638,3 +1638,197 @@ describe("RobotServer Playground page security boundary", () => {
     }
   }, 10_000);
 });
+
+describe("Playground Manager quick chat", () => {
+  const managerResponse = (data: unknown): Response =>
+    new Response(JSON.stringify(data), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+
+  const managerFetch = () =>
+    vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
+      const href =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      const path = new URL(href).pathname;
+      if (path === "/auth/login-by-password") {
+        return managerResponse({
+          account: {
+            accountId: "account-real",
+            displayName: "真实组织",
+            organizationId: "org-real",
+            userId: "user-real",
+          },
+          token: "manager-user-token",
+        });
+      }
+      if (path === "/api/v1/accounts/my") {
+        return managerResponse({
+          accounts: [
+            {
+              accountId: "account-real",
+              displayName: "真实组织",
+              organizationId: "org-real",
+              userId: "user-real",
+            },
+          ],
+        });
+      }
+      if (path.endsWith("/connection-info")) {
+        return managerResponse({
+          data: {
+            namespace: "e2e-ns",
+            rid: "e2e-robot",
+            robotType: "tfrobot",
+            socketBaseURL: "https://robot.turingfocus.cn",
+          },
+        });
+      }
+      if (path === "/api/v1/oauth/token") {
+        return managerResponse({
+          access_token: "bearer-secret",
+          expires_in: 3_600,
+        });
+      }
+      if (path === "/api/v1/digital-employees") {
+        return managerResponse({
+          data: {
+            items: [
+              {
+                id: "de-e2e",
+                name: "通用",
+                robotAccountId: "one-person-org-3:000001",
+                robotId: "e2e-robot",
+                status: "running",
+                templateType: "tfrserver",
+              },
+            ],
+          },
+        });
+      }
+      throw new Error(`Unexpected Manager request: ${path}`);
+    });
+
+  const robotFetch = (conversationTitle: string) =>
+    vi.fn(
+      async (
+        input: Parameters<typeof globalThis.fetch>[0],
+        init?: Parameters<typeof globalThis.fetch>[1],
+      ) => {
+        const request = new Request(input, init);
+        const url = new URL(request.url);
+        if (
+          request.method === "GET" &&
+          url.pathname.endsWith("/conversations")
+        ) {
+          return envelope({
+            conversations: [conversationDto(7, conversationTitle)],
+            cursor: null,
+          });
+        }
+        if (request.method === "GET" && url.pathname.endsWith("/messages")) {
+          return envelope({ cursor: null, events: [], messages: [] });
+        }
+        if (request.method === "GET" && url.pathname.endsWith("/status")) {
+          return envelope({ taskId: null, working: false });
+        }
+        if (request.method === "POST" && url.pathname.endsWith("/messages")) {
+          return envelope({ taskId: "run-accepted" });
+        }
+        if (request.method === "DELETE") {
+          return envelope({ conversationId: 7, message: "deleted" });
+        }
+        throw new Error(`Unexpected RobotServer request: ${request.method}`);
+      },
+    );
+
+  it("lists the robot conversations in the quick chat sidebar", async () => {
+    const conversationTitle = "word测试";
+    const manager = managerFetch();
+    vi.stubGlobal("fetch", manager);
+    const sockets = socketFixture();
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const previous = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+    Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+
+    const clickButton = async (label: string) => {
+      const button = [
+        ...container.querySelectorAll<HTMLButtonElement>("button"),
+      ].find((candidate) => candidate.textContent?.includes(label) === true);
+      expect(button).toBeDefined();
+      await act(async () => {
+        button!.click();
+        await Promise.resolve();
+      });
+    };
+
+    try {
+      await act(async () => {
+        root.render(
+          createElement(PlaygroundApp, {
+            createRobotServerSession: (config: RobotServerConnectionConfig) =>
+              createRobotServerPlaygroundSession(config, {
+                fetch: robotFetch(conversationTitle),
+                socketFactory: sockets.factory,
+              }),
+            createSession: () => createMockPlaygroundSession(),
+          }),
+        );
+        await Promise.resolve();
+      });
+
+      await clickButton("进入登录与机器人");
+      const realMode = [
+        ...container.querySelectorAll<HTMLElement>("label"),
+      ].find((candidate) => candidate.textContent === "真实用户模式");
+      expect(realMode).toBeDefined();
+      await act(async () => {
+        realMode!.click();
+        await Promise.resolve();
+      });
+      setInput(
+        container.querySelector<HTMLInputElement>(
+          'input[aria-label="用户账号"]',
+        )!,
+        "real-user",
+      );
+      setInput(
+        container.querySelector<HTMLInputElement>(
+          'input[aria-label="用户密码"]',
+        )!,
+        "real-password",
+      );
+      await clickButton("用户登录");
+      await vi.waitFor(() =>
+        expect(container.textContent).toContain("当前机器人：通用"),
+      );
+
+      await clickButton("连接当前机器人并开始对话");
+      const sidebar = () =>
+        container.querySelector('aside[aria-label="会话列表"]');
+      await vi.waitFor(() => expect(sidebar()).not.toBeNull());
+      await vi.waitFor(() =>
+        expect(sidebar()?.textContent ?? "").toContain(conversationTitle),
+      );
+      expect(sidebar()?.textContent ?? "").not.toContain("暂无会话");
+      expect(container.textContent).toContain(
+        `正在查看「${conversationTitle}」`,
+      );
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      if (previous === undefined) {
+        Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+      } else {
+        Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previous);
+      }
+      vi.unstubAllGlobals();
+    }
+  }, 10_000);
+});

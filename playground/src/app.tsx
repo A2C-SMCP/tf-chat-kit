@@ -491,8 +491,18 @@ const PlaygroundWorkspace = ({
                     experience === "quick" ? undefined : compactNavigation
                   }
                   contentState={state.contentState}
-                  conversationListLoading={false}
-                  conversations={[]}
+                  conversationListError={
+                    state.listError === undefined
+                      ? undefined
+                      : {
+                          message: state.listError,
+                          onRetry: () => void session.loadConversations(),
+                        }
+                  }
+                  conversationListLoading={state.listLoading}
+                  conversations={state.conversations.map(
+                    ({ id, title, updatedAt }) => ({ id, title, updatedAt }),
+                  )}
                   labels={playgroundChatLabels}
                   navigationMode="compact"
                   onConversationSelect={(conversationId) =>
