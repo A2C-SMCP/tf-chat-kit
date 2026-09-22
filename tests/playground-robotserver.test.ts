@@ -1876,6 +1876,18 @@ describe("RobotServer deadline presentation", () => {
       "RobotServer 发生 timeout 错误。",
       "RobotServer 未在本地请求期限内响应。",
     ],
+    [
+      {
+        elapsedMs: 8_200,
+        method: "GET",
+        operation: "loadConversation",
+        path: "/v1/chat/conversations/:id/messages",
+        phase: "session",
+        timeoutMs: 10_000,
+      },
+      "RobotServer 会话数据加载超时。",
+      "RobotServer 未在期限内返回该会话的数据。（GET /v1/chat/conversations/:id/messages · 未收到响应 · 8.2s/10.0s）",
+    ],
   ] as const)(
     "names the deadline phase for %o",
     (diagnostic, status, description) => {
@@ -1950,8 +1962,9 @@ describe("RobotServer deadline presentation", () => {
       expect(session.getState()).toMatchObject({
         connected: false,
         contentState: {
-          description:
+          description: expect.stringContaining(
             "已连接 RobotServer，但会话加入（join）未在期限内得到应答。",
+          ),
           kind: "error",
         },
         status: "RobotServer 会话加入超时。",

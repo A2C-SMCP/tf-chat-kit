@@ -244,6 +244,40 @@ export interface RobotServerErrorPresentation {
   readonly status: string;
 }
 
+const TIMEOUT_PHASE_LABELS: Readonly<Record<string, string>> = {
+  response: "已收到响应头",
+  session: "未收到响应",
+};
+
+/**
+ * A compact, sanitized suffix for the visible copy: which endpoint the deadline
+ * hit, whether the server answered at all, and how much of the budget was left.
+ * Values come from the allowlisted diagnostic, so no credential can leak here.
+ */
+const timeoutDetail = (diagnostic: ChatError["diagnostic"]): string => {
+  if (diagnostic === undefined) return "";
+  const parts: string[] = [];
+  if (diagnostic.method !== undefined && diagnostic.path !== undefined) {
+    parts.push(`${diagnostic.method} ${diagnostic.path}`);
+  }
+  const phase =
+    diagnostic.phase === undefined
+      ? undefined
+      : TIMEOUT_PHASE_LABELS[diagnostic.phase];
+  if (phase !== undefined && diagnostic.operation !== "subscribe") {
+    parts.push(phase);
+  }
+  if (
+    diagnostic.timeoutMs !== undefined &&
+    diagnostic.elapsedMs !== undefined
+  ) {
+    parts.push(
+      `${(diagnostic.elapsedMs / 1000).toFixed(1)}s/${(diagnostic.timeoutMs / 1000).toFixed(1)}s`,
+    );
+  }
+  return parts.length === 0 ? "" : `（${parts.join(" · ")}）`;
+};
+
 /**
  * The local request deadline covers three different phases, and they need
  * different follow-up actions: a Socket handshake that never completed, a
@@ -255,34 +289,32 @@ const timeoutPresentation = (
   error: ChatError,
 ): Pick<RobotServerErrorPresentation, "description" | "status"> => {
   const diagnostic = safeDiagnosticError(error).diagnostic;
+  const detail = timeoutDetail(diagnostic);
   if (diagnostic?.operation === "subscribe") {
     return diagnostic.phase === "joining"
       ? {
-          description:
-            "已连接 RobotServer，但会话加入（join）未在期限内得到应答。",
+          description: `已连接 RobotServer，但会话加入（join）未在期限内得到应答。${detail}`,
           status: "RobotServer 会话加入超时。",
         }
       : {
-          description:
-            "RobotServer Socket 未在期限内完成连接握手（WebSocket 可能被网络或代理拦截）。",
+          description: `RobotServer Socket 未在期限内完成连接握手（WebSocket 可能被网络或代理拦截）。${detail}`,
           status: "RobotServer Socket 连接超时。",
         };
   }
   if (diagnostic?.operation === "loadConversation") {
     if (diagnostic.timeoutMs === 0) {
       return {
-        description:
-          "本次期限已在 Socket 订阅阶段耗尽（连接、鉴权或会话加入），随后的会话数据请求没有获得剩余时间。",
+        description: `本次期限已在 Socket 订阅阶段耗尽（连接、鉴权或会话加入），随后的会话数据请求没有获得剩余时间。${detail}`,
         status: "RobotServer 会话订阅超时。",
       };
     }
     return {
-      description: "RobotServer 未在期限内返回该会话的数据。",
+      description: `RobotServer 未在期限内返回该会话的数据。${detail}`,
       status: "RobotServer 会话数据加载超时。",
     };
   }
   return {
-    description: "RobotServer 未在本地请求期限内响应。",
+    description: `RobotServer 未在本地请求期限内响应。${detail}`,
     status: "RobotServer 发生 timeout 错误。",
   };
 };
