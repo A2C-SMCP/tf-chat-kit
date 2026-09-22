@@ -1887,6 +1887,45 @@ describe("ChatClient lifecycle and merge behavior", () => {
     await client.dispose({ deadlineAt: deadlineAt() });
   });
 
+  it("reports the subscription failure instead of the snapshot deadline it consumed", async () => {
+    const memory = createMemoryChatGateway();
+    const gateway = wrapGateway(memory.gateway, {
+      loadConversation: async () => ({
+        ok: false,
+        error: {
+          code: "timeout",
+          message: "Snapshot deadline was already spent",
+          retryable: true,
+        },
+      }),
+      subscribe: async () => ({
+        ok: false,
+        error: {
+          code: "timeout",
+          message: "Socket join was never acknowledged",
+          retryable: true,
+          diagnostic: { operation: "subscribe", phase: "joining" },
+        },
+      }),
+    });
+    const client = createChatClient({ gateway });
+
+    const result = await client.loadConversation({
+      conversationId: memory.fixtures.conversation.id,
+      deadlineAt: deadlineAt(),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "timeout",
+        diagnostic: { operation: "subscribe", phase: "joining" },
+        message: "Socket join was never acknowledged",
+      },
+    });
+    await client.dispose({ deadlineAt: deadlineAt() });
+  });
+
   it("rejects conflicting interaction metadata from a same-conversation reload", async () => {
     const memory = createMemoryChatGateway();
     const initial = withPendingInteraction(memory.fixtures.initialSnapshot);

@@ -1227,7 +1227,15 @@ export class ChatClient {
           input.conversationId,
         );
       }
-      return loaded;
+      // A failed subscription usually consumes the shared deadline, so the
+      // follow-up snapshot request fails with a deadline the subscription
+      // already spent. Report the earlier, causal failure instead of letting
+      // it masquerade as a slow snapshot request.
+      // A failed subscription usually consumes the shared deadline, so the
+      // follow-up snapshot request fails with a deadline the subscription
+      // already spent. Report the earlier, causal failure instead of letting
+      // it masquerade as a slow snapshot request.
+      return subscribed.ok ? loaded : subscribed;
     }
     if (this.#disposed || requestId !== this.#loadRequestId) {
       this.#clearPendingLoad(requestId);
