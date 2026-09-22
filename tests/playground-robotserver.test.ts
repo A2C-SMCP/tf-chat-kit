@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
+import type { ChatError } from "../packages/chat-protocol/src/index.js";
 import type {
   TFRobotSocket,
   TFRobotSocketAnyListener,
@@ -21,6 +22,7 @@ import {
 } from "../playground/src/robotserver-debug-prefill.js";
 import { RobotServerConnectionPanel } from "../playground/src/robotserver-panel.js";
 import {
+  describeRobotServerError,
   createRobotServerPlaygroundSession,
   robotServerTestConversationTitle,
   validateRobotServerConnection,
@@ -162,6 +164,13 @@ class FakeSocket implements TFRobotSocket {
       listener(payload);
     }
     for (const listener of this.#anyListeners) listener(eventName, payload);
+  }
+}
+
+/** Connects successfully but never acknowledges `join_conversation`. */
+class NoAckSocket extends FakeSocket {
+  override emit(eventName: string, ...arguments_: unknown[]): void {
+    this.emitted.push([eventName, arguments_[0]]);
   }
 }
 
@@ -1831,4 +1840,137 @@ describe("Playground Manager quick chat", () => {
       vi.unstubAllGlobals();
     }
   }, 10_000);
+});
+
+describe("RobotServer deadline presentation", () => {
+  const deadlineError = (diagnostic: ChatError["diagnostic"]): ChatError => ({
+    code: "timeout",
+    message: "Chat operation failed (timeout).",
+    retryable: true,
+    ...(diagnostic === undefined ? {} : { diagnostic }),
+  });
+
+  it.each([
+    [
+      { operation: "subscribe", phase: "joining" },
+      "RobotServer 会话加入超时。",
+      "已连接 RobotServer，但会话加入（join）未在期限内得到应答。",
+    ],
+    [
+      { operation: "subscribe", phase: "connecting" },
+      "RobotServer Socket 连接超时。",
+      "RobotServer Socket 未在期限内完成连接握手（WebSocket 可能被网络或代理拦截）。",
+    ],
+    [
+      { operation: "loadConversation" },
+      "RobotServer 会话数据加载超时。",
+      "RobotServer 未在期限内返回该会话的数据。",
+    ],
+    [
+      { operation: "loadConversation", timeoutMs: 0 },
+      "RobotServer 会话订阅超时。",
+      "本次期限已在 Socket 订阅阶段耗尽（连接、鉴权或会话加入），随后的会话数据请求没有获得剩余时间。",
+    ],
+    [
+      undefined,
+      "RobotServer 发生 timeout 错误。",
+      "RobotServer 未在本地请求期限内响应。",
+    ],
+  ] as const)(
+    "names the deadline phase for %o",
+    (diagnostic, status, description) => {
+      expect(describeRobotServerError(deadlineError(diagnostic))).toEqual({
+        description,
+        status,
+      });
+    },
+  );
+
+  it("keeps the existing copy for the other error codes", () => {
+    const base = {
+      message: "ignored",
+      retryable: true,
+    } satisfies Partial<ChatError>;
+    expect(
+      describeRobotServerError({ ...base, code: "network" } as ChatError),
+    ).toEqual({
+      description: "无法连接 RobotServer，请检查服务地址、跨域与 Socket 配置。",
+      status: "RobotServer 网络或跨域连接失败。",
+    });
+    expect(
+      describeRobotServerError({
+        ...base,
+        code: "authentication",
+      } as ChatError),
+    ).toEqual({
+      description: "RobotServer 拒绝了当前凭据（401）。",
+      status: "RobotServer 鉴权失败。",
+    });
+  });
+
+  it("reports the joining phase and a sanitized trace when a join is never acknowledged", async () => {
+    const socket = new NoAckSocket();
+    const warnings = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    const session = createRobotServerPlaygroundSession(validConfig("bearer"), {
+      fetch: vi.fn(
+        async (
+          input: Parameters<typeof globalThis.fetch>[0],
+          init?: Parameters<typeof globalThis.fetch>[1],
+        ) => {
+          const request = new Request(input, init);
+          const url = new URL(request.url);
+          if (url.pathname.endsWith("/conversations")) {
+            return envelope({
+              conversations: [conversationDto(7, "probe")],
+              cursor: null,
+            });
+          }
+          if (url.pathname.endsWith("/messages")) {
+            return envelope({ cursor: null, events: [], messages: [] });
+          }
+          if (url.pathname.endsWith("/status")) {
+            return envelope({ taskId: null, working: false });
+          }
+          if (request.method === "DELETE") {
+            return envelope({ conversationId: 7, message: "deleted" });
+          }
+          throw new Error(`Unexpected request: ${request.method}`);
+        },
+      ),
+      socketFactory: () => socket,
+    });
+
+    try {
+      await session.start();
+      expect(socket.emitted.map(([eventName]) => eventName)).toContain(
+        "join_conversation",
+      );
+      expect(session.getState()).toMatchObject({
+        connected: false,
+        contentState: {
+          description:
+            "已连接 RobotServer，但会话加入（join）未在期限内得到应答。",
+          kind: "error",
+        },
+        status: "RobotServer 会话加入超时。",
+      });
+      // The console trace keeps the phase the UI cannot show, so a stuck
+      // handshake can be told apart from an unacknowledged join.
+      const traces = warnings.mock.calls.map(([, payload]) => payload);
+      expect(traces).toContainEqual(
+        expect.objectContaining({
+          code: "timeout",
+          operation: "subscribe",
+          phase: "joining",
+        }),
+      );
+      expect(JSON.stringify(traces)).not.toContain("bearer-secret");
+    } finally {
+      warnings.mockRestore();
+      await session.dispose();
+    }
+    // The join intentionally waits out the real local request deadline.
+  }, 20_000);
 });
