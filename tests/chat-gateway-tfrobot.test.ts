@@ -971,6 +971,90 @@ describe("TFRobotChatGateway REST boundary", () => {
     }
   });
 
+  it("retries once with a refreshed session when the credential was rejected", async () => {
+    const issuedTokens = ["stale-token", "fresh-token"];
+    const authorizations: string[] = [];
+    const onSessionInvalid = vi.fn();
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/api/",
+      fetch: vi.fn(
+        async (
+          _input: Parameters<typeof globalThis.fetch>[0],
+          init?: Parameters<typeof globalThis.fetch>[1],
+        ) => {
+          const authorization =
+            new Headers(init?.headers).get("Authorization") ?? "";
+          authorizations.push(authorization);
+          if (authorization === "Bearer stale-token") {
+            return new Response(JSON.stringify({ detail: "expired" }), {
+              status: 401,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          return envelope({ conversations: [conversationDto], cursor: null });
+        },
+      ),
+      messageCreatorProvider,
+      sessionProvider: {
+        getSession: () => ({
+          kind: "bearer" as const,
+          token: issuedTokens.shift() ?? "fresh-token",
+        }),
+        onSessionInvalid,
+      },
+    });
+    try {
+      await expect(
+        gateway.listConversations({ deadlineAt: deadline() }),
+      ).resolves.toMatchObject({
+        ok: true,
+        value: { conversations: [{ id: "42" }] },
+      });
+      expect(authorizations).toEqual([
+        "Bearer stale-token",
+        "Bearer fresh-token",
+      ]);
+      expect(onSessionInvalid).toHaveBeenCalledOnce();
+    } finally {
+      await gateway.dispose({ deadlineAt: deadline() });
+    }
+  });
+
+  it("stops after one retry when the refreshed credential is rejected too", async () => {
+    const authorizations: string[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/api/",
+      fetch: vi.fn(
+        async (
+          _input: Parameters<typeof globalThis.fetch>[0],
+          init?: Parameters<typeof globalThis.fetch>[1],
+        ) => {
+          authorizations.push(
+            new Headers(init?.headers).get("Authorization") ?? "",
+          );
+          return new Response(JSON.stringify({ detail: "unauthorized" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+      ),
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+    });
+    try {
+      await expect(
+        gateway.listConversations({ deadlineAt: deadline() }),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { code: "authentication" },
+      });
+      expect(authorizations).toHaveLength(2);
+      expect(new Set(authorizations).size).toBe(1);
+    } finally {
+      await gateway.dispose({ deadlineAt: deadline() });
+    }
+  });
+
   it("invokes a host-provided fetch without a foreign receiver", async () => {
     // Hosts may hand their own transport to the gateway. Browsers brand-check
     // `fetch`, so the gateway must not turn that reference into an instance
