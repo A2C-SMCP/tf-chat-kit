@@ -331,15 +331,33 @@ describe("RobotServer Playground configuration", () => {
     expect(result).toEqual({
       ok: true,
       value: {
-        apiOrigin: "https://api.staging.turingfocus.cn",
+        apiOrigin: "https://staging.turingfocus.cn",
         httpBaseUrl:
-          "http://localhost:4311/__tfrobot_proxy/https%3A%2F%2Fapi.staging.turingfocus.cn/tfrobot/tfrs-org-18/de-eed9dc12a94b492ea8e7",
+          "http://localhost:4311/__tfrobot_proxy/https%3A%2F%2Fstaging.turingfocus.cn/tfrobot/tfrs-org-18/de-eed9dc12a94b492ea8e7",
         namespace: "tfrs-org-18",
         robotId: "de-eed9dc12a94b492ea8e7",
         robotType: "tfrobot",
         serverOrigin: "https://staging.turingfocus.cn",
         socketNamespaceUrl: "https://staging.turingfocus.cn/chat",
         socketPath: "/c/tfrobot/tfrs-org-18/de-eed9dc12a94b492ea8e7/socket.io",
+      },
+    });
+  });
+
+  it("keeps the production frontend origin for the prefixed BFF route", () => {
+    const result = parseTFRobotTarget(
+      {
+        namespace: "prod-org",
+        robotId: "prod-robot",
+        serverOrigin: "https://turingfocus.cn",
+      },
+      "http://localhost:4311",
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        apiOrigin: "https://turingfocus.cn",
+        socketNamespaceUrl: "https://turingfocus.cn/chat",
       },
     });
   });
@@ -1755,91 +1773,114 @@ describe("Playground Manager quick chat", () => {
       },
     );
 
-  it("lists the robot conversations in the quick chat sidebar", async () => {
-    const conversationTitle = "word测试";
-    const manager = managerFetch();
-    vi.stubGlobal("fetch", manager);
-    const sockets = socketFixture();
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    const previous = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
-    Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+  it.each([false, true])(
+    "automatically connects the selected robot and supports retry (fail first: %s)",
+    async (failFirst) => {
+      const conversationTitle = "word测试";
+      const manager = managerFetch();
+      let connectionAttempts = 0;
+      vi.stubGlobal(
+        "fetch",
+        async (...args: Parameters<typeof globalThis.fetch>) => {
+          if (String(args[0]).endsWith("/connection-info")) {
+            connectionAttempts += 1;
+            if (failFirst && connectionAttempts === 1)
+              return new Response(null, { status: 503 });
+          }
+          return manager(args[0]);
+        },
+      );
+      const sockets = socketFixture();
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      const previous = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+      Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
 
-    const clickButton = async (label: string) => {
-      const button = [
-        ...container.querySelectorAll<HTMLButtonElement>("button"),
-      ].find((candidate) => candidate.textContent?.includes(label) === true);
-      expect(button).toBeDefined();
-      await act(async () => {
-        button!.click();
-        await Promise.resolve();
-      });
-    };
+      const clickButton = async (label: string) => {
+        const button = [
+          ...container.querySelectorAll<HTMLButtonElement>("button"),
+        ].find((candidate) => candidate.textContent?.includes(label) === true);
+        expect(button).toBeDefined();
+        await act(async () => {
+          button!.click();
+          await Promise.resolve();
+        });
+      };
 
-    try {
-      await act(async () => {
-        root.render(
-          createElement(PlaygroundApp, {
-            createRobotServerSession: (config: RobotServerConnectionConfig) =>
-              createRobotServerPlaygroundSession(config, {
-                fetch: robotFetch(conversationTitle),
-                socketFactory: sockets.factory,
-              }),
-            createSession: () => createMockPlaygroundSession(),
-          }),
+      try {
+        await act(async () => {
+          root.render(
+            createElement(PlaygroundApp, {
+              createRobotServerSession: (config: RobotServerConnectionConfig) =>
+                createRobotServerPlaygroundSession(config, {
+                  fetch: robotFetch(conversationTitle),
+                  socketFactory: sockets.factory,
+                }),
+              createSession: () => createMockPlaygroundSession(),
+            }),
+          );
+          await Promise.resolve();
+        });
+
+        await clickButton("进入登录与机器人");
+        const realMode = [
+          ...container.querySelectorAll<HTMLElement>("label"),
+        ].find((candidate) => candidate.textContent === "真实用户模式");
+        expect(realMode).toBeDefined();
+        await act(async () => {
+          realMode!.click();
+          await Promise.resolve();
+        });
+        setInput(
+          container.querySelector<HTMLInputElement>(
+            'input[aria-label="用户账号"]',
+          )!,
+          "real-user",
         );
-        await Promise.resolve();
-      });
+        setInput(
+          container.querySelector<HTMLInputElement>(
+            'input[aria-label="用户密码"]',
+          )!,
+          "real-password",
+        );
+        await clickButton("用户登录");
+        await vi.waitFor(() =>
+          expect(container.textContent).toContain("当前机器人：通用"),
+        );
 
-      await clickButton("进入登录与机器人");
-      const realMode = [
-        ...container.querySelectorAll<HTMLElement>("label"),
-      ].find((candidate) => candidate.textContent === "真实用户模式");
-      expect(realMode).toBeDefined();
-      await act(async () => {
-        realMode!.click();
-        await Promise.resolve();
-      });
-      setInput(
-        container.querySelector<HTMLInputElement>(
-          'input[aria-label="用户账号"]',
-        )!,
-        "real-user",
-      );
-      setInput(
-        container.querySelector<HTMLInputElement>(
-          'input[aria-label="用户密码"]',
-        )!,
-        "real-password",
-      );
-      await clickButton("用户登录");
-      await vi.waitFor(() =>
-        expect(container.textContent).toContain("当前机器人：通用"),
-      );
-
-      await clickButton("连接当前机器人并开始对话");
-      const sidebar = () =>
-        container.querySelector('aside[aria-label="会话列表"]');
-      await vi.waitFor(() => expect(sidebar()).not.toBeNull());
-      await vi.waitFor(() =>
-        expect(sidebar()?.textContent ?? "").toContain(conversationTitle),
-      );
-      expect(sidebar()?.textContent ?? "").not.toContain("暂无会话");
-      expect(container.textContent).toContain(
-        `正在查看「${conversationTitle}」`,
-      );
-    } finally {
-      await act(async () => root.unmount());
-      container.remove();
-      if (previous === undefined) {
-        Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT");
-      } else {
-        Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previous);
+        expect(container.textContent).not.toContain("连接当前机器人并开始对话");
+        if (failFirst) {
+          await vi.waitFor(() =>
+            expect(container.textContent).toContain("连接当前机器人失败"),
+          );
+          expect(connectionAttempts).toBe(1);
+          await clickButton("重试连接当前机器人");
+        }
+        const sidebar = () =>
+          container.querySelector('aside[aria-label="会话列表"]');
+        await vi.waitFor(() => expect(sidebar()).not.toBeNull());
+        await vi.waitFor(() =>
+          expect(sidebar()?.textContent ?? "").toContain(conversationTitle),
+        );
+        expect(sidebar()?.textContent ?? "").not.toContain("暂无会话");
+        expect(connectionAttempts).toBe(failFirst ? 2 : 1);
+        expect(container.textContent).toContain(
+          `正在查看「${conversationTitle}」`,
+        );
+      } finally {
+        await act(async () => root.unmount());
+        container.remove();
+        if (previous === undefined) {
+          Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+        } else {
+          Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previous);
+        }
+        vi.unstubAllGlobals();
       }
-      vi.unstubAllGlobals();
-    }
-  }, 10_000);
+    },
+    10_000,
+  );
 });
 
 describe("RobotServer deadline presentation", () => {

@@ -50,10 +50,7 @@ const parseOrigin = (value: string): URL | undefined => {
 };
 
 const apiOriginForServer = (serverUrl: URL): string => {
-  if (!isTrustedTuringFocusOrigin(serverUrl)) return serverUrl.origin;
-  const apiUrl = new URL(serverUrl.origin);
-  apiUrl.hostname = `api.${serverUrl.hostname}`;
-  return apiUrl.origin;
+  return serverUrl.origin;
 };
 
 const safeRoutingHeaders = (

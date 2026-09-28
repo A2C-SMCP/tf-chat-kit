@@ -710,20 +710,17 @@ const PlaygroundLanding = ({
 
 const ManagerQuickChat = ({
   onConnect,
+  connecting,
+  error,
   robot,
   session,
 }: {
-  readonly onConnect: () => Promise<void>;
+  readonly onConnect: () => void;
+  readonly connecting: boolean;
+  readonly error: string | null;
   readonly robot: PlaygroundRobotDescriptor | undefined;
   readonly session: PlaygroundSession | null;
 }) => {
-  const [connecting, setConnecting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setError(null);
-  }, [robot?.id]);
-
   if (session !== null) {
     return (
       <PlaygroundWorkspace
@@ -738,9 +735,7 @@ const ManagerQuickChat = ({
       <div>
         <Typography.Title level={3}>当前机器人快速对话</Typography.Title>
         <Typography.Paragraph type="secondary">
-          登录和选择完成后，只建立一条最小 RobotServer
-          会话，用于确认当前机器人可访问、可收发消息；完整能力演示请进入 Chat
-          Kit 调试。
+          选择机器人后自动连接，并在下方展示当前机器人的聊天内容。
         </Typography.Paragraph>
       </div>
       {robot === undefined ? (
@@ -766,34 +761,29 @@ const ManagerQuickChat = ({
       )}
       {error === null ? null : (
         <Alert
-          closable
           message="连接当前机器人失败"
-          onClose={() => setError(null)}
           showIcon
           type="error"
           description={error}
         />
       )}
-      <Space>
-        <Button
-          disabled={robot === undefined || !robot.canAutoConnect}
-          loading={connecting}
-          onClick={() => {
-            setConnecting(true);
-            setError(null);
-            void onConnect()
-              .catch((reason: unknown) => {
-                setError(
-                  reason instanceof Error ? reason.message : String(reason),
-                );
-              })
-              .finally(() => setConnecting(false));
-          }}
-          type="primary"
-        >
-          连接当前机器人并开始对话
-        </Button>
-      </Space>
+      {connecting ? (
+        <Spin tip="正在连接当前机器人">
+          <div />
+        </Spin>
+      ) : null}
+      {error !== null ? (
+        <Space>
+          <Button
+            disabled={robot === undefined || !robot.canAutoConnect}
+            loading={connecting}
+            onClick={onConnect}
+            type="primary"
+          >
+            重试连接当前机器人
+          </Button>
+        </Space>
+      ) : null}
     </section>
   );
 };
@@ -821,6 +811,11 @@ export const PlaygroundApp = ({
     null,
   );
   const [session, setSession] = useState<PlaygroundSession | null>(null);
+  const [managerConnecting, setManagerConnecting] = useState(false);
+  const [managerConnectionError, setManagerConnectionError] = useState<
+    string | null
+  >(null);
+  const [managerConnectionAttempt, setManagerConnectionAttempt] = useState(0);
 
   useEffect(() => {
     if (authDisposeTimer.current !== undefined) {
@@ -882,27 +877,54 @@ export const PlaygroundApp = ({
       kind: "robotserver",
     });
   };
-  const connectManagerRobot = async (): Promise<void> => {
-    if (managerBaseUrl === null || selectedRobot === undefined) {
-      throw new Error("请先登录 Manager 并选择机器人。");
-    }
-    const generation = managerConnectionGeneration.current;
-    const robotId = selectedRobot.id;
-    const config = await createManagerRobotServerConnection({
+  useEffect(() => {
+    const generation = ++managerConnectionGeneration.current;
+    setManagerConnectionError(null);
+    setManagerConnecting(false);
+    if (
+      playgroundModule !== "manager" ||
+      managerBaseUrl === null ||
+      !selectedRobot?.canAutoConnect
+    )
+      return;
+    setManagerConnecting(true);
+    setSessionPlan(null);
+    void createManagerRobotServerConnection({
       client: authClient,
       managerBaseUrl,
       robot: selectedRobot,
       proxyOrigin: window.location.origin,
       allowedServerOrigins: allowedManagerServerOrigins(),
-    });
-    if (
-      generation !== managerConnectionGeneration.current ||
-      selectedRobot?.id !== robotId
-    ) {
-      throw new Error("机器人选择已变化，请重新连接当前机器人。");
-    }
-    connectRobotServer(config);
-  };
+    })
+      .then((config) => {
+        if (generation !== managerConnectionGeneration.current) return;
+        setSessionPlan({
+          create: () => createRobotServerSession(config),
+          kind: "robotserver",
+        });
+      })
+      .catch((reason: unknown) => {
+        if (generation !== managerConnectionGeneration.current) return;
+        setManagerConnectionError(
+          reason instanceof Error ? reason.message : String(reason),
+        );
+      })
+      .finally(() => {
+        if (generation === managerConnectionGeneration.current)
+          setManagerConnecting(false);
+      });
+    return () => {
+      if (generation === managerConnectionGeneration.current)
+        managerConnectionGeneration.current += 1;
+    };
+  }, [
+    authClient,
+    managerBaseUrl,
+    selectedRobot,
+    playgroundModule,
+    managerConnectionAttempt,
+    createRobotServerSession,
+  ]);
   const loginWithManager = async (
     environment: "staging" | "production" | "custom",
     baseUrl: string,
@@ -1021,7 +1043,11 @@ export const PlaygroundApp = ({
         robotId={selectedRobotId}
       >
         <ManagerQuickChat
-          onConnect={connectManagerRobot}
+          onConnect={() =>
+            setManagerConnectionAttempt((attempt) => attempt + 1)
+          }
+          connecting={managerConnecting}
+          error={managerConnectionError}
           robot={selectedRobot}
           session={session}
         />

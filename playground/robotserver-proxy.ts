@@ -21,6 +21,7 @@ const LOGIN_PATH = "/v1/auth/login";
 
 interface ProxyTarget {
   readonly kind: "chat" | "login";
+  readonly frontendBff: boolean;
   readonly namespace: string;
   readonly robotId: string;
   readonly robotType: string;
@@ -74,11 +75,16 @@ const isAllowedUpstream = (url: URL): boolean => {
   if (allowedOrigins().has(url.origin)) return true;
   return (
     url.protocol === "https:" &&
-    (url.hostname === "api.turingfocus.cn" ||
-      (url.hostname.startsWith("api.") &&
-        url.hostname.endsWith(".turingfocus.cn")))
+    (url.hostname === "turingfocus.cn" ||
+      url.hostname.endsWith(".turingfocus.cn"))
   );
 };
+
+const isFrontendBffOrigin = (url: URL): boolean =>
+  (url.hostname === "turingfocus.cn" ||
+    url.hostname.endsWith(".turingfocus.cn")) &&
+  !url.hostname.startsWith("api.") &&
+  !url.hostname.startsWith("api-");
 
 const parseTarget = (requestUrl: string): ProxyTarget | undefined => {
   const queryIndex = requestUrl.indexOf("?");
@@ -156,16 +162,18 @@ const parseTarget = (requestUrl: string): ProxyTarget | undefined => {
   const kind =
     pathname === LOGIN_PATH && url.search.length === 0 ? "login" : "chat";
   if (kind === "chat" && !CHAT_PATH.test(pathname)) return undefined;
-  const upstreamUrl = new URL(pathname, upstreamOrigin);
-  if (
-    (kind === "chat" && !CHAT_PATH.test(upstreamUrl.pathname)) ||
-    (kind === "login" && upstreamUrl.pathname !== LOGIN_PATH)
-  ) {
+  const frontendBff = kind === "chat" && isFrontendBffOrigin(upstreamOrigin);
+  const upstreamPath = frontendBff
+    ? `/c/${robotType}/${namespace}/${robotId}/api${pathname}`
+    : pathname;
+  const upstreamUrl = new URL(upstreamPath, upstreamOrigin);
+  if (kind === "login" && upstreamUrl.pathname !== LOGIN_PATH) {
     return undefined;
   }
   upstreamUrl.search = url.search;
   return {
     kind,
+    frontendBff,
     namespace: namespace!,
     robotId: robotId!,
     robotType: robotType!,
@@ -380,10 +388,15 @@ const proxyRequest = async (
   for (const [name, value] of Object.entries(target.routingHeaders)) {
     headers.set(name, value);
   }
-  if (target.kind === "chat" && authorization !== undefined) {
+  if (target.kind === "chat" && target.frontendBff && authorization !== undefined) {
+    headers.set(
+      "Cookie",
+      `tfNamespace=${target.namespace}; tfRobotId=${target.robotId}; tfUserToken=${authorization.slice("Bearer ".length)}`,
+    );
+  } else if (target.kind === "chat" && authorization !== undefined) {
     headers.set("Authorization", authorization);
   }
-  if (target.kind === "chat" && adminKey !== undefined) {
+  if (target.kind === "chat" && !target.frontendBff && adminKey !== undefined) {
     headers.set("admin_key", adminKey);
   }
   const contentType = request.headers["content-type"];

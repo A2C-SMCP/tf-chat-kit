@@ -254,7 +254,9 @@ test("真实用户模式的 Token Exchange 走浏览器 fetch 并建立当前机
   await page.getByRole("button", { name: "用户登录" }).click();
   await expect(page.getByText("当前机器人：通用")).toBeVisible();
 
-  await page.getByRole("button", { name: "连接当前机器人并开始对话" }).click();
+  await expect(
+    page.getByRole("button", { name: "连接当前机器人并开始对话" }),
+  ).toHaveCount(0);
   await expect(page.getByText("当前机器人对话", { exact: true })).toBeVisible();
   await expect(page.getByText("Manager 当前机器人")).toBeVisible();
   await expect(
