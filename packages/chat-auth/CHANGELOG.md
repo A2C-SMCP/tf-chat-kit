@@ -1,5 +1,11 @@
 # @turingfocus/chat-auth
 
+## 0.10.0
+
+### Minor Changes
+
+- 9dc5b76: Add optional public Manager directory, validated connection resolution and robot token exchange, plus headless and React chat ownership adapters. Share the adapters with Playground and verify independent consumers against local HTTP/Socket.IO and browsers.
+
 ## 0.9.0
 
 ### Minor Changes
