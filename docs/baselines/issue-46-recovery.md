@@ -14,8 +14,8 @@ The 2026-10-09 real-service failures in #100/#101 are merged into #46.
    matches. External Server changes require separate authorization.
 3. Review the complete changes in an isolated context, run appropriate regressions,
    and repeat the real Manager/BFF/RobotServer acceptance. Keep direct API issuer
-   compatibility separate from BFF compatibility. #46 stays open until all of its
-   acceptance requirements are met; the first repair does not complete the issue.
+   compatibility separate from BFF compatibility. The final acceptance scope is
+   the user-approved Kit/Server split recorded below.
 
 ## Subscription evidence
 
@@ -134,14 +134,48 @@ were read. Local fixtures do not replace final real-service acceptance.
 
 The linked Server requirement TFRS-336 was re-read on 2026-10-09 and remains
 `待办`. Its verifiable join/object authorization, durable replay/completeness and
-worker delivery requirements remain an external production-acceptance gate under
-ADR-009. This does not block independent Kit package delivery. A current-server
-401/identity regression pass must not be represented as satisfying the complete
-verified Server recovery contract or as production-completing parent #46.
+worker delivery requirements remain an external Server acceptance gate under
+ADR-009 and TFRS-336. The user approved independent Kit acceptance on 2026-10-10.
+The current-server regression does not establish the complete verified Server
+contract; #46 closes only for its Kit scope.
+
+## Final Kit acceptance and Server audit — 2026-10-10
+
+The user explicitly approved closing #46 for Chat Kit scope and retaining Server
+requirements in [TFRS-336](https://turingfocus.atlassian.net/browse/TFRS-336).
+The four independent lifecycle/Gateway test files passed 161 tests. The accepted
+functional revision is `3dc7284720ac5704cf8977ad0dfaac94c3512541`; its full local
+check passed 1,430 tests. [CI 38021419097](https://github.com/A2C-SMCP/tf-chat-kit/actions/runs/38021419097)
+passed 1,429 tests with the existing macOS JavaScriptCore performance test skipped
+on Linux, and all 27 Chromium/WebKit scenarios passed.
+
+A passive reconnect probe against the current real production BFF/RobotServer
+returned two status HTTP 200 responses, one join request and an empty Socket.IO
+ACK (zero arguments). The UI reported reconnection with no alert. This confirms
+current-server compatibility, not object authorization or complete recovery. The
+current-server profile remains explicitly degraded/best-effort with
+`complete: false`; the verified profile requires structured recovery evidence.
+No new business messages or conversations were created by this probe.
+
+Server code was read from freshly fetched
+`origin/develop@a0f2bc3a2e1a105e92cd887fcd997e140c25ece8`, rather than the dirty
+local working tree. No Server source or user changes were modified.
+
+| Requirement                                                                                   | Latest code and Jira evidence                                                                                                                                                                                                                                                                                                                                                                                                                              | Conclusion                                                                                  |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Heartbeat and worker `/chat` reconnect stability                                              | Commit `68abebc47a69ae2c9b5031238614f69d2fb91054`, merged [PR #84](https://cnb.cool/turingfocus/tfrobotv2/TFRobotServer/-/pulls/84), raises Engine.IO minimum to 4.14.0 and uses production Admin instrumentation. Runtime tests cover heartbeat, residual CONNECT, transport loss and API-only restart with a surviving worker. [TFRS-582](https://turingfocus.atlassian.net/browse/TFRS-582) is completed; dev image `0.4.3-dev0-develop` was delivered. | Implemented; Jira records successful test-instance worker reconnect/chat after API restart. |
+| Old browser page automatically resumes realtime without refresh                               | [TFRS-550](https://turingfocus.atlassian.net/browse/TFRS-550), comment 17357 on 2026-10-08, records five passing checks and one failing browser automatic-recovery check. Refresh exposes the reply but is not automatic recovery. This is the historical host-browser result, distinct from the accepted Kit probe above.                                                                                                                                 | Source incident remains in progress; not fully accepted.                                    |
+| Authorized structured join, cursor/completeness, persisted replay and worker durable delivery | Latest `tfrobotserver/socket_namespaces/chat.py:59–68` only extracts `conversation_id` and calls `enter_room`, returning no structured ACK. Namespace authentication exists, but is not per-conversation authorization. The inspected chat paths expose no cursor/replay protocol. TFRS-336 is still pending; its controlled offline-window evidence records persisted messages retrievable by REST but no replay on rejoin.                               | Not implemented as a complete Server recovery contract; stays in TFRS-336.                  |
+
+The newest Server routing-contract PR #86 does not implement this recovery
+protocol. Server implementation and its deployment/fault-injection acceptance
+remain separate follow-up work; reconnecting successfully does not prove that
+all events lost during disconnection were recovered.
 
 ## Git delivery boundary
 
-No commit, push, PR, release, or issue closure is authorized by local test success.
-The optional authentication changes are reviewed and tracked under #90/#92–#96
-separately from this recovery requirement. Unrelated `.playwright-mcp/` artifacts
-remain outside delivery scope.
+The user authorized commit, push and PR creation, and closing accepted issues.
+[PR #103](https://github.com/A2C-SMCP/tf-chat-kit/pull/103) contains the accepted Kit
+and optional authentication changes. #46 is accepted for Kit scope; Server work
+remains in TFRS-336. Merge, deployment and npm publication are separate follow-ups.
+Unrelated `.playwright-mcp/` artifacts remain outside delivery scope.

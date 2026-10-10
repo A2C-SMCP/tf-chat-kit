@@ -1,7 +1,7 @@
 # Issue 96: integration acceptance evidence
 
 Baseline: `dev-0.8.3` at `6e10d6d06426d3cc2d0b19e4e829d007cd4ca17d`.
-This is an in-progress evidence ledger, not final acceptance or delivery.
+This ledger preserves historical checks and the final acceptance decision below.
 
 ## Packed headless authentication consumer
 
@@ -104,13 +104,13 @@ Latest follow-up checks: tests/scripts TypeScript, targeted ESLint, Prettier and
 network-driven updates outside the harness action scope; they were not suppressed
 and no command or assertion failed.
 
-## Still required before acceptance
+## Historical intermediate acceptance checks
 
 - Confirm the compatibility matrix and its explicit production-service limitations.
 - The final repeated whole-project `pnpm check` including the combined consumers
   passed: 78 files / 1,411 tests, Playground build, all packed consumers, artifact
   security checks and static gates. The final isolated review approved #96 with
-  no blockers. The package composition checks passed; the complete #96 publication criterion remains open until a protected npm release passes Registry consumer verification.
+  no blockers. The package composition checks passed. The later user-approved decision below separates feature acceptance from actual publication.
 - Final Playground regression after #97–#99 now passes 15 Chromium scenarios,
   including Manager list/create/send/realtime/logout and manual credential modes.
   The final real BFF follow-ups for #46/#97 are recorded below and remain distinct
@@ -164,14 +164,15 @@ explicitly allowed external dependency under criterion 7, not a silent-renewal
 claim. Parent closure still follows delivery and closure of its child issues.
 
 No external host source is changed. The auth package remains optional and is not
-re-exported or automatically initialized by Chat Kit, following ADR-012. The implementation was committed and pushed as PR #103 on 2026-10-10. No merge, publication or issue closure has occurred at this audit point.
+re-exported or automatically initialized by Chat Kit, following ADR-012. The implementation was committed and pushed as PR #103 on 2026-10-10. No merge or publication has occurred. Issue closure follows the final decision below.
 
 ## Delivery authorization
 
 On 2026-10-10 the user authorized commit, push and PR creation for this accepted
 work. The previously requested closure of completed issues follows verified
-remote delivery: #92–#95 and #97–#99. #96 and parent #90 remain open until the required actual protected publication succeeds. Parent #46 remains open
-for its complete verified Server recovery contract. No merge, deployment or npm
+remote delivery: #92–#95 and #97–#99. #96 and parent #90 are accepted before publication under the user-approved
+policy below. #46 is accepted for Kit scope; the complete Server contract stays
+in TFRS-336. No merge, deployment or npm
 publication is included in this authorization.
 
 ## Protected publication support follow-up
@@ -187,9 +188,9 @@ incident recovery commands from each package's target version. OIDC/provenance,
 immutable artifact integrity and compatibility gates remain required.
 
 The local release tests use a controlled Registry and perform no npm writes.
-The literal #96 criterion includes actual publication, which is outside the
-current Git delivery authorization. Keep #96 and #90 open; do not treat a passing
-release-support test or PR creation as a completed production release.
+The original #96 publication criterion was superseded by the user instruction
+to accept #96/#90 before publication. Release-support validation passed; no
+production publication is claimed or performed.
 
 The final follow-up `pnpm check` completed with exit 0: all 80 files / 1,430
 tests, static and type gates, Playground build, all packed consumers and artifact
@@ -201,3 +202,21 @@ with zero blocking findings. One optional improvement remains: move reconciliati
 of an existing GitHub Release manifest before npm writes; the release handbooks
 already forbid changing a completed core batch to all under the same source tag.
 No npm write was executed by these tests.
+
+## Final acceptance decision — 2026-10-10
+
+The user explicitly required #96 and #90 acceptance before publication. Both are
+accepted and closed, together with #92–#95 and #97–#99, after remote PR delivery
+and passing functional CI at `3dc7284720ac5704cf8977ad0dfaac94c3512541`.
+[CI 38021419097](https://github.com/A2C-SMCP/tf-chat-kit/actions/runs/38021419097)
+passed 1,429 tests with one existing macOS-only performance test skipped on Linux;
+all 1,430 passed locally. All 27 Chromium/WebKit cases passed in CI.
+
+The user also approved closing #46 for Kit scope, with Server capabilities kept
+in TFRS-336. Independent lifecycle/Gateway revalidation passed 161 tests. A real
+BFF/RobotServer reconnect returned status 200 and an empty join ACK with no UI
+alert. The latest Server source/Jira audit confirms heartbeat/worker reconnect
+repairs, but no complete replay protocol; see `../issue-46-recovery.md`.
+
+No merge, deployment or npm publication was performed. These are follow-ups for
+an already accepted implementation, not remaining #90/#96 acceptance blockers.

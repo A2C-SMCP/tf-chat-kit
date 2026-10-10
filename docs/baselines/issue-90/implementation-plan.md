@@ -19,18 +19,18 @@ This roadmap includes partially completed and unfinished work only. Completed
 #91 is excluded from the execution queue; #100/#101 are tracked under #46 and
 #102 under #97, without duplicating their work.
 
-| Issue | Tracked scope                                                                                                                                                        | Acceptance evidence                                                                                                        | Status                                                            |
-| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| #46   | Repair rejected-session subscription preflight and provisional/persisted user message identity                                                                       | Real local HTTP/Socket.IO races, isolated review, real Manager/BFF/RobotServer revalidation                                | Current BFF regression passed; full verified Server gate external |
-| #92   | Fence late credential commits, asynchronous store writes, logout, invalidation, dispose and account-list results                                                     | Real local HTTP interleavings, injected storage interleavings, headless build, React and host regressions, isolated review | Locally accepted; delivery pending                                |
-| #93   | Validate selected/switched identity against `/auth/me`, sanitize structured errors and bridge Gateway invalidation                                                   | Real local HTTP requests for single/multi-account/onboarding, DTO and error boundaries, Gateway-compatible provider        | Locally accepted; delivery pending                                |
-| #94   | Validate restored server identity against credential scope, expiry/skew, single-flight refresh and bounded 401 retry, storage failures                               | Deterministic clock and storage tests, real local HTTP refresh/retry path, unavailable-refresh fallback                    | Locally accepted; production refresh contract unverified          |
-| #95   | Verify packed UI consumers and include locally accepted UI in final integration                                                                                      | DOM interaction and keyboard tests, external provider lifecycle, headless dependency isolation                             | Locally accepted; delivery pending                                |
-| #96   | Identity-dependent host ChatClient/cache lifecycle, enabled/disabled authentication, headless and React/Ant Design packed consumers, compatibility and security scan | Real HTTP/Socket.IO integration, all packed consumers and `pnpm check`, isolated review                                    | Locally accepted; delivery pending                                |
-| #97   | Connect Manager quick chat to existing conversation creation entry                                                                                                   | Empty-history creation, independent chat, identity/robot switch races, real consumer acceptance                            | Local/real BFF acceptance passed; delivery pending                |
-| #98   | Remove unused connection-panel props/branches while retaining the active `.debug` loader                                                                             | Connection-panel tests and focused browser regression                                                                      | Local acceptance passed; delivery pending                         |
-| #99   | Align the approximate RobotServer fixture with the optional `platformId` contract                                                                                    | Browser flow through Manager exchange, conversation list, send and realtime receive; manual credential regressions         | Local acceptance/review passed; delivery pending                  |
-| #90   | Verify the parent acceptance criteria after #92–#96                                                                                                                  | Requirement-by-requirement audit of the evidence above                                                                     | Local criteria audited; child delivery pending                    |
+| Issue | Tracked scope                                                                                                                                                        | Acceptance evidence                                                                                                        | Status                                                 |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| #46   | Repair rejected-session subscription preflight and provisional/persisted user message identity                                                                       | Real local HTTP/Socket.IO races, isolated review, real Manager/BFF/RobotServer revalidation                                | Accepted and closed; see final scope below             |
+| #92   | Fence late credential commits, asynchronous store writes, logout, invalidation, dispose and account-list results                                                     | Real local HTTP interleavings, injected storage interleavings, headless build, React and host regressions, isolated review | Accepted and closed; see final scope below             |
+| #93   | Validate selected/switched identity against `/auth/me`, sanitize structured errors and bridge Gateway invalidation                                                   | Real local HTTP requests for single/multi-account/onboarding, DTO and error boundaries, Gateway-compatible provider        | Accepted and closed; see final scope below             |
+| #94   | Validate restored server identity against credential scope, expiry/skew, single-flight refresh and bounded 401 retry, storage failures                               | Deterministic clock and storage tests, real local HTTP refresh/retry path, unavailable-refresh fallback                    | Accepted and closed; refresh contract remains external |
+| #95   | Verify packed UI consumers and include locally accepted UI in final integration                                                                                      | DOM interaction and keyboard tests, external provider lifecycle, headless dependency isolation                             | Accepted and closed; see final scope below             |
+| #96   | Identity-dependent host ChatClient/cache lifecycle, enabled/disabled authentication, headless and React/Ant Design packed consumers, compatibility and security scan | Real HTTP/Socket.IO integration, all packed consumers and `pnpm check`, isolated review                                    | Accepted and closed; see final scope below             |
+| #97   | Connect Manager quick chat to existing conversation creation entry                                                                                                   | Empty-history creation, independent chat, identity/robot switch races, real consumer acceptance                            | Accepted and closed; see final scope below             |
+| #98   | Remove unused connection-panel props/branches while retaining the active `.debug` loader                                                                             | Connection-panel tests and focused browser regression                                                                      | Accepted and closed; see final scope below             |
+| #99   | Align the approximate RobotServer fixture with the optional `platformId` contract                                                                                    | Browser flow through Manager exchange, conversation list, send and realtime receive; manual credential regressions         | Accepted and closed; see final scope below             |
+| #90   | Verify the parent acceptance criteria after #92–#96                                                                                                                  | Requirement-by-requirement audit of the evidence above                                                                     | Accepted and closed; see final scope below             |
 
 #46 recovery repairs precede the final real-consumer acceptance. #92 precedes #93 and #94; their shared provider/identity contract precedes #95 and
 #96. #98 and #99 are independent of public authentication behavior and are handled
@@ -49,12 +49,14 @@ Locally accepted implementation is not scheduled for duplicate development.
    unique persisted/DOM user messages, a new live reply after recovery, prefixed
    quick creation and verified exact-ID manual/automatic cleanup of test IDs
    27/28/29. Direct API issuer compatibility and TFRS-336's complete verified
-   Server recovery profile remain separate; the latter keeps parent #46 open.
+   Server recovery profile remain separate; #46 is accepted for Kit scope.
    Under ADR-009 they do not block independent Kit delivery.
 3. Deliver the locally accepted #92–#95 and #98/#99 changes after final gates and
    authorized commit/push/PR. Close each only with delivered implementation and
-   its scoped acceptance evidence. Close #97 with its passing real BFF evidence; keep #46 open until its full verified Server gate is met.
-4. Complete #96 protected independent publication and unauthenticated Registry consumer verification after separate release authorization, then close #96 and parent #90. Its seven acceptance
+   its scoped acceptance evidence. Close #97 with its passing real BFF evidence; accept #46 for Kit scope with Server requirements retained in TFRS-336.
+4. #96 and parent #90 are accepted and closed under the user-approved
+   acceptance-before-publication policy. Protected publication and unauthenticated
+   Registry verification follow acceptance under separate release authorization. Its seven acceptance
    criteria have local evidence in `integration-acceptance.md`. The unprovided
    Manager user-JWT renewal contract remains explicitly external; the tested
    `auth_required` fallback satisfies the specified no-refresh behavior.
@@ -77,7 +79,7 @@ isolated review. The final serial full gate passed with exit 0 (79 files /
 scenarios have passing evidence: 23 local and four WebKit in the documented
 container environment. TFRS-336 is
 still `待办`; its complete verified recovery contract remains external and must
-not be inferred from the current-server regression tests. Git delivery was authorized on 2026-10-10 and PR #103 was created. The missing auth lock importer and protected independent publishing support are being repaired in that PR; no credentials were requested or read. #96 requires actual npm publication and therefore remains open with parent #90.
+not be inferred from the current-server regression tests. Git delivery was authorized on 2026-10-10 and PR #103 was created. The missing auth lock importer and protected independent publishing support were repaired and passed full CI in that PR. No credentials were requested or read. The user removed actual publication as an acceptance prerequisite; #96 and #90 are accepted and closed.
 
 ## Implementation decisions
 
@@ -111,18 +113,26 @@ or merge is authorized. The previously requested closure of completed issues
 follows verified PR delivery and each issue's own completion criteria. Existing
 unrelated `.playwright-mcp/` artifacts remain outside scope.
 
-## Remaining route after PR #103
+## Remaining route after accepted PR #103
 
-1. Finish release-support regression, fresh isolated review and PR CI; close
-   #92–#95 and #97–#99 with their scoped evidence after remote delivery passes.
-2. Review/merge the feature and Changesets version PRs only under separate merge
-   authorization. Changesets currently plans core seven at `0.8.3`, auth at
-   `0.9.0`; these are a plan, not already published versions.
-3. A separately authorized Release Owner verifies the npm Environment, immutable
-   `v*`/`chat-auth-v*` tag rules and Trusted Publishers. Bootstrap only auth if it
-   has never existed; pin an already published compatible core for its Registry
-   consumers. Use OIDC for existing packages. Run protected publication and
-   unauthenticated Registry consumers; close #96, then #90 only after success.
-4. Keep #46 open until TFRS-336 provides the verified production subscription,
-   persisted replay and worker-delivery gate; re-run its full scenario against
-   the identified deployed revision before closing it.
+On 2026-10-10 the user required acceptance before publication and approved the
+Kit/Server split for #46. #90 and #92–#99 are accepted and closed; #46 is accepted
+and closed for Kit scope. Functional commit `3dc7284720ac5704cf8977ad0dfaac94c3512541`
+passed full local checks and CI 38021419097, including all 27 browser scenarios.
+The latest independent #46 run passed 161 tests; the real Server probe confirms
+current-server compatibility with an empty ACK, not verified complete recovery.
+
+1. Review/merge the feature and Changesets version PRs under separate merge
+   authorization. Changesets plans core seven at `0.8.3` and auth at `0.9.0`;
+   those versions have not been published by this work.
+2. An authorized Release Owner verifies npm Environment, immutable tags and
+   Trusted Publishers, executes the selected core/auth/all protected release,
+   then verifies unauthenticated Registry consumers. Publish the already accepted
+   implementation; do not postpone #90/#96 acceptance until this publication.
+3. Server TFRS-336 owns structured conversation authorization/ACK, persisted
+   replay/completeness and worker durable delivery. Latest Server develop
+   `a0f2bc3a` still lacks the full protocol. TFRS-582 fixed heartbeat/worker
+   reconnect and delivered a dev image; TFRS-550 retains a failed historical
+   browser automatic-recovery check. Implement the remaining Server contract and
+   independently verify offline-window recovery against an identified deployment.
+   Audit details are in `../issue-46-recovery.md`.
