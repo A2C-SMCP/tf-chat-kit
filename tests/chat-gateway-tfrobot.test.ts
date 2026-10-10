@@ -3878,6 +3878,51 @@ describe("TFRobotChatGateway Socket boundary", () => {
     await gateway.dispose({ deadlineAt: deadline() });
   });
 
+  it.each([0, 1])(
+    "keeps the initial join timeout phase with %i ms of connect clock drift",
+    async (connectClockDrift) => {
+      vi.useFakeTimers();
+      let gateway: ReturnType<typeof createTFRobotChatGateway> | undefined;
+      try {
+        let clockDrift = 0;
+        const socket = new PlannedAckSocket(HOLD_JOIN_ACK);
+        const connect = socket.connect.bind(socket);
+        vi.spyOn(socket, "connect").mockImplementation(() => {
+          clockDrift = connectClockDrift;
+          connect();
+        });
+        gateway = createTFRobotChatGateway({
+          baseUrl: "https://robot.example/",
+          messageCreatorProvider,
+          sessionProvider: sessionProvider(),
+          fetch: vi.fn(),
+          socketFactory: () => socket,
+          now: () => Date.now() + clockDrift,
+        });
+        const pending = gateway.subscribe(
+          { conversationId: "42", deadlineAt: Date.now() + 100 },
+          { next: () => undefined },
+        );
+        // Drift makes the join timer fire before the establishment timer;
+        // without drift, the establishment timer runs first.
+        await vi.advanceTimersByTimeAsync(100);
+        await expect(pending).resolves.toMatchObject({
+          ok: false,
+          error: {
+            code: "timeout",
+            diagnostic: { operation: "subscribe", phase: "joining" },
+          },
+        });
+        expect(socket.connected).toBe(false);
+        socket.acknowledgements[0]!({ accepted: true });
+        expect(socket.connected).toBe(false);
+      } finally {
+        await gateway?.dispose({ deadlineAt: deadline() });
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("makes a reconnect join timeout terminal for late acknowledgements", async () => {
     vi.useFakeTimers();
     try {

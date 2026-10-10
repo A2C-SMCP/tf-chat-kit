@@ -16,7 +16,7 @@ TFRobot 聊天能力的可复用模块。项目采用 Headless Runtime、宿主�
 - 每个支持的接入形态在本仓库维护近似的版本化消费者或受控传输，并作为发布硬门禁；真实外部
   E2E 不构成项目依赖。
 
-V1 不承诺 Fluent UI、Web Component、AG-UI、账号登录系统或为每个宿主提供独立视觉包。
+V1 提供可选的认证接入模块，复用宿主的 Manager 账号体系；账号注册、组织开通和权限管理仍由宿主与 Manager 负责。V1 不承诺 Fluent UI、Web Component、AG-UI 或为每个宿主提供独立视觉包。
 
 ## 公共包
 
@@ -45,6 +45,132 @@ chat-auth (可选，独立；react/antd 为可选 peer UI)
 普通宿主只需安装 `@turingfocus/chat-kit`：非 React 使用 `/headless`，自定义 React UI 使用 `/react`，成品 UI 使用根入口或 `/antd`。需要认证时再安装可选的 `@turingfocus/chat-auth`：认证状态与 transport 使用 `/headless`，TFRobotServer 适配使用 `/tfrobot`，React/Ant Design 默认 UI 分别使用 `/react` 与 `/antd`。高级消费者仍可按需安装叶子包；`chat-testing` 是独立开发依赖，不进入生产门面。
 
 任何 Chat Kit 包都不得反向依赖 TFRobotFront 或其他宿主项目。
+
+## 登录、Chat Token 与会话接入
+
+以下接入示例使用核心七包 `0.8.4`；可选认证包独立发布，版本为 `0.9.0`。已经有登录系统的宿主可以只使用核心包，并注入自己的 `SessionProvider`。
+
+```bash
+pnpm add @turingfocus/chat-kit@0.8.4 @turingfocus/chat-auth@0.9.0
+# 使用下面的 React / Ant Design UI 时还需要：
+pnpm add react@^18.2.0 react-dom@^18.2.0 antd@^5.23.4
+```
+
+### 1. 接入 Manager 登录
+
+`AuthClient` 每个宿主实例单独创建；环境固定为 `staging` 或 `production`。`baseUrl` 由宿主选择，指向对应 Manager 或同源认证 BFF。
+
+```ts
+import { createAuthClient } from "@turingfocus/chat-auth/headless";
+import { createTfRobotAuthTransport } from "@turingfocus/chat-auth/tfrobot";
+
+export const createHostAuth = (managerBaseUrl: string) =>
+  createAuthClient({
+    environment: "production",
+    transport: createTfRobotAuthTransport({ baseUrl: managerBaseUrl }),
+  });
+
+// 在宿主启动时创建并持有 auth，表单提交时调用：
+// const result = await auth.login({ identifier, password });
+// result.kind === "account-selection-required"：展示候选账号，
+//   然后 await auth.selectAccount(用户选择的 accountId)。
+// result.kind === "onboarding-required"：转交宿主的账号开通流程。
+// result.kind === "authenticated"：才允许创建当前身份的聊天实例。
+```
+
+React 宿主可直接挂载默认登录、账号选择、组织切换和过期提示 UI，也可以用 `/react` 的 `useAuthSelector` 实现自己的界面：
+
+```tsx
+import type { AuthClient } from "@turingfocus/chat-auth/headless";
+import { AuthProvider } from "@turingfocus/chat-auth/react";
+import {
+  AccountSelectionPanel,
+  AuthStatus,
+  LoginPanel,
+  OrganizationSwitcher,
+  SessionExpiredNotice,
+} from "@turingfocus/chat-auth/antd";
+
+export function HostLogin({ auth }: { auth: AuthClient }) {
+  return (
+    <AuthProvider client={auth}>
+      <LoginPanel />
+      <AccountSelectionPanel />
+      <OrganizationSwitcher />
+      <SessionExpiredNotice />
+      <AuthStatus />
+    </AuthProvider>
+  );
+}
+```
+
+`auth.getSnapshot()` / `auth.subscribe()` 提供身份与状态，不包含 Token。`AuthProvider` 不释放外部传入的客户端：退出登录调用 `await auth.logout()`，宿主卸载时调用 `await auth.dispose()`。环境改变时创建新的 `AuthClient`。
+
+### 2. 用 Manager Token 换取 Chat Token
+
+| 凭据               | 获取方式                                                                            | 使用位置                                                   |
+| ------------------ | ----------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Manager 用户 Token | 登录、账号选择或组织切换后，由 `auth.createSessionProvider().getSession()` 按需获取 | Manager API，以及 Token Exchange 的 `subject_token`        |
+| Chat Token         | 宿主向 Manager 的 `/api/v1/oauth/token` 执行 RFC 8693 Token Exchange                | RobotServer REST 的 Bearer Token 与 Socket auth 的 `token` |
+
+选择机器人后，宿主先读取该机器人的 `connection-info`，解析最终 REST / Socket 地址与路由；交换请求使用 `audience=robot:{robotAccountId}`、`scope=chat:read chat:send`、`token_profile=session`。`subject_token_type` 为 `urn:ietf:params:oauth:token-type:jwt`，`grant_type` 为 `urn:ietf:params:oauth:grant-type:token-exchange`，请求体使用 `application/x-www-form-urlencoded`。
+
+`auth.createSessionProvider()` 返回的是 **Manager 会话**，不能直接交给需要机器人 audience 的 RobotServer。宿主应实现机器人专属的 Token Source 或 BFF，向 Chat Kit 只提供交换后的 Chat Token。当前可复用的流程示例是仓库私有的 [Manager → RobotServer 连接](playground/src/manager-robotserver-session.ts) 与 [Token Exchange / 内存续期](playground/src/manager-token-exchange.ts)；这些文件不是 npm 导出，生产宿主需要自己的实现和端点配置。
+
+### 3. 保持 Chat Token 可用并创建会话工作区
+
+宿主 Token Source 的 `getToken()` 按需返回有效凭据：在内存中缓存交换结果，按返回的 `expires_in` 计算有效期，距过期约 30 秒时重新交换，并合并同一身份的并发请求。这不是后台定时续期，也不保证 Manager 登录永不过期。
+
+下面的工厂只使用公开 API；`RobotTokenSource` 是宿主实现的端口，每个环境、用户、账号、组织和机器人拥有独立实例：
+
+```ts
+import type { AuthClient } from "@turingfocus/chat-auth/headless";
+import { createTFRobotChatClientFactory } from "@turingfocus/chat-kit/antd";
+
+interface RobotTokenSource {
+  getToken(): Promise<string>;
+  invalidate(): void;
+}
+
+export function createHostRobotChat(
+  auth: AuthClient,
+  tokens: RobotTokenSource,
+  endpoints: {
+    baseUrl: string;
+    socketNamespaceUrl: string;
+    socketPath: string;
+  },
+) {
+  const snapshot = auth.getSnapshot();
+  const account = snapshot.account;
+  if (snapshot.status !== "authenticated" || account === undefined) {
+    throw new Error("请先完成登录与账号选择");
+  }
+  return createTFRobotChatClientFactory({
+    ...endpoints,
+    serverProfile: { kind: "current-server" },
+    sessionProvider: {
+      getSession: async () => ({
+        kind: "bearer",
+        token: await tokens.getToken(),
+      }),
+      onSessionInvalid: ({ reason }) => {
+        if (reason !== "forbidden") tokens.invalidate();
+      },
+    },
+    messageCreatorProvider: () => ({ uid: account.userId, name: "当前用户" }),
+    getDisposeOptions: () => ({ deadlineAt: Date.now() + 10_000 }),
+  });
+}
+```
+
+把稳定的 factory 传给 `OwnedChatProvider`，再挂载 `ChatWorkspace`，即可使用会话列表、分页、创建、切换、历史与实时消息。完整挂载示例见 [宿主 App 接入指南](docs/host-app-integration.md#5-在-react-生命周期中挂载)。上例的 `current-server` 只适用于当前缺少可靠 join / replay ACK 的 Server，保证级别见下节；已提供完整契约的 Server 使用默认 `verified`。
+
+- **Chat Token 401**：Gateway 通知 `onSessionInvalid`，宿主清除匹配的旧凭据并重新交换；Gateway 对支持恢复的操作最多重试一次，宿主不要再套无限重试。
+- **403**：表示权限不足，保留有效身份并呈现错误；重新登录或反复交换 Token 不会补齐权限。
+- **Manager Token 过期**：通用 `AuthClient` 只在 transport 实现 `refresh()` 时执行单飞刷新。当前 Manager 适配器只读取服务端明确返回的 `expiresAt`，不解析 JWT 来猜测有效期，也没有已确认的生产刷新接口。已知有效期触发按需刷新，或宿主显式通知 Manager 会话失效后，不支持刷新时才会转为 `auth_required`。若有效期未知，Token Exchange 返回的 Manager 401 必须由宿主转交给 `auth.createSessionProvider()` 返回的 **Manager SessionProvider**：`await managerSessions.onSessionInvalid({ reason: "rejected", error })`，再引导用户重新登录。上例的 RobotServer `onSessionInvalid` 只清除 Chat Token，不能代替这一步。
+- **跨页面恢复登录**：默认凭据只在当前实例内存中。需要持久化时，由宿主注入 `CredentialStore` 与完整 `credentialScope`（环境、用户、账号及组织），再调用 `auth.restore()` 校验身份；`restore()` 不是延长 Token 有效期。
+- **退出或切换身份 / 机器人**：立即停止旧聊天实例的使用，清空其 Token Source，并释放旧 `ChatClient` / factory。Token Source 必须拒绝失效之后晚到的交换结果；新的身份使用新的 factory，避免旧会话、缓存与 Socket 串用。普通 Token 刷新保持同一身份，不必重建聊天实例。
 
 ### TFRobotServer 协议档位
 
