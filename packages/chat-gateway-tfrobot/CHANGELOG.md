@@ -1,5 +1,27 @@
 # @turingfocus/chat-gateway-tfrobot
 
+## 0.8.3
+
+### Patch Changes
+
+- da5b4f0: Retry once with a freshly resolved session when the server rejects the
+  credential with 401. The rejected session is invalidated on the provider, so a
+  short-lived token that expired between requests no longer surfaces as a failed
+  operation. Repeated rejection returns the original error and never loops.
+- 92ac1da: Invoke a host-provided `fetch` without a foreign receiver so browsers stop
+  rejecting gateway requests with `Illegal invocation` before they leave the page.
+- 0a0be31: Retry current-server subscription preflight once after an HTTP 401, reusing the
+  refreshed credential for REST validation and the Socket handshake. Bound pinned
+  credential invalidation by the subscription deadline.
+
+  Reconcile current-server provisional user message identities with persisted
+  history across realtime delivery and subscription handoff, retaining distinct
+  database IDs and clearing correlation state with its Gateway instance.
+  Allow confirmed Server processing fields to be added during persistence without
+  duplicating the user message, while retaining existing-value conflicts and
+  ambiguous identities.
+  - @turingfocus/chat-protocol@0.8.3
+
 ## 0.8.2
 
 ### Patch Changes

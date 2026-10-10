@@ -1,5 +1,15 @@
 # @turingfocus/chat-runtime
 
+## 0.8.3
+
+### Patch Changes
+
+- 46dad86: Report the subscription failure when a conversation load fails after its
+  subscription did. The follow-up snapshot request reuses the same deadline, so
+  its own timeout used to hide the socket handshake or join failure that spent
+  the deadline in the first place.
+  - @turingfocus/chat-protocol@0.8.3
+
 ## 0.8.2
 
 ### Patch Changes
