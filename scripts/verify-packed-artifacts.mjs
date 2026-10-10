@@ -658,6 +658,67 @@ try {
     console.log(`Verified packed ${kind} lifecycle and dependency isolation.`);
   }
 
+  const managerSource = await readFile(
+    path.join(rootDirectory, "tests/consumers/manager/consumer.ts"),
+    "utf8",
+  );
+  for (const host of ["web", "office"]) {
+    const directory = path.join(verificationRoot, `manager-${host}-consumer`);
+    await mkdir(directory);
+    await verifyConsumerProject(
+      {
+        directory,
+        manifest: {
+          name: `manager-${host}-consumer`,
+          version: "0.0.0",
+          private: true,
+          type: "module",
+          packageManager: "pnpm@10.34.5",
+          dependencies: {
+            "@turingfocus/chat-auth": packageFiles["@turingfocus/chat-auth"],
+            "@turingfocus/chat-kit": packageFiles["@turingfocus/chat-kit"],
+            "socket.io": "4.8.3",
+          },
+          devDependencies: { typescript: "5.9.3", "@types/node": "24.13.3" },
+          pnpm: {
+            overrides: packageFiles,
+            peerDependencyRules: {
+              ignoreMissing: ["react", "react-dom", "antd", "@types/react"],
+            },
+          },
+        },
+        packageNames: ["@turingfocus/chat-auth", "@turingfocus/chat-kit"],
+        forbiddenPackageMarkers: [
+          "react@",
+          "react-dom@",
+          "antd@",
+          "office-js@",
+          "next@",
+        ],
+        sourceFiles: {
+          ".npmrc": "auto-install-peers=false\n",
+          "consumer.ts": managerSource,
+          "index.ts": `import { runManagerConsumerVerification } from "./consumer.js";\nawait runManagerConsumerVerification("${host}");\n`,
+        },
+        tsconfig: {
+          compilerOptions: {
+            module: "NodeNext",
+            moduleResolution: "NodeNext",
+            target: "ES2022",
+            outDir: "dist",
+            strict: true,
+            skipLibCheck: true,
+            exactOptionalPropertyTypes: true,
+            lib: ["ES2022"],
+            types: ["node"],
+          },
+          include: ["**/*.ts"],
+        },
+      },
+      packManifest.packages,
+    );
+  }
+
   const authChatSource = await readFile(
     path.join(rootDirectory, "tests/consumers/auth-chat/consumer.ts"),
     "utf8",

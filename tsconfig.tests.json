@@ -26,7 +26,12 @@
       "@turingfocus/chat-react": ["./packages/chat-react/src/index.ts"],
       "@turingfocus/chat-runtime": ["./packages/chat-runtime/src/index.ts"],
       "@turingfocus/chat-testing": ["./packages/chat-testing/src/index.ts"],
-      "@turingfocus/chat-ui-antd": ["./packages/chat-ui-antd/src/index.ts"]
+      "@turingfocus/chat-ui-antd": ["./packages/chat-ui-antd/src/index.ts"],
+      "@turingfocus/chat-auth/manager": ["./packages/chat-auth/src/manager.ts"],
+      "@turingfocus/chat-kit/manager": ["./packages/chat-kit/src/manager.ts"],
+      "@turingfocus/chat-kit/manager-react": [
+        "./packages/chat-kit/src/manager-react.ts"
+      ]
     },
     "rootDir": ".",
     "sourceMap": false,

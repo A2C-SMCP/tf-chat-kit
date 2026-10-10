@@ -1712,6 +1712,7 @@ describe("Playground Manager quick chat", () => {
             rid: "e2e-robot",
             robotType: "tfrobot",
             socketBaseURL: "https://robot.turingfocus.cn",
+            sioPath: "/socket.io/",
           },
         });
       }
@@ -1724,6 +1725,9 @@ describe("Playground Manager quick chat", () => {
       if (path === "/api/v1/digital-employees") {
         return managerResponse({
           data: {
+            total: 1,
+            page: 1,
+            pageSize: 20,
             items: [
               {
                 id: "de-e2e",

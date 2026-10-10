@@ -64,6 +64,10 @@ import {
   createAuthClient,
   type AuthClient,
 } from "../../packages/chat-auth/src/headless.js";
+import {
+  managerRobotEligibility,
+  type ManagerRobotEligibility,
+} from "../../packages/chat-auth/src/manager.js";
 import { createTfRobotAuthTransport } from "../../packages/chat-auth/src/tfrobot.js";
 import {
   createRobotServerPlaygroundSession,
@@ -730,6 +734,24 @@ const ManagerQuickChat = ({
       />
     );
   }
+  const eligibility =
+    robot === undefined
+      ? undefined
+      : managerRobotEligibility({
+          ...robot,
+          employeeId: robot.managerEmployeeId,
+        });
+  const eligibilityMessages: Readonly<Record<ManagerRobotEligibility, string>> =
+    {
+      ready: "",
+      missing_employee_id:
+        "当前机器人缺少 Manager employeeId，无法读取连接信息。",
+      missing_robot_id: "当前机器人缺少 robotId，无法定位聊天服务。",
+      missing_robot_account_id:
+        "当前机器人缺少 robotAccountId，无法换取聊天凭据。",
+      not_running: "当前机器人未运行，暂时无法连接。",
+      unsupported_template: "当前机器人模板不支持聊天连接。",
+    };
   return (
     <section className="manager-quick-panel" aria-label="当前机器人快速对话">
       <div>
@@ -753,8 +775,9 @@ const ManagerQuickChat = ({
           </Typography.Text>
           {!robot.canAutoConnect ? (
             <Typography.Text type="warning">
-              当前机器人缺少 robotAccountId，无法自动换取 RobotServer 用户
-              Token。
+              {eligibility === undefined
+                ? ""
+                : eligibilityMessages[eligibility]}
             </Typography.Text>
           ) : null}
         </div>
@@ -905,7 +928,11 @@ export const PlaygroundApp = ({
       return;
     setManagerConnecting(true);
     setSessionPlan(null);
+    const abort = new AbortController();
+    let disposeConnection: (() => void | Promise<void>) | undefined;
+    let transferred = false;
     void createManagerRobotServerConnection({
+      signal: abort.signal,
       client: authClient,
       managerBaseUrl,
       robot: selectedRobot,
@@ -913,9 +940,16 @@ export const PlaygroundApp = ({
       allowedServerOrigins: allowedManagerServerOrigins(),
     })
       .then((config) => {
-        if (generation !== managerConnectionGeneration.current) return;
+        if (generation !== managerConnectionGeneration.current) {
+          void config.disposeSession?.();
+          return;
+        }
+        disposeConnection = config.disposeSession;
         setSessionPlan({
-          create: () => createRobotServerSession(config),
+          create: () => {
+            transferred = true;
+            return createRobotServerSession(config);
+          },
           kind: "robotserver",
         });
       })
@@ -930,6 +964,8 @@ export const PlaygroundApp = ({
           setManagerConnecting(false);
       });
     return () => {
+      abort.abort();
+      if (!transferred) void disposeConnection?.();
       if (generation === managerConnectionGeneration.current)
         managerConnectionGeneration.current += 1;
     };

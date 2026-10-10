@@ -19,6 +19,13 @@ export default defineConfig({
   },
   webServer: [
     {
+      command: "node scripts/manager-e2e-server.mjs",
+      env: { TF_CHAT_PLAYGROUND_ORIGIN: playgroundOrigin },
+      reuseExistingServer: false,
+      timeout: 30_000,
+      url: "http://127.0.0.1:4312/ready",
+    },
+    {
       command: "node scripts/playground-e2e-robotserver.mjs",
       env: { TF_CHAT_PLAYGROUND_ORIGIN: playgroundOrigin },
       reuseExistingServer: false,
