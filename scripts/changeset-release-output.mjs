@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { PACKAGE_POLICY } from "./workspace-policy.mjs";
+import { FIXED_PACKAGE_NAMES, PACKAGE_POLICY } from "./workspace-policy.mjs";
 
 /** @param {string} rootDirectory @param {string[]} args */
 const runGit = (rootDirectory, args) =>
@@ -101,16 +101,45 @@ export async function generateConsumedReleaseOutput({
     /** @type {Record<string, string>} */
     const changelogs = {};
     for (const [directory, { name }] of Object.entries(PACKAGE_POLICY)) {
+      try {
+        await readFile(
+          path.join(temporaryDirectory, "packages", directory, "package.json"),
+          "utf8",
+        );
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          "code" in error &&
+          error.code === "ENOENT"
+        ) {
+          if (FIXED_PACKAGE_NAMES.includes(name)) throw error;
+          continue;
+        }
+        throw error;
+      }
       packageManifests[name] = JSON.parse(
         await readFile(
           path.join(temporaryDirectory, "packages", directory, "package.json"),
           "utf8",
         ),
       );
-      changelogs[name] = await readFile(
-        path.join(temporaryDirectory, "packages", directory, "CHANGELOG.md"),
-        "utf8",
-      );
+      try {
+        changelogs[name] = await readFile(
+          path.join(temporaryDirectory, "packages", directory, "CHANGELOG.md"),
+          "utf8",
+        );
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          "code" in error &&
+          error.code === "ENOENT"
+        ) {
+          if (FIXED_PACKAGE_NAMES.includes(name)) throw error;
+          changelogs[name] = "";
+          continue;
+        }
+        throw error;
+      }
     }
 
     return { outputFiles, packageManifests, changelogs };

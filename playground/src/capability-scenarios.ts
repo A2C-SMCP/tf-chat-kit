@@ -67,7 +67,7 @@ export function createDemoPorts(): {
           url: new URL(
             uri,
             typeof location === "undefined"
-              ? "http://localhost:3000"
+              ? "http://localhost:4311"
               : location.href,
           ).href,
         };
@@ -116,7 +116,7 @@ export function createCapabilityTimeline(
         "Browser 示例",
         {
           kind: "browser",
-          url: `${typeof location === "undefined" ? "http://localhost:3000" : location.origin}/demo/report.txt`,
+          url: `${typeof location === "undefined" ? "http://localhost:4311" : location.origin}/demo/report.txt`,
           image: { uri: "private:demo-image" },
           markdown:
             "## 本地网页摘要\n截图和正文通过默认工具组件呈现。[打开演示报告](private:demo-report)",

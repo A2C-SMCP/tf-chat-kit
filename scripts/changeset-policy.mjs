@@ -1,4 +1,8 @@
-import { isZeroMajorVersion, PACKAGE_POLICY } from "./workspace-policy.mjs";
+import {
+  FIXED_PACKAGE_NAMES,
+  isZeroMajorVersion,
+  PACKAGE_POLICY,
+} from "./workspace-policy.mjs";
 
 const publicPackageEntries = Object.entries(PACKAGE_POLICY);
 const publicPackageDirectories = new Set(
@@ -10,6 +14,7 @@ const publicPackageNames = new Set(
 const publicPackageNameByDirectory = new Map(
   publicPackageEntries.map(([directory, { name }]) => [directory, name]),
 );
+const fixedPackageNames = new Set(FIXED_PACKAGE_NAMES);
 
 /** @typedef {{ name: string; type: "none" | "patch" | "minor" | "major" }} ChangesetRelease */
 /**
@@ -75,10 +80,19 @@ const publicPlannedReleases = (plan) =>
 const validateFixedGroupReleasePlan = (label, plan, errors) => {
   const releases = publicPlannedReleases(plan);
   const plannedNames = sortedUnique(releases.map(({ name }) => name));
-  const expectedNames = sortedUnique([...publicPackageNames]);
-  if (JSON.stringify(plannedNames) !== JSON.stringify(expectedNames)) {
+  const expectedFixedNames = sortedUnique([...fixedPackageNames]);
+  const hasFixedPackage = plannedNames.some((name) =>
+    fixedPackageNames.has(name),
+  );
+  const isFixedRelease =
+    hasFixedPackage &&
+    expectedFixedNames.every((name) => plannedNames.includes(name));
+  const isIndependentRelease = plannedNames.every(
+    (name) => publicPackageNames.has(name) && !fixedPackageNames.has(name),
+  );
+  if (!isFixedRelease && !isIndependentRelease) {
     errors.push(
-      `${label} release plan must include the complete fixed group; expected ${expectedNames.join(", ")}; found ${plannedNames.join(", ") || "<none>"}`,
+      `${label} release plan must include the complete fixed group or an independent package; expected fixed group ${expectedFixedNames.join(", ")}; found ${plannedNames.join(", ") || "<none>"}`,
     );
   }
   for (const { name, newVersion } of releases) {

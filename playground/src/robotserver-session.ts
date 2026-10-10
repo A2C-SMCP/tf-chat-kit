@@ -1,4 +1,9 @@
-import type { ChatError, ChatSnapshot } from "@turingfocus/chat-protocol";
+import {
+  safeDiagnosticError,
+  type ChatError,
+  type ChatSnapshot,
+  type SessionProvider,
+} from "@turingfocus/chat-protocol";
 import {
   createChatClient,
   createConversationWorkspaceController,
@@ -39,6 +44,7 @@ export interface RobotServerConnectionTargetDraft {
   readonly platformId: string;
   readonly proxyOrigin: string;
   readonly robotId: string;
+  readonly routingHeaders?: Readonly<Record<string, string>> | undefined;
   readonly serverOrigin: string;
   readonly socketNamespaceUrl: string;
   readonly socketPath: string;
@@ -61,7 +67,9 @@ export interface RobotServerConnectionTargetConfig {
 }
 
 export interface RobotServerConnectionConfig extends RobotServerConnectionTargetConfig {
-  readonly credential: TFRobotSession;
+  readonly credential?: TFRobotSession | undefined;
+  readonly sessionProvider?: SessionProvider<TFRobotSession> | undefined;
+  readonly disposeSession?: (() => void | Promise<void>) | undefined;
 }
 
 export type RobotServerConnectionValidation =
@@ -113,12 +121,17 @@ export const validateRobotServerTarget = (
         namespace: draft.namespace,
         robotId: draft.robotId,
         serverOrigin: draft.serverOrigin,
+        ...(draft.routingHeaders === undefined
+          ? {}
+          : { routingHeaders: draft.routingHeaders }),
       },
       draft.proxyOrigin,
       draft.allowedServerOrigins,
     );
     if (!target.ok) return target;
     ({ httpBaseUrl, socketNamespaceUrl, socketPath } = target.value);
+    if (draft.socketPath.trim().length > 0)
+      socketPath = draft.socketPath.trim();
   } else {
     const parsedHttpBaseUrl = parseEndpoint(draft.httpBaseUrl, [
       "http:",
@@ -145,7 +158,11 @@ export const validateRobotServerTarget = (
       };
     }
     socketPath = draft.socketPath.trim();
-    if (!socketPath.startsWith("/") || /\s/u.test(socketPath)) {
+    if (
+      !socketPath.startsWith("/") ||
+      /\s/u.test(socketPath) ||
+      socketPath.includes("..")
+    ) {
       return {
         ok: false,
         message: "Socket Path 必须以 / 开头，且不能包含空白字符。",
@@ -153,6 +170,16 @@ export const validateRobotServerTarget = (
     }
     httpBaseUrl = parsedHttpBaseUrl;
     socketNamespaceUrl = parsedSocketNamespaceUrl;
+  }
+  if (
+    !socketPath.startsWith("/") ||
+    /\s/u.test(socketPath) ||
+    socketPath.includes("..")
+  ) {
+    return {
+      ok: false,
+      message: "Socket Path 必须是安全的绝对路径。",
+    };
   }
   const platformId = draft.platformId.trim();
   const creatorName = draft.creatorName.trim() || "CurrentUser";
@@ -212,6 +239,86 @@ export const validateRobotServerConnection = (
 export const robotServerTestConversationTitle = (now: number): string =>
   `${ROBOTSERVER_TEST_CONVERSATION_PREFIX} ${new Date(now).toISOString().slice(0, 19)}`;
 
+export interface RobotServerErrorPresentation {
+  readonly description: string;
+  readonly status: string;
+}
+
+const TIMEOUT_PHASE_LABELS: Readonly<Record<string, string>> = {
+  response: "已收到响应头",
+  session: "未收到响应",
+};
+
+/**
+ * A compact, sanitized suffix for the visible copy: which endpoint the deadline
+ * hit, whether the server answered at all, and how much of the budget was left.
+ * Values come from the allowlisted diagnostic, so no credential can leak here.
+ */
+const timeoutDetail = (diagnostic: ChatError["diagnostic"]): string => {
+  if (diagnostic === undefined) return "";
+  const parts: string[] = [];
+  if (diagnostic.method !== undefined && diagnostic.path !== undefined) {
+    parts.push(`${diagnostic.method} ${diagnostic.path}`);
+  }
+  const phase =
+    diagnostic.phase === undefined
+      ? undefined
+      : TIMEOUT_PHASE_LABELS[diagnostic.phase];
+  if (phase !== undefined && diagnostic.operation !== "subscribe") {
+    parts.push(phase);
+  }
+  if (
+    diagnostic.timeoutMs !== undefined &&
+    diagnostic.elapsedMs !== undefined
+  ) {
+    parts.push(
+      `${(diagnostic.elapsedMs / 1000).toFixed(1)}s/${(diagnostic.timeoutMs / 1000).toFixed(1)}s`,
+    );
+  }
+  return parts.length === 0 ? "" : `（${parts.join(" · ")}）`;
+};
+
+/**
+ * The local request deadline covers three different phases, and they need
+ * different follow-up actions: a Socket handshake that never completed, a
+ * `join_conversation` the server never acknowledged, or REST data that never
+ * arrived. Diagnostics already carry the phase; surface it instead of
+ * collapsing every deadline into "RobotServer did not respond".
+ */
+const timeoutPresentation = (
+  error: ChatError,
+): Pick<RobotServerErrorPresentation, "description" | "status"> => {
+  const diagnostic = safeDiagnosticError(error).diagnostic;
+  const detail = timeoutDetail(diagnostic);
+  if (diagnostic?.operation === "subscribe") {
+    return diagnostic.phase === "joining"
+      ? {
+          description: `已连接 RobotServer，但会话加入（join）未在期限内得到应答。${detail}`,
+          status: "RobotServer 会话加入超时。",
+        }
+      : {
+          description: `RobotServer Socket 未在期限内完成连接握手（WebSocket 可能被网络或代理拦截）。${detail}`,
+          status: "RobotServer Socket 连接超时。",
+        };
+  }
+  if (diagnostic?.operation === "loadConversation") {
+    if (diagnostic.timeoutMs === 0) {
+      return {
+        description: `本次期限已在 Socket 订阅阶段耗尽（连接、鉴权或会话加入），随后的会话数据请求没有获得剩余时间。${detail}`,
+        status: "RobotServer 会话订阅超时。",
+      };
+    }
+    return {
+      description: `RobotServer 未在期限内返回该会话的数据。${detail}`,
+      status: "RobotServer 会话数据加载超时。",
+    };
+  }
+  return {
+    description: `RobotServer 未在本地请求期限内响应。${detail}`,
+    status: "RobotServer 发生 timeout 错误。",
+  };
+};
+
 const safeErrorDescription = (error: ChatError): string => {
   switch (error.code) {
     case "authentication":
@@ -223,7 +330,7 @@ const safeErrorDescription = (error: ChatError): string => {
     case "validation":
       return "RobotServer 返回的数据不符合 Chat Kit 协议。";
     case "timeout":
-      return "RobotServer 未在本地请求期限内响应。";
+      return timeoutPresentation(error).description;
     case "server":
       return "RobotServer 发生内部聊天错误。";
     default:
@@ -231,18 +338,53 @@ const safeErrorDescription = (error: ChatError): string => {
   }
 };
 
+/**
+ * Maps a gateway error onto the copy the Playground shows. Deadline errors
+ * carry the failing phase in their diagnostic, so the two socket phases and
+ * the REST phase read differently instead of sharing one vague message.
+ */
+export const describeRobotServerError = (
+  error: ChatError,
+): RobotServerErrorPresentation => {
+  switch (error.code) {
+    case "network":
+      return {
+        description: safeErrorDescription(error),
+        status: "RobotServer 网络或跨域连接失败。",
+      };
+    case "authentication":
+      return {
+        description: safeErrorDescription(error),
+        status: "RobotServer 鉴权失败。",
+      };
+    case "authorization":
+      return {
+        description: safeErrorDescription(error),
+        status: "RobotServer 授权失败。",
+      };
+    case "timeout":
+      return timeoutPresentation(error);
+    default:
+      return {
+        description: safeErrorDescription(error),
+        status: `RobotServer 发生 ${error.code} 错误。`,
+      };
+  }
+};
+
 const stateForError = (
   error: ChatError,
   connected: boolean,
 ): Pick<PlaygroundState, "connected" | "contentState" | "status"> => {
+  const presentation = describeRobotServerError(error);
   if (error.code === "network") {
     return {
       connected: false,
       contentState: {
         kind: "disconnected",
-        description: safeErrorDescription(error),
+        description: presentation.description,
       },
-      status: "RobotServer 网络或跨域连接失败。",
+      status: presentation.status,
     };
   }
   if (error.code === "authentication" || error.code === "authorization") {
@@ -250,21 +392,18 @@ const stateForError = (
       connected: false,
       contentState: {
         kind: "error",
-        description: safeErrorDescription(error),
+        description: presentation.description,
       },
-      status:
-        error.code === "authentication"
-          ? "RobotServer 鉴权失败。"
-          : "RobotServer 授权失败。",
+      status: presentation.status,
     };
   }
   return {
     connected,
     contentState: {
       kind: "error",
-      description: safeErrorDescription(error),
+      description: presentation.description,
     },
-    status: `RobotServer 发生 ${error.code} 错误。`,
+    status: presentation.status,
   };
 };
 
@@ -276,6 +415,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
   #intentRevision = 0;
   #lastClientSnapshot: ChatSnapshot | null = null;
   readonly #listeners = new Set<() => void>();
+  readonly #disposeSession: (() => void | Promise<void>) | undefined;
   readonly #ownedTestConversationIds = new Set<string>();
   readonly #testConversationCreations = new Set<
     ReturnType<ConversationWorkspaceController["createConversation"]>
@@ -297,6 +437,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
     dependencies: RobotServerSessionDependencies,
   ) {
     this.#now = dependencies.now ?? Date.now;
+    this.#disposeSession = config.disposeSession;
     const gatewayOptions: TFRobotGatewayOptions = {
       baseUrl: config.httpBaseUrl,
       fetch: dependencies.fetch,
@@ -307,9 +448,16 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
       ...(config.platformId === undefined
         ? {}
         : { platformId: config.platformId }),
-      sessionProvider: {
-        getSession: () => config.credential,
-      },
+      sessionProvider:
+        config.sessionProvider ??
+        ({
+          getSession: () => {
+            if (config.credential === undefined) {
+              throw new Error("RobotServer 凭据未配置");
+            }
+            return config.credential;
+          },
+        } satisfies SessionProvider<TFRobotSession>),
       socketFactory: dependencies.socketFactory,
       socketNamespaceUrl: config.socketNamespaceUrl,
       socketPath: config.socketPath,
@@ -585,15 +733,56 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
     this.#listeners.clear();
     this.attachmentUploader.dispose();
     await this.client.dispose({ deadlineAt: this.#now() + REQUEST_TIMEOUT_MS });
+    await this.#disposeSession?.();
   }
 
   #handleError(error: ChatError): void {
     if (this.#disposed) return;
+    this.#logError(error);
     this.#setState(stateForError(error, this.#state.connected));
+  }
+
+  /**
+   * Keep a sanitized, structured trace in the console so a failed request can
+   * be told apart from a failed socket handshake without the diagnostics UI.
+   * Only allowlisted diagnostic fields are copied; credentials and payloads
+   * never reach the log.
+   */
+  #logError(error: ChatError, kind: "diagnostic" | "error" = "error"): void {
+    const safe = safeDiagnosticError(error);
+    const diagnostic = safe.diagnostic;
+    console.warn(`[playground] RobotServer ${kind}`, {
+      kind,
+      code: safe.code,
+      ...(safe.conversationId === undefined
+        ? {}
+        : { conversationId: safe.conversationId }),
+      ...(diagnostic?.operation === undefined
+        ? {}
+        : { operation: diagnostic.operation }),
+      ...(diagnostic?.phase === undefined ? {} : { phase: diagnostic.phase }),
+      ...(diagnostic?.errorId === undefined
+        ? {}
+        : { errorId: diagnostic.errorId }),
+      ...(diagnostic?.method === undefined
+        ? {}
+        : { method: diagnostic.method }),
+      ...(diagnostic?.path === undefined ? {} : { path: diagnostic.path }),
+      ...(diagnostic?.httpStatus === undefined
+        ? {}
+        : { httpStatus: diagnostic.httpStatus }),
+      ...(diagnostic?.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: diagnostic.timeoutMs }),
+      ...(diagnostic?.elapsedMs === undefined
+        ? {}
+        : { elapsedMs: diagnostic.elapsedMs }),
+    });
   }
 
   #handleDiagnostic(error: ChatError): void {
     if (this.#disposed) return;
+    this.#logError(error, "diagnostic");
     this.#setState({
       status: `RobotServer 上报了已脱敏的 ${error.code} 诊断信息。`,
     });

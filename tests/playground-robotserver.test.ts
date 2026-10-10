@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
+import type { ChatError } from "../packages/chat-protocol/src/index.js";
 import type {
   TFRobotSocket,
   TFRobotSocketAnyListener,
@@ -21,6 +22,7 @@ import {
 } from "../playground/src/robotserver-debug-prefill.js";
 import { RobotServerConnectionPanel } from "../playground/src/robotserver-panel.js";
 import {
+  describeRobotServerError,
   createRobotServerPlaygroundSession,
   robotServerTestConversationTitle,
   validateRobotServerConnection,
@@ -59,7 +61,7 @@ const validDraft = (
   httpBaseUrl: "https://robot.example/api/",
   namespace: "",
   platformId: "platform-7",
-  proxyOrigin: "http://localhost:3000",
+  proxyOrigin: "http://localhost:4311",
   robotId: "",
   serverOrigin: "",
   socketNamespaceUrl: "wss://robot.example/chat",
@@ -77,6 +79,19 @@ const validConfig = (
   });
   if (!result.ok) throw new Error(result.message);
   return result.value;
+};
+
+const enterChatKit = async (container: HTMLElement) => {
+  const button = [
+    ...container.querySelectorAll<HTMLButtonElement>("button"),
+  ].find(
+    (candidate) => candidate.textContent?.includes("进入 Chat Kit") === true,
+  );
+  expect(button).toBeDefined();
+  await act(async () => {
+    button!.click();
+    await Promise.resolve();
+  });
 };
 
 const envelope = (data: unknown): Response =>
@@ -149,6 +164,13 @@ class FakeSocket implements TFRobotSocket {
       listener(payload);
     }
     for (const listener of this.#anyListeners) listener(eventName, payload);
+  }
+}
+
+/** Connects successfully but never acknowledges `join_conversation`. */
+class NoAckSocket extends FakeSocket {
+  override emit(eventName: string, ...arguments_: unknown[]): void {
+    this.emitted.push([eventName, arguments_[0]]);
   }
 }
 
@@ -304,20 +326,38 @@ describe("RobotServer Playground configuration", () => {
         robotId: "de-eed9dc12a94b492ea8e7",
         serverOrigin: "https://staging.turingfocus.cn",
       },
-      "http://localhost:3000",
+      "http://localhost:4311",
     );
     expect(result).toEqual({
       ok: true,
       value: {
-        apiOrigin: "https://api.staging.turingfocus.cn",
+        apiOrigin: "https://staging.turingfocus.cn",
         httpBaseUrl:
-          "http://localhost:3000/__tfrobot_proxy/https%3A%2F%2Fapi.staging.turingfocus.cn/tfrobot/tfrs-org-18/de-eed9dc12a94b492ea8e7",
+          "http://localhost:4311/__tfrobot_proxy/https%3A%2F%2Fstaging.turingfocus.cn/tfrobot/tfrs-org-18/de-eed9dc12a94b492ea8e7",
         namespace: "tfrs-org-18",
         robotId: "de-eed9dc12a94b492ea8e7",
         robotType: "tfrobot",
         serverOrigin: "https://staging.turingfocus.cn",
         socketNamespaceUrl: "https://staging.turingfocus.cn/chat",
         socketPath: "/c/tfrobot/tfrs-org-18/de-eed9dc12a94b492ea8e7/socket.io",
+      },
+    });
+  });
+
+  it("keeps the production frontend origin for the prefixed BFF route", () => {
+    const result = parseTFRobotTarget(
+      {
+        namespace: "prod-org",
+        robotId: "prod-robot",
+        serverOrigin: "https://turingfocus.cn",
+      },
+      "http://localhost:4311",
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        apiOrigin: "https://turingfocus.cn",
+        socketNamespaceUrl: "https://turingfocus.cn/chat",
       },
     });
   });
@@ -344,7 +384,7 @@ describe("RobotServer Playground configuration", () => {
         robotId: "e2e-robot",
         serverOrigin: "http://localhost:4310",
       },
-      "http://localhost:3000",
+      "http://localhost:4311",
       ["http://localhost:4310"],
     );
     expect(result).toMatchObject({
@@ -1379,6 +1419,7 @@ describe("RobotServer Playground page security boundary", () => {
         );
         await Promise.resolve();
       });
+      await enterChatKit(container);
       const robotMode = [...container.querySelectorAll("button")].find(
         (button) => button.textContent === "RobotServer 模式",
       );
@@ -1530,6 +1571,7 @@ describe("RobotServer Playground page security boundary", () => {
         );
         await Promise.resolve();
       });
+      await enterChatKit(container);
       const robotMode = [...container.querySelectorAll("button")].find(
         (button) => button.textContent === "RobotServer 模式",
       );
@@ -1622,4 +1664,378 @@ describe("RobotServer Playground page security boundary", () => {
       }
     }
   }, 10_000);
+});
+
+describe("Playground Manager quick chat", () => {
+  const managerResponse = (data: unknown): Response =>
+    new Response(JSON.stringify(data), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+
+  const managerFetch = () =>
+    vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
+      const href =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      const path = new URL(href).pathname;
+      if (path === "/auth/login-by-password") {
+        return managerResponse({
+          account: {
+            accountId: "account-real",
+            displayName: "真实组织",
+            organizationId: "org-real",
+            userId: "user-real",
+          },
+          token: "manager-user-token",
+        });
+      }
+      if (path === "/api/v1/accounts/my") {
+        return managerResponse({
+          accounts: [
+            {
+              accountId: "account-real",
+              displayName: "真实组织",
+              organizationId: "org-real",
+              userId: "user-real",
+            },
+          ],
+        });
+      }
+      if (path.endsWith("/connection-info")) {
+        return managerResponse({
+          data: {
+            namespace: "e2e-ns",
+            rid: "e2e-robot",
+            robotType: "tfrobot",
+            socketBaseURL: "https://robot.turingfocus.cn",
+          },
+        });
+      }
+      if (path === "/api/v1/oauth/token") {
+        return managerResponse({
+          access_token: "bearer-secret",
+          expires_in: 3_600,
+        });
+      }
+      if (path === "/api/v1/digital-employees") {
+        return managerResponse({
+          data: {
+            items: [
+              {
+                id: "de-e2e",
+                name: "通用",
+                robotAccountId: "one-person-org-3:000001",
+                robotId: "e2e-robot",
+                status: "running",
+                templateType: "tfrserver",
+              },
+            ],
+          },
+        });
+      }
+      throw new Error(`Unexpected Manager request: ${path}`);
+    });
+
+  const robotFetch = (conversationTitle: string) =>
+    vi.fn(
+      async (
+        input: Parameters<typeof globalThis.fetch>[0],
+        init?: Parameters<typeof globalThis.fetch>[1],
+      ) => {
+        const request = new Request(input, init);
+        const url = new URL(request.url);
+        if (
+          request.method === "GET" &&
+          url.pathname.endsWith("/conversations")
+        ) {
+          return envelope({
+            conversations: [conversationDto(7, conversationTitle)],
+            cursor: null,
+          });
+        }
+        if (request.method === "GET" && url.pathname.endsWith("/messages")) {
+          return envelope({ cursor: null, events: [], messages: [] });
+        }
+        if (request.method === "GET" && url.pathname.endsWith("/status")) {
+          return envelope({ taskId: null, working: false });
+        }
+        if (request.method === "POST" && url.pathname.endsWith("/messages")) {
+          return envelope({ taskId: "run-accepted" });
+        }
+        if (request.method === "DELETE") {
+          return envelope({ conversationId: 7, message: "deleted" });
+        }
+        throw new Error(`Unexpected RobotServer request: ${request.method}`);
+      },
+    );
+
+  it.each([false, true])(
+    "automatically connects the selected robot and supports retry (fail first: %s)",
+    async (failFirst) => {
+      const conversationTitle = "word测试";
+      const manager = managerFetch();
+      let connectionAttempts = 0;
+      vi.stubGlobal(
+        "fetch",
+        async (...args: Parameters<typeof globalThis.fetch>) => {
+          if (String(args[0]).endsWith("/connection-info")) {
+            connectionAttempts += 1;
+            if (failFirst && connectionAttempts === 1)
+              return new Response(null, { status: 503 });
+          }
+          return manager(args[0]);
+        },
+      );
+      const sockets = socketFixture();
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      const previous = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+      Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+
+      const clickButton = async (label: string) => {
+        const button = [
+          ...container.querySelectorAll<HTMLButtonElement>("button"),
+        ].find((candidate) => candidate.textContent?.includes(label) === true);
+        expect(button).toBeDefined();
+        await act(async () => {
+          button!.click();
+          await Promise.resolve();
+        });
+      };
+
+      try {
+        await act(async () => {
+          root.render(
+            createElement(PlaygroundApp, {
+              createRobotServerSession: (config: RobotServerConnectionConfig) =>
+                createRobotServerPlaygroundSession(config, {
+                  fetch: robotFetch(conversationTitle),
+                  socketFactory: sockets.factory,
+                }),
+              createSession: () => createMockPlaygroundSession(),
+            }),
+          );
+          await Promise.resolve();
+        });
+
+        await clickButton("进入登录与机器人");
+        const realMode = [
+          ...container.querySelectorAll<HTMLElement>("label"),
+        ].find((candidate) => candidate.textContent === "真实用户模式");
+        expect(realMode).toBeDefined();
+        await act(async () => {
+          realMode!.click();
+          await Promise.resolve();
+        });
+        setInput(
+          container.querySelector<HTMLInputElement>(
+            'input[aria-label="用户账号"]',
+          )!,
+          "real-user",
+        );
+        setInput(
+          container.querySelector<HTMLInputElement>(
+            'input[aria-label="用户密码"]',
+          )!,
+          "real-password",
+        );
+        await clickButton("用户登录");
+        await vi.waitFor(() =>
+          expect(container.textContent).toContain("当前机器人：通用"),
+        );
+
+        expect(container.textContent).not.toContain("连接当前机器人并开始对话");
+        if (failFirst) {
+          await vi.waitFor(() =>
+            expect(container.textContent).toContain("连接当前机器人失败"),
+          );
+          expect(connectionAttempts).toBe(1);
+          await clickButton("重试连接当前机器人");
+        }
+        await vi.waitFor(() =>
+          expect(
+            container.querySelector('button[aria-label="历史会话"]'),
+          ).not.toBeNull(),
+        );
+        await act(async () => {
+          container
+            .querySelector<HTMLButtonElement>('button[aria-label="历史会话"]')!
+            .click();
+        });
+        await vi.waitFor(() =>
+          expect(
+            document.querySelector('[role="menu"]')?.textContent,
+          ).toContain(conversationTitle),
+        );
+        expect(
+          document.querySelector('[role="menu"]')?.textContent,
+        ).not.toContain("暂无会话");
+        expect(connectionAttempts).toBe(failFirst ? 2 : 1);
+        expect(container.textContent).toContain(
+          `正在查看「${conversationTitle}」`,
+        );
+      } finally {
+        await act(async () => root.unmount());
+        container.remove();
+        if (previous === undefined) {
+          Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+        } else {
+          Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previous);
+        }
+        vi.unstubAllGlobals();
+      }
+    },
+    10_000,
+  );
+});
+
+describe("RobotServer deadline presentation", () => {
+  const deadlineError = (diagnostic: ChatError["diagnostic"]): ChatError => ({
+    code: "timeout",
+    message: "Chat operation failed (timeout).",
+    retryable: true,
+    ...(diagnostic === undefined ? {} : { diagnostic }),
+  });
+
+  it.each([
+    [
+      { operation: "subscribe", phase: "joining" },
+      "RobotServer 会话加入超时。",
+      "已连接 RobotServer，但会话加入（join）未在期限内得到应答。",
+    ],
+    [
+      { operation: "subscribe", phase: "connecting" },
+      "RobotServer Socket 连接超时。",
+      "RobotServer Socket 未在期限内完成连接握手（WebSocket 可能被网络或代理拦截）。",
+    ],
+    [
+      { operation: "loadConversation" },
+      "RobotServer 会话数据加载超时。",
+      "RobotServer 未在期限内返回该会话的数据。",
+    ],
+    [
+      { operation: "loadConversation", timeoutMs: 0 },
+      "RobotServer 会话订阅超时。",
+      "本次期限已在 Socket 订阅阶段耗尽（连接、鉴权或会话加入），随后的会话数据请求没有获得剩余时间。",
+    ],
+    [
+      undefined,
+      "RobotServer 发生 timeout 错误。",
+      "RobotServer 未在本地请求期限内响应。",
+    ],
+    [
+      {
+        elapsedMs: 8_200,
+        method: "GET",
+        operation: "loadConversation",
+        path: "/v1/chat/conversations/:id/messages",
+        phase: "session",
+        timeoutMs: 10_000,
+      },
+      "RobotServer 会话数据加载超时。",
+      "RobotServer 未在期限内返回该会话的数据。（GET /v1/chat/conversations/:id/messages · 未收到响应 · 8.2s/10.0s）",
+    ],
+  ] as const)(
+    "names the deadline phase for %o",
+    (diagnostic, status, description) => {
+      expect(describeRobotServerError(deadlineError(diagnostic))).toEqual({
+        description,
+        status,
+      });
+    },
+  );
+
+  it("keeps the existing copy for the other error codes", () => {
+    const base = {
+      message: "ignored",
+      retryable: true,
+    } satisfies Partial<ChatError>;
+    expect(
+      describeRobotServerError({ ...base, code: "network" } as ChatError),
+    ).toEqual({
+      description: "无法连接 RobotServer，请检查服务地址、跨域与 Socket 配置。",
+      status: "RobotServer 网络或跨域连接失败。",
+    });
+    expect(
+      describeRobotServerError({
+        ...base,
+        code: "authentication",
+      } as ChatError),
+    ).toEqual({
+      description: "RobotServer 拒绝了当前凭据（401）。",
+      status: "RobotServer 鉴权失败。",
+    });
+  });
+
+  it("reports the joining phase and a sanitized trace when a join is never acknowledged", async () => {
+    const socket = new NoAckSocket();
+    const warnings = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    const session = createRobotServerPlaygroundSession(validConfig("bearer"), {
+      fetch: vi.fn(
+        async (
+          input: Parameters<typeof globalThis.fetch>[0],
+          init?: Parameters<typeof globalThis.fetch>[1],
+        ) => {
+          const request = new Request(input, init);
+          const url = new URL(request.url);
+          if (url.pathname.endsWith("/conversations")) {
+            return envelope({
+              conversations: [conversationDto(7, "probe")],
+              cursor: null,
+            });
+          }
+          if (url.pathname.endsWith("/messages")) {
+            return envelope({ cursor: null, events: [], messages: [] });
+          }
+          if (url.pathname.endsWith("/status")) {
+            return envelope({ taskId: null, working: false });
+          }
+          if (request.method === "DELETE") {
+            return envelope({ conversationId: 7, message: "deleted" });
+          }
+          throw new Error(`Unexpected request: ${request.method}`);
+        },
+      ),
+      socketFactory: () => socket,
+    });
+
+    try {
+      await session.start();
+      expect(socket.emitted.map(([eventName]) => eventName)).toContain(
+        "join_conversation",
+      );
+      expect(session.getState()).toMatchObject({
+        connected: false,
+        contentState: {
+          description: expect.stringContaining(
+            "已连接 RobotServer，但会话加入（join）未在期限内得到应答。",
+          ),
+          kind: "error",
+        },
+        status: "RobotServer 会话加入超时。",
+      });
+      // The console trace keeps the phase the UI cannot show, so a stuck
+      // handshake can be told apart from an unacknowledged join.
+      const traces = warnings.mock.calls.map(([, payload]) => payload);
+      expect(traces).toContainEqual(
+        expect.objectContaining({
+          code: "timeout",
+          operation: "subscribe",
+          phase: "joining",
+        }),
+      );
+      expect(JSON.stringify(traces)).not.toContain("bearer-secret");
+    } finally {
+      warnings.mockRestore();
+      await session.dispose();
+    }
+    // The join intentionally waits out the real local request deadline.
+  }, 20_000);
 });

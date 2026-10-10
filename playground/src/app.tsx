@@ -3,6 +3,7 @@ import {
   type CapabilityScenario,
 } from "./capability-scenarios.js";
 import {
+  Alert,
   Button,
   ConfigProvider,
   Input,
@@ -18,6 +19,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 
 import type { ChatSnapshot } from "@turingfocus/chat-protocol";
@@ -48,13 +50,40 @@ import {
   writePlaygroundEventDetailSplitRatio,
 } from "./playground-layout-preferences.js";
 import { RobotServerConnectionPanel } from "./robotserver-panel.js";
+import { observeAuthChatScope } from "./auth-chat-scope.js";
+import {
+  createPlaygroundAuthClient,
+  PlaygroundAuthGate,
+} from "./playground-auth.js";
+import {
+  loadManagerRobotDirectory,
+  type PlaygroundRobotDescriptor,
+} from "./manager-directory.js";
+import { createManagerRobotServerConnection } from "./manager-robotserver-session.js";
+import {
+  createAuthClient,
+  type AuthClient,
+} from "../../packages/chat-auth/src/headless.js";
+import { createTfRobotAuthTransport } from "../../packages/chat-auth/src/tfrobot.js";
 import {
   createRobotServerPlaygroundSession,
   ROBOTSERVER_TEST_CONVERSATION_PREFIX,
   type RobotServerConnectionConfig,
 } from "./robotserver-session.js";
 
+declare const __TF_CHAT_PLAYGROUND_ALLOWED_SERVER_ORIGINS__: string;
+
+const allowedManagerServerOrigins = (): readonly string[] =>
+  (typeof __TF_CHAT_PLAYGROUND_ALLOWED_SERVER_ORIGINS__ === "string"
+    ? __TF_CHAT_PLAYGROUND_ALLOWED_SERVER_ORIGINS__
+    : ""
+  )
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
 export interface PlaygroundAppProps {
+  readonly createAuthClient?: (() => AuthClient) | undefined;
   readonly createSession?: (() => PlaygroundSession) | undefined;
   readonly createRobotServerSession?:
     ((config: RobotServerConnectionConfig) => PlaygroundSession) | undefined;
@@ -95,13 +124,15 @@ const PlaygroundConversation = ({
 };
 
 const PlaygroundWorkspace = ({
+  experience = "full",
   onChooseMock,
   onChooseRobotServer,
   onReplace,
   session,
 }: {
-  readonly onChooseMock: () => void;
-  readonly onChooseRobotServer: () => void;
+  readonly experience?: "full" | "quick" | undefined;
+  readonly onChooseMock?: (() => void) | undefined;
+  readonly onChooseRobotServer?: (() => void) | undefined;
   readonly onReplace?: (() => void) | undefined;
   readonly session: PlaygroundSession;
 }) => {
@@ -253,7 +284,7 @@ const PlaygroundWorkspace = ({
             }
             scope={session}
           >
-            <main className="playground-page">
+            <div className="playground-page">
               <header className="playground-hero">
                 <div>
                   <Typography.Text className="eyebrow">
@@ -261,28 +292,45 @@ const PlaygroundWorkspace = ({
                       ? "本地私有应用 · 内存网关"
                       : "本地私有应用 · TFROBOT 网关"}
                   </Typography.Text>
-                  <Typography.Title level={2}>Chat Kit 调试台</Typography.Title>
+                  <Typography.Title level={2}>
+                    {experience === "quick"
+                      ? "当前机器人对话"
+                      : "Chat Kit 调试台"}
+                  </Typography.Title>
                   <Typography.Paragraph>
-                    {session.kind === "mock"
-                      ? "无需 RobotServer 或宿主应用源码，即可调试正式 Runtime、React 绑定和 Ant Design 界面。"
-                      : "使用已配置的 RobotServer 调试正式 Runtime、TFRobot Gateway 和 Ant Design 界面。"}
+                    {experience === "quick"
+                      ? "使用当前 Manager 账号与选中机器人进行最小对话验证。"
+                      : session.kind === "mock"
+                        ? "无需 RobotServer 或宿主应用源码，即可调试正式 Runtime、React 绑定和 Ant Design 界面。"
+                        : "使用已配置的 RobotServer 调试正式 Runtime、TFRobot Gateway 和 Ant Design 界面。"}
                   </Typography.Paragraph>
                 </div>
                 <Space wrap>
                   <Tag color={state.connected ? "success" : "error"}>
                     {state.connected ? "已连接" : "已断开"}
                   </Tag>
-                  <Button
-                    disabled={session.kind === "mock"}
-                    onClick={onChooseMock}
-                  >
-                    Mock 模式
-                  </Button>
-                  <Button onClick={onChooseRobotServer}>
-                    {session.kind === "robotserver"
-                      ? "重新配置 RobotServer"
-                      : "RobotServer 模式"}
-                  </Button>
+                  {experience === "full" ? (
+                    <>
+                      <Button
+                        disabled={
+                          session.kind === "mock" || onChooseMock === undefined
+                        }
+                        onClick={onChooseMock}
+                      >
+                        Mock 模式
+                      </Button>
+                      <Button
+                        disabled={onChooseRobotServer === undefined}
+                        onClick={onChooseRobotServer}
+                      >
+                        {session.kind === "robotserver"
+                          ? "重新配置 RobotServer"
+                          : "RobotServer 模式"}
+                      </Button>
+                    </>
+                  ) : (
+                    <Tag color="purple">Manager 当前机器人</Tag>
+                  )}
                   {onReplace === undefined ? null : (
                     <Button onClick={onReplace}>重建实例</Button>
                   )}
@@ -291,21 +339,29 @@ const PlaygroundWorkspace = ({
 
               <section
                 aria-label={
-                  session.kind === "mock" ? "Mock 场景" : "RobotServer 操作"
+                  experience === "quick"
+                    ? "当前机器人连接"
+                    : session.kind === "mock"
+                      ? "Mock 场景"
+                      : "RobotServer 操作"
                 }
                 className="scenario-panel"
               >
                 <div className="scenario-heading">
                   <div>
                     <Typography.Title level={4}>
-                      {session.kind === "mock"
-                        ? "Mock 场景"
-                        : "RobotServer 操作"}
+                      {experience === "quick"
+                        ? "当前机器人连接"
+                        : session.kind === "mock"
+                          ? "Mock 场景"
+                          : "RobotServer 操作"}
                     </Typography.Title>
                     <Typography.Text type="secondary">
-                      {session.kind === "mock"
-                        ? "每次状态变化均由内存网关发出。"
-                        : "所有读写与 Socket 订阅都使用当前内存中的凭据。"}
+                      {experience === "quick"
+                        ? "只保留连接状态和重连操作，便于快速确认当前机器人可用。"
+                        : session.kind === "mock"
+                          ? "每次状态变化均由内存网关发出。"
+                          : "所有读写与 Socket 订阅都使用当前内存中的凭据。"}
                     </Typography.Text>
                   </div>
                   <Typography.Text
@@ -316,11 +372,15 @@ const PlaygroundWorkspace = ({
                   </Typography.Text>
                 </div>
                 <Space wrap>
-                  <Button onClick={() => void session.loadHistory()}>
-                    加载更早消息
-                  </Button>
-                  {session.kind === "mock" ? (
+                  {experience === "quick" ? (
+                    <Button onClick={() => void session.reconnect()}>
+                      重连当前机器人
+                    </Button>
+                  ) : session.kind === "mock" ? (
                     <>
+                      <Button onClick={() => void session.loadHistory()}>
+                        加载更早消息
+                      </Button>
                       <Button onClick={() => session.startStreaming()}>
                         流式回复
                       </Button>
@@ -342,13 +402,17 @@ const PlaygroundWorkspace = ({
                     </>
                   ) : (
                     <>
+                      <Button onClick={() => void session.loadHistory()}>
+                        加载更早消息
+                      </Button>
                       <Button onClick={() => void session.refresh()}>
                         刷新会话
                       </Button>
                       <Button onClick={() => void session.reconnect()}>
                         重连 REST 与 Socket
                       </Button>
-                      {canManageRobotServerTestConversation ? (
+                      {experience === "full" &&
+                      canManageRobotServerTestConversation ? (
                         <>
                           <Button
                             onClick={() => {
@@ -371,7 +435,7 @@ const PlaygroundWorkspace = ({
                 </Space>
               </section>
 
-              {session.kind === "mock" && (
+              {experience === "full" && session.kind === "mock" && (
                 <section className="scenario-panel" aria-label="能力演示">
                   <div>
                     <Typography.Title level={4} style={{ margin: 0 }}>
@@ -427,8 +491,18 @@ const PlaygroundWorkspace = ({
                 <ChatUiShell
                   compactNavigation={compactNavigation}
                   contentState={state.contentState}
-                  conversationListLoading={false}
-                  conversations={[]}
+                  conversationListError={
+                    state.listError === undefined
+                      ? undefined
+                      : {
+                          message: state.listError,
+                          onRetry: () => void session.loadConversations(),
+                        }
+                  }
+                  conversationListLoading={state.listLoading}
+                  conversations={state.conversations.map(
+                    ({ id, title, updatedAt }) => ({ id, title, updatedAt }),
+                  )}
                   labels={playgroundChatLabels}
                   navigationMode="compact"
                   onConversationSelect={(conversationId) =>
@@ -512,7 +586,7 @@ const PlaygroundWorkspace = ({
                 仅删除当前带 {ROBOTSERVER_TEST_CONVERSATION_PREFIX}{" "}
                 前缀的测试会话。
               </Modal>
-            </main>
+            </div>
           </ChatDocumentSourceProvider>
         </ChatResourceProvider>
       </ChatProvider>
@@ -520,16 +594,254 @@ const PlaygroundWorkspace = ({
   );
 };
 
+type PlaygroundModule = "home" | "chatkit" | "manager";
+
+interface PlaygroundSessionPlan {
+  readonly create: () => PlaygroundSession;
+  readonly kind: "mock" | "robotserver";
+}
+
+const PlaygroundModuleFrame = ({
+  children,
+  description,
+  onBack,
+  title,
+}: {
+  readonly children: ReactNode;
+  readonly description: string;
+  readonly onBack: () => void;
+  readonly title: string;
+}) => (
+  <main className="playground-module-shell">
+    <header className="playground-module-header">
+      <Button onClick={onBack}>返回 Playground</Button>
+      <div>
+        <Typography.Text className="eyebrow">本地私有应用</Typography.Text>
+        <Typography.Title level={2}>{title}</Typography.Title>
+        <Typography.Paragraph type="secondary">
+          {description}
+        </Typography.Paragraph>
+      </div>
+    </header>
+    {children}
+  </main>
+);
+
+const PlaygroundLanding = ({
+  onEnterChatKit,
+  onEnterManager,
+}: {
+  readonly onEnterChatKit: () => void;
+  readonly onEnterManager: () => void;
+}) => (
+  <main className="playground-page playground-landing">
+    <section className="playground-landing-hero">
+      <Typography.Text className="eyebrow">
+        本地私有应用 · tf-chat-kit Playground
+      </Typography.Text>
+      <Typography.Title level={1}>选择调试模块</Typography.Title>
+      <Typography.Paragraph type="secondary">
+        ChatKit 调试和 Manager
+        登录目录是两条独立工作流。先选择你要验证的内容，避免登录、路由和聊天能力互相干扰。
+      </Typography.Paragraph>
+    </section>
+    <section className="playground-module-grid" aria-label="Playground 模块">
+      <article
+        aria-label="Chat Kit 调试模块"
+        className="playground-module-card"
+        onClick={onEnterChatKit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onEnterChatKit();
+          }
+        }}
+        role="button"
+        tabIndex={0}
+      >
+        <Typography.Title level={3}>Chat Kit 调试</Typography.Title>
+        <Typography.Paragraph type="secondary">
+          专注 Runtime、React、Ant Design UI 和 Gateway。进入后可选择 Mock
+          或手工连接真实 RobotServer。
+        </Typography.Paragraph>
+        <button
+          className="playground-module-card-link"
+          onClick={(event) => {
+            event.stopPropagation();
+            onEnterChatKit();
+          }}
+          type="button"
+        >
+          进入 Chat Kit →
+        </button>
+      </article>
+      <article
+        aria-label="登录与机器人模块"
+        className="playground-module-card"
+        onClick={onEnterManager}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onEnterManager();
+          }
+        }}
+        role="button"
+        tabIndex={0}
+      >
+        <Typography.Title level={3}>登录与机器人</Typography.Title>
+        <Typography.Paragraph type="secondary">
+          专注 Manager
+          登录、staging/正式/自定义环境、组织切换、机器人切换，以及当前机器人最小对话验证。
+        </Typography.Paragraph>
+        <button
+          className="playground-module-card-link"
+          onClick={(event) => {
+            event.stopPropagation();
+            onEnterManager();
+          }}
+          type="button"
+        >
+          进入登录与机器人 →
+        </button>
+      </article>
+    </section>
+  </main>
+);
+
+const ManagerQuickChat = ({
+  onConnect,
+  connecting,
+  error,
+  robot,
+  session,
+}: {
+  readonly onConnect: () => void;
+  readonly connecting: boolean;
+  readonly error: string | null;
+  readonly robot: PlaygroundRobotDescriptor | undefined;
+  readonly session: PlaygroundSession | null;
+}) => {
+  if (session !== null) {
+    return (
+      <PlaygroundWorkspace
+        experience="quick"
+        onReplace={undefined}
+        session={session}
+      />
+    );
+  }
+  return (
+    <section className="manager-quick-panel" aria-label="当前机器人快速对话">
+      <div>
+        <Typography.Title level={3}>当前机器人快速对话</Typography.Title>
+        <Typography.Paragraph type="secondary">
+          选择机器人后自动连接，并在下方展示当前机器人的聊天内容。
+        </Typography.Paragraph>
+      </div>
+      {robot === undefined ? (
+        <Typography.Text type="secondary">
+          请先在上方选择一个机器人。
+        </Typography.Text>
+      ) : (
+        <div className="manager-quick-selection">
+          <Typography.Text strong>{robot.name}</Typography.Text>
+          <Typography.Text type="secondary">
+            Manager employeeId：{robot.managerEmployeeId ?? "未返回"}
+          </Typography.Text>
+          <Typography.Text type="secondary">
+            robotAccountId：{robot.robotAccountId ?? "未返回"}
+          </Typography.Text>
+          {!robot.canAutoConnect ? (
+            <Typography.Text type="warning">
+              当前机器人缺少 robotAccountId，无法自动换取 RobotServer 用户
+              Token。
+            </Typography.Text>
+          ) : null}
+        </div>
+      )}
+      {error === null ? null : (
+        <Alert
+          message="连接当前机器人失败"
+          showIcon
+          type="error"
+          description={error}
+        />
+      )}
+      {connecting ? (
+        <Spin tip="正在连接当前机器人">
+          <div />
+        </Spin>
+      ) : null}
+      {error !== null ? (
+        <Space>
+          <Button
+            disabled={robot === undefined || !robot.canAutoConnect}
+            loading={connecting}
+            onClick={onConnect}
+            type="primary"
+          >
+            重试连接当前机器人
+          </Button>
+        </Space>
+      ) : null}
+    </section>
+  );
+};
+
 export const PlaygroundApp = ({
+  createAuthClient: createHostAuthClient = createPlaygroundAuthClient,
   createSession = createMockPlaygroundSession,
   createRobotServerSession = createRobotServerPlaygroundSession,
 }: PlaygroundAppProps) => {
-  const [mode, setMode] = useState<"mock" | "robotserver">("mock");
-  const [sessionPlan, setSessionPlan] = useState<{
-    readonly create: () => PlaygroundSession;
-    readonly kind: "mock" | "robotserver";
-  } | null>(() => ({ create: createSession, kind: "mock" }));
+  const [authClient, setAuthClient] =
+    useState<AuthClient>(createHostAuthClient);
+  const authClientRef = useRef(authClient);
+  const loginGeneration = useRef(0);
+  const managerConnectionGeneration = useRef(0);
+  const authDisposeTimer = useRef<ReturnType<typeof setTimeout>>();
+  const [managerBaseUrl, setManagerBaseUrl] = useState<string | null>(null);
+  const [selectedRobotId, setSelectedRobotId] = useState("research-assistant");
+  const [selectedRobot, setSelectedRobot] = useState<
+    PlaygroundRobotDescriptor | undefined
+  >();
+  const [playgroundModule, setPlaygroundModule] =
+    useState<PlaygroundModule>("home");
+  const [connectionPanelOpen, setConnectionPanelOpen] = useState(false);
+  const [sessionPlan, setSessionPlan] = useState<PlaygroundSessionPlan | null>(
+    null,
+  );
   const [session, setSession] = useState<PlaygroundSession | null>(null);
+  const sessionRef = useRef<PlaygroundSession | null>(null);
+  const [managerConnecting, setManagerConnecting] = useState(false);
+  const [managerConnectionError, setManagerConnectionError] = useState<
+    string | null
+  >(null);
+  const [managerConnectionAttempt, setManagerConnectionAttempt] = useState(0);
+
+  useEffect(() => {
+    if (authDisposeTimer.current !== undefined) {
+      clearTimeout(authDisposeTimer.current);
+      authDisposeTimer.current = undefined;
+    }
+    return () => {
+      authDisposeTimer.current = setTimeout(() => {
+        void authClientRef.current.dispose();
+      }, 0);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (playgroundModule !== "manager") return;
+    return observeAuthChatScope(authClient, () => {
+      managerConnectionGeneration.current += 1;
+      setSelectedRobot(undefined);
+      setSelectedRobotId("");
+      setSessionPlan(null);
+      setSession(null);
+      void sessionRef.current?.dispose();
+      sessionRef.current = null;
+    });
+  }, [authClient, playgroundModule]);
 
   useEffect(() => {
     if (sessionPlan === null) {
@@ -537,61 +849,228 @@ export const PlaygroundApp = ({
       return;
     }
     const next = sessionPlan.create();
+    sessionRef.current = next;
     setSession(next);
     void next.start();
     return () => {
+      if (sessionRef.current === next) sessionRef.current = null;
       setSession((current) => (current === next ? null : current));
       void next.dispose();
     };
   }, [sessionPlan]);
 
+  const enterChatKit = () => {
+    setPlaygroundModule("chatkit");
+    setConnectionPanelOpen(false);
+    setSessionPlan({ create: createSession, kind: "mock" });
+  };
+  const enterManager = () => {
+    managerConnectionGeneration.current += 1;
+    setPlaygroundModule("manager");
+    setConnectionPanelOpen(false);
+    setSessionPlan(null);
+  };
+  const backToLanding = () => {
+    loginGeneration.current += 1;
+    managerConnectionGeneration.current += 1;
+    setPlaygroundModule("home");
+    setConnectionPanelOpen(false);
+    setSessionPlan(null);
+  };
   const chooseMock = () => {
-    setMode("mock");
+    loginGeneration.current += 1;
+    setConnectionPanelOpen(false);
     setSessionPlan({ create: createSession, kind: "mock" });
   };
   const chooseRobotServer = () => {
-    setMode("robotserver");
+    setConnectionPanelOpen(true);
     setSessionPlan(null);
   };
   const connectRobotServer = (config: RobotServerConnectionConfig) => {
-    setMode("robotserver");
+    setConnectionPanelOpen(false);
     setSessionPlan({
       create: () => createRobotServerSession(config),
       kind: "robotserver",
     });
   };
+  useEffect(() => {
+    const generation = ++managerConnectionGeneration.current;
+    setManagerConnectionError(null);
+    setManagerConnecting(false);
+    if (
+      playgroundModule !== "manager" ||
+      managerBaseUrl === null ||
+      !selectedRobot?.canAutoConnect
+    )
+      return;
+    setManagerConnecting(true);
+    setSessionPlan(null);
+    void createManagerRobotServerConnection({
+      client: authClient,
+      managerBaseUrl,
+      robot: selectedRobot,
+      proxyOrigin: window.location.origin,
+      allowedServerOrigins: allowedManagerServerOrigins(),
+    })
+      .then((config) => {
+        if (generation !== managerConnectionGeneration.current) return;
+        setSessionPlan({
+          create: () => createRobotServerSession(config),
+          kind: "robotserver",
+        });
+      })
+      .catch((reason: unknown) => {
+        if (generation !== managerConnectionGeneration.current) return;
+        setManagerConnectionError(
+          reason instanceof Error ? reason.message : String(reason),
+        );
+      })
+      .finally(() => {
+        if (generation === managerConnectionGeneration.current)
+          setManagerConnecting(false);
+      });
+    return () => {
+      if (generation === managerConnectionGeneration.current)
+        managerConnectionGeneration.current += 1;
+    };
+  }, [
+    authClient,
+    managerBaseUrl,
+    selectedRobot,
+    playgroundModule,
+    managerConnectionAttempt,
+    createRobotServerSession,
+  ]);
+  const loginWithManager = async (
+    environment: "staging" | "production" | "custom",
+    baseUrl: string,
+    identifier: string,
+    password: string,
+  ) => {
+    const trimmedBaseUrl = baseUrl.trim();
+    if (!trimmedBaseUrl || !identifier.trim() || !password)
+      throw new Error("请填写 Manager 地址、账号和密码");
+    const generation = ++loginGeneration.current;
+    managerConnectionGeneration.current += 1;
+    setSelectedRobot(undefined);
+    setSelectedRobotId("");
+    setSessionPlan(null);
+    const client = createAuthClient({
+      // AuthClient only has canonical staging/production scopes; a custom
+      // URL uses staging semantics while retaining its explicit transport URL.
+      environment: environment === "production" ? "production" : "staging",
+      transport: createTfRobotAuthTransport({ baseUrl: trimmedBaseUrl }),
+    });
+    try {
+      await client.login({ identifier: identifier.trim(), password });
+      if (generation !== loginGeneration.current) {
+        await client.dispose();
+        return;
+      }
+      const previous = authClientRef.current;
+      authClientRef.current = client;
+      setAuthClient(client);
+      setManagerBaseUrl(trimmedBaseUrl.replace(/\/$/u, ""));
+      await previous.dispose().catch(() => undefined);
+    } catch (error) {
+      await client.dispose();
+      throw error;
+    }
+  };
+  const loadManagerRobots = useCallback(
+    async (
+      organizationId: string,
+    ): Promise<readonly PlaygroundRobotDescriptor[]> => {
+      if (managerBaseUrl === null) return [];
+      return loadManagerRobotDirectory(
+        authClient,
+        managerBaseUrl,
+        organizationId,
+      );
+    },
+    [authClient, managerBaseUrl],
+  );
 
-  if (mode === "robotserver" && sessionPlan?.kind !== "robotserver") {
-    return (
-      <RobotServerConnectionPanel
-        onCancel={chooseMock}
-        onConnect={connectRobotServer}
-      />
-    );
-  }
+  const handleLogout = () => {
+    loginGeneration.current += 1;
+    managerConnectionGeneration.current += 1;
+    setManagerBaseUrl(null);
+    setSelectedRobot(undefined);
+    setSelectedRobotId("research-assistant");
+    setSessionPlan(null);
+  };
 
-  if (session === null) {
-    return (
-      <div aria-label="正在加载调试台" className="playground-fallback">
-        <Spin size="large" />
-      </div>
-    );
-  }
-
-  return (
+  const chatKitContent = connectionPanelOpen ? (
+    <RobotServerConnectionPanel
+      onCancel={chooseMock}
+      onConnect={connectRobotServer}
+    />
+  ) : session === null ? (
+    <div aria-label="正在加载调试台" className="playground-fallback">
+      <Spin size="large" />
+    </div>
+  ) : (
     <PlaygroundWorkspace
       onChooseMock={chooseMock}
       onChooseRobotServer={chooseRobotServer}
-      onReplace={
-        session.kind === "mock"
-          ? () =>
-              setSessionPlan({
-                create: createSession,
-                kind: "mock",
-              })
-          : undefined
-      }
       session={session}
     />
+  );
+
+  if (playgroundModule === "home") {
+    return (
+      <PlaygroundLanding
+        onEnterChatKit={enterChatKit}
+        onEnterManager={enterManager}
+      />
+    );
+  }
+  if (playgroundModule === "chatkit") {
+    return (
+      <PlaygroundModuleFrame
+        description="独立验证 ChatKit 的 Mock Runtime、React/UI 绑定和真实 RobotServer Gateway。"
+        onBack={backToLanding}
+        title="Chat Kit 调试"
+      >
+        {chatKitContent}
+      </PlaygroundModuleFrame>
+    );
+  }
+  return (
+    <PlaygroundModuleFrame
+      description="只处理 Manager 身份、组织、机器人和当前选中机器人的最小对话。"
+      onBack={backToLanding}
+      title="登录与机器人"
+    >
+      <PlaygroundAuthGate
+        client={authClient}
+        onLogout={handleLogout}
+        onRealLogin={loginWithManager}
+        loadRobots={managerBaseUrl === null ? undefined : loadManagerRobots}
+        onSelectionReset={() => {
+          managerConnectionGeneration.current += 1;
+          setSelectedRobot(undefined);
+          setSelectedRobotId("");
+          setSessionPlan(null);
+        }}
+        onSelectionChange={(_organizationId, robot) => {
+          managerConnectionGeneration.current += 1;
+          setSelectedRobotId(robot.id);
+          setSelectedRobot(robot);
+          setSessionPlan(null);
+        }}
+        robotId={selectedRobotId}
+      >
+        <ManagerQuickChat
+          onConnect={() =>
+            setManagerConnectionAttempt((attempt) => attempt + 1)
+          }
+          connecting={managerConnecting}
+          error={managerConnectionError}
+          robot={selectedRobot}
+          session={session}
+        />
+      </PlaygroundAuthGate>
+    </PlaygroundModuleFrame>
   );
 };

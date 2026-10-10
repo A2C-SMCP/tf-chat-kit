@@ -12,6 +12,11 @@
       "@turingfocus/chat-gateway-tfrobot": [
         "../packages/chat-gateway-tfrobot/src/index.ts"
       ],
+      "@turingfocus/chat-auth/headless": [
+        "../packages/chat-auth/src/headless.ts"
+      ],
+      "@turingfocus/chat-auth/react": ["../packages/chat-auth/src/react.ts"],
+      "@turingfocus/chat-auth/antd": ["../packages/chat-auth/src/antd.ts"],
       "@turingfocus/chat-kit": ["../packages/chat-kit/src/index.ts"],
       "@turingfocus/chat-protocol": ["../packages/chat-protocol/src/index.ts"],
       "@turingfocus/chat-react": ["../packages/chat-react/src/index.ts"],

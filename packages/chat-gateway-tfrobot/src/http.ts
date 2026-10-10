@@ -114,17 +114,25 @@ export class TFRobotHttpClient {
     this.#baseUrl = new URL(
       options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`,
     );
+    // Browsers brand-check `fetch`: a host-provided reference stored as-is and
+    // invoked as `this.#fetch(...)` throws "Illegal invocation" before the
+    // request leaves the page. Wrapping drops that foreign receiver, the
+    // default transport keeps resolving `globalThis.fetch` lazily per call and
+    // an empty `fetch` option keeps falling back to the global one.
+    const injectedFetch = options.fetch;
     this.#fetch =
-      options.fetch ?? ((input, init) => globalThis.fetch(input, init));
+      injectedFetch == null
+        ? (input, init) => globalThis.fetch(input, init)
+        : (input, init) => injectedFetch(input, init);
     this.#now = options.now ?? Date.now;
   }
 
   async request<T>(input: RequestInput<T>): Promise<GatewayResult<T>> {
     const start = this.#now();
-    const context: {
+    const createContext = (): {
       value: ChatErrorDiagnostic;
       credentials: readonly string[];
-    } = {
+    } => ({
       credentials: [],
       value: {
         phase: "session",
@@ -162,8 +170,23 @@ export class TFRobotHttpClient {
             .join("/"),
         timeoutMs: Math.max(0, input.options.deadlineAt - start),
       },
-    };
-    const result = await this.#request(input, context);
+    });
+    let context = createContext();
+    let result = await this.#request(input, context);
+    if (
+      !result.ok &&
+      result.error.code === "authentication" &&
+      context.value.httpStatus === 401 &&
+      input.session === undefined &&
+      !this.#disposed &&
+      this.#now() < input.options.deadlineAt
+    ) {
+      // A rejected credential was just invalidated on the provider, so one
+      // retry resolves a fresh session instead of failing the caller with a
+      // stale token. A second rejection is returned as-is.
+      context = createContext();
+      result = await this.#request(input, context, { skipInvalidation: true });
+    }
     if (result.ok) return result;
     const rawError: ChatError = {
       ...result.error,
@@ -221,6 +244,7 @@ export class TFRobotHttpClient {
   async #request<T>(
     input: RequestInput<T>,
     context: { value: ChatErrorDiagnostic; credentials: readonly string[] },
+    attempt: { readonly skipInvalidation?: boolean } = {},
   ): Promise<GatewayResult<T>> {
     if (this.#disposed) {
       return {
@@ -403,7 +427,24 @@ export class TFRobotHttpClient {
             credentialValues,
           ),
         });
-        this.#invalidateSession(response.status, error);
+        if (attempt.skipInvalidation !== true) {
+          const invalidation = this.#invalidateSession(response.status, error);
+          if (input.session !== undefined && response.status === 401) {
+            // A pinned-session caller owns the retry and must wait until the
+            // host has invalidated that credential before reacquiring it.
+            const invalidated = await awaitBounded(() => invalidation, {
+              deadlineAt: input.options.deadlineAt,
+              now: this.#now,
+              signal: controller.signal,
+            });
+            if (
+              invalidated.kind === "deadline" ||
+              invalidated.kind === "aborted"
+            ) {
+              return this.#interruptedResult(errorConversationId);
+            }
+          }
+        }
         return { ok: false, error };
       }
       const envelope = responseEnvelopeSchema.safeParse(payload);
@@ -530,15 +571,13 @@ export class TFRobotHttpClient {
     };
   }
 
-  #invalidateSession(status: number, error: ChatError): void {
+  async #invalidateSession(status: number, error: ChatError): Promise<void> {
     if (status !== 401 && status !== 403) return;
     try {
-      void Promise.resolve(
-        this.#options.sessionProvider.onSessionInvalid?.({
-          reason: status === 401 ? "expired" : "forbidden",
-          error,
-        }),
-      ).catch(() => undefined);
+      await this.#options.sessionProvider.onSessionInvalid?.({
+        reason: status === 401 ? "expired" : "forbidden",
+        error,
+      });
     } catch {
       // A host refresh failure must not replace the original request error.
     }

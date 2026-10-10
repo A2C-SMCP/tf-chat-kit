@@ -8,6 +8,12 @@ import {
   PACKAGE_POLICY,
 } from "./workspace-policy.mjs";
 
+import {
+  validateReleaseGroup,
+  releaseSourceTag,
+  registryConsumerPackages,
+} from "./release-group-policy.mjs";
+
 export const RELEASE_REPOSITORY = "A2C-SMCP/tf-chat-kit";
 export const RELEASE_REGISTRY = "https://registry.npmjs.org/";
 export const RELEASE_ENVIRONMENT = "npm-production";
@@ -568,13 +574,8 @@ export async function buildReleasePackages({ rootDirectory, packManifest }) {
       `release packages must be ordered as ${RELEASE_PACKAGE_NAMES.join(", ")}; found ${actualNames.join(", ")}.`,
     );
   }
-  const versions = [...new Set(packages.map(({ version }) => version))];
-  if (versions.length !== 1 || !isZeroMajorVersion(versions[0] ?? "")) {
-    throw new Error(
-      `release packages must share one valid 0.x version; found ${versions.join(", ")}.`,
-    );
-  }
-  return { version: /** @type {string} */ (versions[0]), packages };
+  const version = validateReleaseGroup(packages);
+  return { version, packages };
 }
 
 /**
@@ -586,6 +587,8 @@ export async function buildReleasePackages({ rootDirectory, packManifest }) {
  *   createdAt: string;
  *   compatibility: CompatibilityPolicy;
  *   packages: ReleasePackage[];
+ *   releaseGroup?: import("./release-group-policy.mjs").ReleaseGroup;
+ *   consumerPackages?: { name: string; version: string }[];
  * }} input
  */
 export function createReleaseManifest({
@@ -596,6 +599,8 @@ export function createReleaseManifest({
   createdAt,
   compatibility,
   packages,
+  releaseGroup = "all",
+  consumerPackages,
 }) {
   assertReleaseChannelAllowed(compatibility, channel);
   if (!isZeroMajorVersion(version)) {
@@ -611,15 +616,12 @@ export function createReleaseManifest({
       `latest releases require a stable SemVer version; found ${version}.`,
     );
   }
-  if (
-    JSON.stringify(packages.map(({ name }) => name)) !==
-      JSON.stringify(RELEASE_PACKAGE_NAMES) ||
-    packages.some((releasePackage) => releasePackage.version !== version)
-  ) {
-    throw new Error(
-      "release manifest packages must contain the complete fixed group at the requested version.",
-    );
-  }
+  validateReleaseGroup(packages, releaseGroup, version, channel);
+  const consumers = registryConsumerPackages({
+    packages,
+    releaseGroup,
+    ...(consumerPackages ? { consumerPackages } : {}),
+  });
   if (!/^[0-9a-f]{40}$/u.test(commit)) {
     throw new Error("release commit must be a full lowercase Git SHA.");
   }
@@ -632,7 +634,9 @@ export function createReleaseManifest({
     repository: RELEASE_REPOSITORY,
     version,
     channel,
-    tag: `v${version}`,
+    tag: releaseSourceTag(releaseGroup, version),
+    releaseGroup,
+    consumerPackages: consumers,
     commit,
     workflow: RELEASE_WORKFLOW,
     environment: RELEASE_ENVIRONMENT,

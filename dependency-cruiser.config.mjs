@@ -54,6 +54,7 @@ export default {
       "chat-runtime",
       "chat-protocol",
     ]),
+    packageRule("auth-contracts-are-standalone", "chat-auth", ["chat-auth"]),
     {
       name: "no-host-source-imports",
       severity: "error",

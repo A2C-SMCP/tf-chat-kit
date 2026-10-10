@@ -43,6 +43,19 @@ const deferred = <T>() => {
   return { promise, resolve };
 };
 
+const enterChatKit = async (container: HTMLElement) => {
+  const button = [
+    ...container.querySelectorAll<HTMLButtonElement>("button"),
+  ].find(
+    (candidate) => candidate.textContent?.includes("进入 Chat Kit") === true,
+  );
+  expect(button).toBeDefined();
+  await act(async () => {
+    button!.click();
+    await Promise.resolve();
+  });
+};
+
 describe("private Chat Kit playground", () => {
   it("reads and writes a bounded host-wide split ratio without trusting damaged storage", () => {
     const values = new Map<string, string>();
@@ -287,10 +300,11 @@ describe("private Chat Kit playground", () => {
         );
         await Promise.resolve();
       });
+      await enterChatKit(container);
       await vi.waitFor(() => {
         expect(container.textContent).toContain("Chat Kit 调试台");
         expect(container.textContent).toContain("Mock 场景");
-        expect(sessions.length).toBeGreaterThanOrEqual(2);
+        expect(sessions.length).toBeGreaterThanOrEqual(1);
         expect(sessions.at(-1)?.getState().contentState).toEqual({
           kind: "ready",
         });
@@ -423,15 +437,16 @@ describe("private Chat Kit playground", () => {
       });
       await act(async () => active.startStreaming());
 
-      const replace = [...container.querySelectorAll("button")].find(
-        (button) => button.textContent === "重建实例",
-      );
-      expect(replace).toBeDefined();
       const countBeforeReplacement = sessions.length;
       await act(async () => {
-        replace!.click();
+        const back = [...container.querySelectorAll("button")].find(
+          (button) => button.textContent === "返回 Playground",
+        );
+        expect(back).toBeDefined();
+        back!.click();
         await Promise.resolve();
       });
+      await enterChatKit(container);
       await vi.waitFor(() => {
         expect(sessions.length).toBeGreaterThan(countBeforeReplacement);
         expect(active.disposed).toBe(true);
@@ -520,6 +535,7 @@ describe("private Chat Kit playground", () => {
         root.render(createElement(PlaygroundApp, { createSession }));
         await Promise.resolve();
       });
+      await enterChatKit(container);
       await vi.waitFor(() => expect(sessions).toHaveLength(1));
 
       await act(async () => {
@@ -539,13 +555,15 @@ describe("private Chat Kit playground", () => {
       });
       expect(sessions[0]!.createConversation).toHaveBeenCalledOnce();
 
-      const replace = [...container.querySelectorAll("button")].find(
-        (button) => button.textContent === "重建实例",
-      );
       await act(async () => {
-        replace!.click();
+        const back = [...container.querySelectorAll("button")].find(
+          (button) => button.textContent === "返回 Playground",
+        );
+        expect(back).toBeDefined();
+        back!.click();
         await Promise.resolve();
       });
+      await enterChatKit(container);
       await vi.waitFor(() => {
         expect(sessions).toHaveLength(2);
         expect(sessions[0]!.dispose).toHaveBeenCalledOnce();

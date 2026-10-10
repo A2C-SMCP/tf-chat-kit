@@ -41,6 +41,7 @@ import {
 import { TFRobotHttpClient } from "./http.js";
 import { buildTFRobotOutboundMessage } from "./outbound-message.js";
 import {
+  mapMessage,
   mapConversation,
   mapEventUpdate,
   mapMessageUpdate,
@@ -49,6 +50,7 @@ import {
   syntheticRunId,
   TFROBOT_CAPABILITIES,
 } from "./mapper.js";
+import { TFRobotMessageIdentities } from "./message-identity.js";
 import {
   recoveryIdentityOfUpdate,
   TFRobotSocketClient,
@@ -84,6 +86,7 @@ export class TFRobotChatGateway implements ChatGateway {
   readonly #conversationMutations = new Map<string, ConversationMutation>();
   #disposed = false;
   readonly #http: TFRobotHttpClient;
+  readonly #messageIdentities: TFRobotMessageIdentities | undefined;
   readonly #lifecycle = new AbortController();
   readonly #now: () => number;
   readonly #options: TFRobotGatewayOptions;
@@ -103,6 +106,10 @@ export class TFRobotChatGateway implements ChatGateway {
     }
     this.#options = options;
     this.#http = new TFRobotHttpClient(options);
+    this.#messageIdentities =
+      options.serverProfile?.kind === "current-server"
+        ? new TFRobotMessageIdentities()
+        : undefined;
     this.#now = options.now ?? Date.now;
     this.#socket = new TFRobotSocketClient(
       options,
@@ -118,6 +125,12 @@ export class TFRobotChatGateway implements ChatGateway {
           schema: statusDtoSchema,
         }),
       (input) => this.#loadCurrentServerRestSnapshot(input),
+      (dto) =>
+        mapMessageUpdate(
+          dto,
+          (message) =>
+            this.#messageIdentities?.map(message) ?? mapMessage(message),
+        ),
     );
   }
 
@@ -311,6 +324,7 @@ export class TFRobotChatGateway implements ChatGateway {
       revision: ++this.#mutationRevision,
     });
     this.#socket.forgetConversation(input.conversationId);
+    this.#messageIdentities?.forgetConversation(input.conversationId);
     return {
       ok: true,
       value: { deletedConversationId: input.conversationId },
@@ -381,7 +395,12 @@ export class TFRobotChatGateway implements ChatGateway {
               conversationId: input.conversationId,
               title: input.conversationId,
             }));
-      snapshot = mapSnapshot(conversation, history.value, status.value);
+      snapshot = mapSnapshot(
+        conversation,
+        history.value,
+        status.value,
+        (dto) => this.#messageIdentities?.map(dto) ?? mapMessage(dto),
+      );
       this.#socket.rememberSnapshot(snapshot);
     } catch {
       return this.#mappingError(
@@ -556,6 +575,7 @@ export class TFRobotChatGateway implements ChatGateway {
     this.#lifecycle.abort();
     this.#socket.dispose();
     this.#http.dispose();
+    this.#messageIdentities?.clear();
     this.#conversations.clear();
     this.#conversationMutations.clear();
     this.#transportConversationIds.clear();
@@ -681,7 +701,13 @@ export class TFRobotChatGateway implements ChatGateway {
       let pageUpdates: ChatUpdate[];
       try {
         pageUpdates = [
-          ...(history.value.messages ?? []).map(mapMessageUpdate),
+          ...(history.value.messages ?? []).map((dto) =>
+            mapMessageUpdate(
+              dto,
+              (message) =>
+                this.#messageIdentities?.map(message) ?? mapMessage(message),
+            ),
+          ),
           ...(history.value.events ?? []).map(mapEventUpdate),
         ];
         if (
