@@ -1,5 +1,12 @@
 # @turingfocus/chat-gateway-tfrobot
 
+## 0.8.4
+
+### Patch Changes
+
+- e84b101: Preserve the reached Socket establishment phase when a conversation join times out, regardless of which deadline timer fires first. Cleanup still rejects late acknowledgements and disconnects the failed subscription.
+  - @turingfocus/chat-protocol@0.8.4
+
 ## 0.8.3
 
 ### Patch Changes
