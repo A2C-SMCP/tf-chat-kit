@@ -51,10 +51,10 @@ Locally accepted implementation is not scheduled for duplicate development.
    27/28/29. Direct API issuer compatibility and TFRS-336's complete verified
    Server recovery profile remain separate; the latter keeps parent #46 open.
    Under ADR-009 they do not block independent Kit delivery.
-3. Deliver the locally accepted #92–#96 and #98/#99 changes after final gates and
+3. Deliver the locally accepted #92–#95 and #98/#99 changes after final gates and
    authorized commit/push/PR. Close each only with delivered implementation and
    its scoped acceptance evidence. Close #97 with its passing real BFF evidence; keep #46 open until its full verified Server gate is met.
-4. Close parent #90 after #92–#96 are delivered and closed. Its seven acceptance
+4. Complete #96 protected independent publication and unauthenticated Registry consumer verification after separate release authorization, then close #96 and parent #90. Its seven acceptance
    criteria have local evidence in `integration-acceptance.md`. The unprovided
    Manager user-JWT renewal contract remains explicitly external; the tested
    `auth_required` fallback satisfies the specified no-refresh behavior.
@@ -77,8 +77,7 @@ isolated review. The final serial full gate passed with exit 0 (79 files /
 scenarios have passing evidence: 23 local and four WebKit in the documented
 container environment. TFRS-336 is
 still `待办`; its complete verified recovery contract remains external and must
-not be inferred from the current-server regression tests. Git delivery approval has been requested; no credentials were requested or read,
-and no commit/push/PR/closure was performed while those inputs are pending.
+not be inferred from the current-server regression tests. Git delivery was authorized on 2026-10-10 and PR #103 was created. The missing auth lock importer and protected independent publishing support are being repaired in that PR; no credentials were requested or read. #96 requires actual npm publication and therefore remains open with parent #90.
 
 ## Implementation decisions
 
@@ -111,3 +110,19 @@ Delivery resumes from the passing gates recorded above; no package publication
 or merge is authorized. The previously requested closure of completed issues
 follows verified PR delivery and each issue's own completion criteria. Existing
 unrelated `.playwright-mcp/` artifacts remain outside scope.
+
+## Remaining route after PR #103
+
+1. Finish release-support regression, fresh isolated review and PR CI; close
+   #92–#95 and #97–#99 with their scoped evidence after remote delivery passes.
+2. Review/merge the feature and Changesets version PRs only under separate merge
+   authorization. Changesets currently plans core seven at `0.8.3`, auth at
+   `0.9.0`; these are a plan, not already published versions.
+3. A separately authorized Release Owner verifies the npm Environment, immutable
+   `v*`/`chat-auth-v*` tag rules and Trusted Publishers. Bootstrap only auth if it
+   has never existed; pin an already published compatible core for its Registry
+   consumers. Use OIDC for existing packages. Run protected publication and
+   unauthenticated Registry consumers; close #96, then #90 only after success.
+4. Keep #46 open until TFRS-336 provides the verified production subscription,
+   persisted replay and worker-delivery gate; re-run its full scenario against
+   the identified deployed revision before closing it.

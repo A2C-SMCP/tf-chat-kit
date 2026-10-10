@@ -110,7 +110,7 @@ and no command or assertion failed.
 - The final repeated whole-project `pnpm check` including the combined consumers
   passed: 78 files / 1,411 tests, Playground build, all packed consumers, artifact
   security checks and static gates. The final isolated review approved #96 with
-  no blockers. Local #96 acceptance is complete; remote delivery is pending.
+  no blockers. The package composition checks passed; the complete #96 publication criterion remains open until a protected npm release passes Registry consumer verification.
 - Final Playground regression after #97–#99 now passes 15 Chromium scenarios,
   including Manager list/create/send/realtime/logout and manual credential modes.
   The final real BFF follow-ups for #46/#97 are recorded below and remain distinct
@@ -164,13 +164,40 @@ explicitly allowed external dependency under criterion 7, not a silent-renewal
 claim. Parent closure still follows delivery and closure of its child issues.
 
 No external host source is changed. The auth package remains optional and is not
-re-exported or automatically initialized by Chat Kit, following ADR-012. No
-commit, push, PR, publication or issue closure has occurred in this stage.
+re-exported or automatically initialized by Chat Kit, following ADR-012. The implementation was committed and pushed as PR #103 on 2026-10-10. No merge, publication or issue closure has occurred at this audit point.
 
 ## Delivery authorization
 
 On 2026-10-10 the user authorized commit, push and PR creation for this accepted
 work. The previously requested closure of completed issues follows verified
-remote delivery: #92–#96 and #97–#99 before parent #90. Parent #46 remains open
+remote delivery: #92–#95 and #97–#99. #96 and parent #90 remain open until the required actual protected publication succeeds. Parent #46 remains open
 for its complete verified Server recovery contract. No merge, deployment or npm
 publication is included in this authorization.
+
+## Protected publication support follow-up
+
+PR #103 CI exposed a missing `chat-auth` lock importer, now synchronized and
+verified with `pnpm install --frozen-lockfile` and a full successful `pnpm check`.
+A fresh isolated audit also found that protected publishing still required all
+eight packages to share one version despite independent Changesets versioning.
+The release chain now selects the original fixed group, auth alone, or both,
+uses an auth-specific immutable source tag for auth-only batches, records exact
+consumer package versions, publishes/uploads only selected artifacts, and derives
+incident recovery commands from each package's target version. OIDC/provenance,
+immutable artifact integrity and compatibility gates remain required.
+
+The local release tests use a controlled Registry and perform no npm writes.
+The literal #96 criterion includes actual publication, which is outside the
+current Git delivery authorization. Keep #96 and #90 open; do not treat a passing
+release-support test or PR creation as a completed production release.
+
+The final follow-up `pnpm check` completed with exit 0: all 80 files / 1,430
+tests, static and type gates, Playground build, all packed consumers and artifact
+security checks passed. Log: `/tmp/tfck-pr103-independent-release-check.log`.
+The release-specific suite passed 46 tests across five files, including actual
+manifest CLI execution and controlled Registry publication of mixed-version,
+core-only and auth-only batches. A fresh complete-scope isolated review approved
+with zero blocking findings. One optional improvement remains: move reconciliation
+of an existing GitHub Release manifest before npm writes; the release handbooks
+already forbid changing a completed core batch to all under the same source tag.
+No npm write was executed by these tests.

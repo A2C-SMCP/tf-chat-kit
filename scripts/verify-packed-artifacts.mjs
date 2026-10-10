@@ -11,6 +11,9 @@ import os from "node:os";
 import path from "node:path";
 import { build } from "vite";
 
+import { registryConsumerPackages } from "./release-group-policy.mjs";
+import { validateReleaseManifestForPublish } from "./publish-release.mjs";
+
 import { PACKAGE_POLICY } from "./workspace-policy.mjs";
 import { validatePackedArtifact } from "./packed-artifact-policy.mjs";
 
@@ -20,6 +23,9 @@ const sourceFlagIndex = process.argv.indexOf("--source");
 const versionFlagIndex = process.argv.indexOf("--version");
 const packageSource =
   sourceFlagIndex < 0 ? "packed" : process.argv[sourceFlagIndex + 1];
+const manifestFlagIndex = process.argv.indexOf("--manifest");
+const registryManifestPath =
+  manifestFlagIndex < 0 ? undefined : process.argv[manifestFlagIndex + 1];
 const registryVersion =
   versionFlagIndex < 0 ? undefined : process.argv[versionFlagIndex + 1];
 if (packageSource !== "packed" && packageSource !== "registry") {
@@ -27,6 +33,7 @@ if (packageSource !== "packed" && packageSource !== "registry") {
 }
 if (
   packageSource === "registry" &&
+  registryManifestPath === undefined &&
   (registryVersion === undefined ||
     !/^0\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/u.test(
       registryVersion,
@@ -34,7 +41,12 @@ if (
 ) {
   throw new Error("registry verification requires --version with 0.x SemVer.");
 }
-if (packageSource === "packed" && versionFlagIndex >= 0) {
+if (registryManifestPath !== undefined && versionFlagIndex >= 0)
+  throw new Error("choose --manifest or --version, not both.");
+if (
+  packageSource === "packed" &&
+  (versionFlagIndex >= 0 || manifestFlagIndex >= 0)
+) {
   throw new Error("--version is only valid with --source registry.");
 }
 
@@ -284,6 +296,19 @@ if (packageSource === "packed") {
 }
 
 /** @typedef {{ name: string; version: string; tarball?: string; files: string[] }} PackedPackage */
+const registryPackages =
+  registryManifestPath === undefined
+    ? Object.values(PACKAGE_POLICY).map(({ name }) => ({
+        name,
+        version: /** @type {string} */ (registryVersion),
+      }))
+    : registryConsumerPackages(
+        validateReleaseManifestForPublish(
+          JSON.parse(
+            await readFile(path.resolve(registryManifestPath), "utf8"),
+          ),
+        ),
+      );
 /** @type {{ packages: PackedPackage[] }} */
 const packManifest =
   packageSource === "packed"
@@ -294,9 +319,9 @@ const packManifest =
         ),
       )
     : {
-        packages: Object.values(PACKAGE_POLICY).map(({ name }) => ({
+        packages: registryPackages.map(({ name, version }) => ({
           name,
-          version: /** @type {string} */ (registryVersion),
+          version,
           files: [],
         })),
       };
@@ -1175,5 +1200,5 @@ try {
 console.log(
   packageSource === "packed"
     ? "Packed artifact validation passed."
-    : `Public Registry consumer validation passed for ${registryVersion}.`,
+    : `Public Registry consumer validation passed for ${registryPackages.map(({ name, version }) => `${name}@${version}`).join(", ")}.`,
 );

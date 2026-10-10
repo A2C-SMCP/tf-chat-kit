@@ -27,7 +27,7 @@ revision、`staging`/`production` 环境、HTTPS 执行记录、执行时间和 
 Release Owner 需要单独审批并完成以下外部变更：
 
 1. 创建 `npm-production` Environment，只允许 `main`，配置 required reviewer，禁止管理员绕过。
-2. 建立 `main` Ruleset，要求 CI 成功和 PR 合并；建立 `v*` tag Ruleset，禁止更新和删除正式 tag，
+2. 建立 `main` Ruleset，要求 CI 成功和 PR 合并；为 `v*` 和 `chat-auth-v*` tag 建立 Ruleset，禁止更新和删除正式 tag，
    并只给受控发布主体创建权限。
 3. 保持 Actions 默认 token 为只读；仅两个 release workflow 使用文件内声明的最小权限。
 4. 首发时把短期 npm granular write token 写入 Environment secret
@@ -70,6 +70,30 @@ Trusted Publisher 配置完成后使用 `oidc`。
 
 任何身份、组织权限、包状态或 Trusted Publisher 核对失败都必须停止，E404 不能证明发布权限。
 
+## 可选认证包的独立发布（ADR-012 / #96）
+
+原有七包仍为 fixed group，`@turingfocus/chat-auth` 不加入该组。发布 workflow 的
+`group` 明确选择 `core`（仅七包）、`auth`（仅认证包）或 `all`（两组）。
+`expected-version` 对 `core`/`all` 指七包版本，对 `auth` 指认证包版本；`all` 还必须
+填写 `expected-auth-version`，例如七包 `0.8.3` 与认证包 `0.9.0`。所选包都必须符合
+同一 channel 的稳定/预发布语义，不能把不完整七包或七包不同版本作为独立批次发布。
+
+认证包单独发布使用不可移动的 `chat-auth-v<version>` 标签；七包/联合批次继续使用
+`v<core-version>`。不能复用已经指向其他提交或不同清单的源码标签；若七包已经发布，
+后续认证包发布应选择 `auth`。GitHub Release 只上传所选批次的 tarball，清单同时记录
+所有消费者所需的确切包版本。Registry consumer 验证使用 `--manifest` 按各包版本安装，
+同时覆盖启用认证与禁用认证的宿主。认证独立批次可用 `consumer-core-version` 明确指定
+已发布的七包版本；七包批次可用 `consumer-auth-version` 指定已发布认证版本。
+未填写时采用本次工作区打包版本；未选组不产生 npm 写入，其消费者版本必须已存在于 Registry。
+这允许先首发认证包并验证已发布七包，再发布七包新版验证该认证版本，无需发布整个固定组来
+bootstrap 认证包。所选组的版本不能被消费者参数覆盖。事故恢复命令按各包目标版本核对 dist-tag。
+
+首次新增认证包时，先选择 `auth` 与受保护的 `bootstrap-token`，只给认证包的首次
+批次使用 token；不要对已发布七包使用 bootstrap。认证包发布成功后立即绑定同样的
+Trusted Publisher、核对 trust 配置、删除并撤销 token，后续仅使用 OIDC。
+独立认证发布仍必须经过全部仓库内质量门、Environment 审批、provenance、Registry
+完整性与无认证消费者安装验证。代码支持与模拟 Registry 测试不代表实际 npm 发布完成。
+
 ## 常规发布
 
 1. 合并带 changeset 的功能 PR。
@@ -82,7 +106,7 @@ Trusted Publisher 配置完成后使用 `oidc`。
 6. `latest` 必须发布新的稳定版本，不能把已存在的 `next` 版本原地改标；真实外部 E2E 状态随
    `release/compatibility.json` 进入报告，但不是切换 channel 的前置条件。
 
-Registry consumer 验证固定安装 `@turingfocus/*@<exact-version>`，不依赖 workspace path、缓存或
+Registry consumer 验证按 release manifest 中每个包的确切版本安装 `@turingfocus/*@<exact-version>`，不依赖 workspace path、缓存或
 认证。版本和 tag 都不可覆盖、移动或复用。
 
 ## 失败、重入与回滚
