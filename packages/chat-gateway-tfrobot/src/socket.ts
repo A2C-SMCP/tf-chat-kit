@@ -814,6 +814,9 @@ export class TFRobotSocketClient {
     > = [];
     const pendingRealtimeActions: Array<() => void> = [];
     let joinPending = false;
+    // Cleanup clears active join state before settlement. Keep the reached
+    // establishment phase independently so timer ordering cannot relabel it.
+    let establishmentPhase: "subscription" | "joining" = "subscription";
     let subscriptionEstablished = false;
     let setupFailure: { readonly reason: unknown } | undefined;
     const add = (eventName: string, listener: TFRobotSocketListener): void => {
@@ -1182,6 +1185,7 @@ export class TFRobotSocketClient {
       const joinStartedAt = this.#now();
       active.acceptingEvents = false;
       joinPending = true;
+      establishmentPhase = "joining";
       pendingRealtimeActions.length = 0;
       lifecycle("joining");
       let acknowledgementSettled = false;
@@ -1954,7 +1958,7 @@ export class TFRobotSocketClient {
               ...result.error.diagnostic,
               errorId: `${subscriptionId}:establishment`,
               operation: "subscribe",
-              phase: joinPending ? "joining" : "subscription",
+              phase: establishmentPhase,
               generation,
               reconnectAttempt: active.reconnectAttempt,
               timeoutMs: Math.max(0, options.deadlineAt - startedAt),
