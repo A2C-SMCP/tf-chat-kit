@@ -44,6 +44,9 @@ chat-auth (可选，独立；react/antd 为可选 peer UI)
 
 普通宿主只需安装 `@turingfocus/chat-kit`：非 React 使用 `/headless`，自定义 React UI 使用 `/react`，成品 UI 使用根入口或 `/antd`。需要认证时再安装可选的 `@turingfocus/chat-auth`：认证状态与 transport 使用 `/headless`，TFRobotServer 适配使用 `/tfrobot`，React/Ant Design 默认 UI 分别使用 `/react` 与 `/antd`。高级消费者仍可按需安装叶子包；`chat-testing` 是独立开发依赖，不进入生产门面。
 
+需要 Manager 机器人目录与自动连接时，可选使用 `chat-auth/manager`、`chat-kit/manager`
+和 `chat-kit/manager-react`。接法、部署策略与验证范围见 [Manager 集成指南](docs/manager-integration.md)。
+
 任何 Chat Kit 包都不得反向依赖 TFRobotFront 或其他宿主项目。
 
 ## 登录、Chat Token 与会话接入
@@ -115,13 +118,13 @@ export function HostLogin({ auth }: { auth: AuthClient }) {
 
 选择机器人后，宿主先读取该机器人的 `connection-info`，解析最终 REST / Socket 地址与路由；交换请求使用 `audience=robot:{robotAccountId}`、`scope=chat:read chat:send`、`token_profile=session`。`subject_token_type` 为 `urn:ietf:params:oauth:token-type:jwt`，`grant_type` 为 `urn:ietf:params:oauth:grant-type:token-exchange`，请求体使用 `application/x-www-form-urlencoded`。
 
-`auth.createSessionProvider()` 返回的是 **Manager 会话**，不能直接交给需要机器人 audience 的 RobotServer。宿主应实现机器人专属的 Token Source 或 BFF，向 Chat Kit 只提供交换后的 Chat Token。当前可复用的流程示例是仓库私有的 [Manager → RobotServer 连接](playground/src/manager-robotserver-session.ts) 与 [Token Exchange / 内存续期](playground/src/manager-token-exchange.ts)；这些文件不是 npm 导出，生产宿主需要自己的实现和端点配置。
+`auth.createSessionProvider()` 返回的是 **Manager 会话**，不能直接交给需要机器人 audience 的 RobotServer。可选公共入口 `@turingfocus/chat-auth/manager` 提供目录、寻址和机器人专属 SessionProvider；`@turingfocus/chat-kit/manager` 与 `manager-react` 负责聊天实例生命周期。用法见 [Manager 集成指南](docs/manager-integration.md)。自有 BFF 或 Token Source 仍可通过现有端口注入；新增入口随本次 Changeset 发布后可从 npm 导入。
 
 ### 3. 保持 Chat Token 可用并创建会话工作区
 
 宿主 Token Source 的 `getToken()` 按需返回有效凭据：在内存中缓存交换结果，按返回的 `expires_in` 计算有效期，距过期约 30 秒时重新交换，并合并同一身份的并发请求。这不是后台定时续期，也不保证 Manager 登录永不过期。
 
-下面的工厂只使用公开 API；`RobotTokenSource` 是宿主实现的端口，每个环境、用户、账号、组织和机器人拥有独立实例：
+下面的工厂只使用公开 API；`RobotTokenSource` 是可由公共 Manager SessionProvider 或宿主实现提供的端口，每个环境、用户、账号、组织和机器人拥有独立实例：
 
 ```ts
 import type { AuthClient } from "@turingfocus/chat-auth/headless";

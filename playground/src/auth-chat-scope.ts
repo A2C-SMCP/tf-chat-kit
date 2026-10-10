@@ -1,19 +1,8 @@
-import type {
-  AuthClient,
-  AuthSnapshot,
-} from "../../packages/chat-auth/src/headless.js";
+import type { AuthClient } from "../../packages/chat-auth/src/headless.js";
 
 /** Refresh retains chat ownership; an unavailable or changing identity does not. */
-export const authChatScope = (snapshot: AuthSnapshot): string | undefined =>
-  (snapshot.status === "authenticated" || snapshot.status === "refreshing") &&
-  snapshot.account !== undefined
-    ? JSON.stringify([
-        snapshot.environment,
-        snapshot.account.userId,
-        snapshot.account.accountId,
-        snapshot.account.organizationId ?? null,
-      ])
-    : undefined;
+export { managerIdentityScope as authChatScope } from "../../packages/chat-auth/src/manager.js";
+import { managerIdentityScope as authChatScope } from "../../packages/chat-auth/src/manager.js";
 
 export const observeAuthChatScope = (
   client: AuthClient,

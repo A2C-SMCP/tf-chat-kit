@@ -150,6 +150,8 @@ export interface AuthClient {
   logout(): Promise<void>;
   createSessionProvider(): SessionProvider;
   refresh(): Promise<AuthSession>;
+  /** Dedicated final lifecycle event; snapshot subscribers remain silent on disposal. */
+  onDispose?(listener: () => void): () => void;
   dispose(): Promise<void>;
 }
 
@@ -264,6 +266,8 @@ const sessionFromUnknown = (value: unknown): AuthSession => {
 };
 
 class AuthClientImpl implements AuthClient {
+  readonly #disposeListeners = new Set<() => void>();
+
   readonly environment: AuthEnvironment;
   readonly #transport: AuthTransport;
   readonly #store: CredentialStore | undefined;
@@ -639,6 +643,17 @@ class AuthClientImpl implements AuthClient {
     };
   }
 
+  onDispose(listener: () => void): () => void {
+    if (this.#disposed) {
+      listener();
+      return () => {};
+    }
+    this.#disposeListeners.add(listener);
+    return () => {
+      this.#disposeListeners.delete(listener);
+    };
+  }
+
   async dispose(): Promise<void> {
     if (this.#disposed) return;
     this.#disposed = true;
@@ -652,6 +667,14 @@ class AuthClientImpl implements AuthClient {
       status: "disposed",
       accounts: [],
     };
+    for (const listener of this.#disposeListeners) {
+      try {
+        listener();
+      } catch {
+        /* Disposal observers are isolated. */
+      }
+    }
+    this.#disposeListeners.clear();
     try {
       await this.clearStoredCredential();
     } catch {

@@ -84,12 +84,15 @@ const ROOT_DEV_ENGINE_POLICY = Object.freeze({
 });
 const RELEASE_NPM_VERSION = "11.18.0";
 const FACADE_EXPORT_POLICY = Object.freeze({
+  "./manager": "manager",
+  "./manager-react": "manager-react",
   ".": "index",
   "./headless": "headless",
   "./react": "react",
   "./antd": "antd",
 });
 const AUTH_EXPORT_POLICY = Object.freeze({
+  "./manager": "manager",
   ".": "index",
   "./headless": "headless",
   "./tfrobot": "tfrobot",

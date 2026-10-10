@@ -209,6 +209,7 @@ const installManagerRoute = async (
             rid: "e2e-robot",
             robotType: "tfrobot",
             socketBaseURL: ROBOTSERVER,
+            sioPath: "/socket.io/",
           },
         },
       });
@@ -220,6 +221,9 @@ const installManagerRoute = async (
     await route.fulfill({
       json: {
         data: {
+          total: 1,
+          page: 1,
+          pageSize: 20,
           items: [
             options.connectable === true
               ? {
@@ -267,9 +271,7 @@ test("真实用户模式的 Token Exchange 走浏览器 fetch 并建立当前机
   ).toHaveCount(0);
   await expect(page.getByText("当前机器人对话", { exact: true })).toBeVisible();
   await expect(page.getByText("Manager 当前机器人")).toBeVisible();
-  await expect(
-    page.getByText("无法连接 Manager Token Exchange 接口。"),
-  ).toHaveCount(0);
+  await expect(page.getByText(/Manager exchange failed/u)).toHaveCount(0);
 
   expect(exchanges).toHaveLength(1);
   expect(exchanges[0]?.get("grant_type")).toBe(
@@ -308,9 +310,10 @@ test("真实用户模式的 Token Exchange 走浏览器 fetch 并建立当前机
   expect(beforeLogout.observations.adminRequests).toBe(0);
 
   await page.getByRole("button", { name: "退出登录" }).click();
-  await expect
-    .poll(async () => (await stateOf(request)).conversations)
-    .toEqual(["RobotServer fixture conversation"]);
+  // Revoked identities cannot retain a token solely to delete fixture conversations.
+  expect((await stateOf(request)).conversations).toEqual(
+    beforeLogout.conversations,
+  );
   await expect
     .poll(async () => (await stateOf(request)).observations.activeSockets)
     .toBe(0);
@@ -329,6 +332,86 @@ test.beforeEach(async ({ request }) => {
   await request.post(`${ROBOTSERVER}/__test/reset`);
 });
 
+test("Manager 目录失败显示安全诊断并可原地重试", async ({ page }) => {
+  await installManagerRoute(page, "https://api-staging.turingfocus.cn", {
+    connectable: true,
+  });
+  let unavailable = true;
+  await page.route("**/api/v1/digital-employees?*", async (route) => {
+    if (unavailable)
+      await route.fulfill({
+        status: 503,
+        json: { message: "private server detail" },
+      });
+    else await route.fallback();
+  });
+  await page.goto("/");
+  await enterManager(page);
+  await page.getByText("真实用户模式", { exact: true }).click();
+  await page.getByLabel("用户账号").fill("real-user");
+  await page.getByLabel("用户密码").fill("real-password");
+  await page.getByRole("button", { name: "用户登录" }).click();
+  await expect(page.getByRole("alert")).toContainText("加载机器人目录失败");
+  await expect(page.locator("body")).not.toContainText("private server detail");
+  unavailable = false;
+  await page.getByRole("button", { name: "重试加载机器人" }).click();
+  await expect(
+    page.getByText("RobotServer fixture conversation").first(),
+  ).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+for (const unavailable of [
+  {
+    status: "stopped",
+    templateType: "tfrserver",
+    message: "当前机器人未运行，暂时无法连接。",
+  },
+  {
+    status: "running",
+    templateType: "other",
+    message: "当前机器人模板不支持聊天连接。",
+  },
+]) {
+  test(`Manager 机器人资格原因准确：${unavailable.status}/${unavailable.templateType}`, async ({
+    page,
+  }) => {
+    await installManagerRoute(page, "https://api-staging.turingfocus.cn");
+    await page.route("**/api/v1/digital-employees?*", (route) =>
+      route.fulfill({
+        json: {
+          data: {
+            total: 1,
+            page: 1,
+            pageSize: 20,
+            items: [
+              {
+                id: "uat-unavailable",
+                name: "UAT unavailable",
+                robotId: "unavailable",
+                robotAccountId: "account-present",
+                status: unavailable.status,
+                templateType: unavailable.templateType,
+              },
+            ],
+          },
+        },
+      }),
+    );
+    await page.goto("/");
+    await enterManager(page);
+    await page.getByText("真实用户模式", { exact: true }).click();
+    await page.getByLabel("用户账号").fill("real-user");
+    await page.getByLabel("用户密码").fill("real-password");
+    await page.getByRole("button", { name: "用户登录" }).click();
+    await expect(
+      page.getByText(unavailable.message, { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText(/当前机器人缺少 robotAccountId/u)).toHaveCount(
+      0,
+    );
+  });
+}
 test("legacy fixture accepts omitted platformId while retaining authentication and routing checks", async ({
   request,
 }) => {

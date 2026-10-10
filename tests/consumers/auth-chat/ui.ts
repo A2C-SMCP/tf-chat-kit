@@ -1,9 +1,18 @@
+import {
+  ManagerChatProvider,
+  useManagerChat,
+} from "@turingfocus/chat-kit/manager-react";
 import { createElement } from "react";
 import type { AuthStatusProps } from "@turingfocus/chat-auth/antd";
 import { setupDom, check } from "../auth-common.js";
 import { runAuthChatConsumerVerification } from "./consumer.js";
 
 export const runAuthChatUiConsumerVerification = async (): Promise<void> => {
+  check(
+    typeof ManagerChatProvider === "function" &&
+      typeof useManagerChat === "function",
+    "Optional packed Manager React entry is unavailable",
+  );
   const dom = setupDom();
   const { createRoot } = await import("react-dom/client");
   const { act } = await import("react-dom/test-utils");

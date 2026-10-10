@@ -7,12 +7,26 @@ import { PACKAGE_POLICY } from "./scripts/workspace-policy.mjs";
 
 const workspaceRoot = fileURLToPath(new URL(".", import.meta.url));
 
-export const workspaceSourceAliases = Object.fromEntries(
-  Object.entries(PACKAGE_POLICY).map(([directory, { name }]) => [
-    name,
-    path.join(workspaceRoot, "packages", directory, "src", "index.ts"),
-  ]),
-);
+export const workspaceSourceAliases = {
+  "@turingfocus/chat-auth/manager": path.join(
+    workspaceRoot,
+    "packages/chat-auth/src/manager.ts",
+  ),
+  "@turingfocus/chat-auth/headless": path.join(
+    workspaceRoot,
+    "packages/chat-auth/src/headless.ts",
+  ),
+  "@turingfocus/chat-kit/manager": path.join(
+    workspaceRoot,
+    "packages/chat-kit/src/manager.ts",
+  ),
+  ...Object.fromEntries(
+    Object.entries(PACKAGE_POLICY).map(([directory, { name }]) => [
+      name,
+      path.join(workspaceRoot, "packages", directory, "src", "index.ts"),
+    ]),
+  ),
+};
 
 export default defineConfig({
   resolve: {

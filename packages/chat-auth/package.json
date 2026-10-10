@@ -45,6 +45,11 @@
       "types": "./dist/antd.d.ts",
       "import": "./dist/antd.js",
       "default": "./dist/antd.js"
+    },
+    "./manager": {
+      "types": "./dist/manager.d.ts",
+      "import": "./dist/manager.js",
+      "default": "./dist/manager.js"
     }
   },
   "peerDependencies": {

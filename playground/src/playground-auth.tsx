@@ -1,4 +1,4 @@
-import { Button, Input, Radio, Space, Tag, Typography } from "antd";
+import { Alert, Button, Input, Radio, Space, Tag, Typography } from "antd";
 import {
   AccountSelectionPanel,
   AuthStatus,
@@ -17,6 +17,7 @@ import {
   type LoginResult,
 } from "../../packages/chat-auth/src/headless.js";
 import type { PlaygroundRobotDescriptor } from "./manager-directory.js";
+import { ManagerIntegrationError } from "../../packages/chat-auth/src/manager.js";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 /** The Manager deployment used by the local playground in the common case. */
@@ -127,6 +128,8 @@ const OrganizationAndRobotPicker = ({
   const [remoteRobots, setRemoteRobots] = useState<
     readonly PlaygroundRobotDescriptor[] | undefined
   >();
+  const [directoryAttempt, setDirectoryAttempt] = useState(0);
+  const [directoryError, setDirectoryError] = useState<string>();
   const robotRequest = useRef(0);
   const accountSwitchRequest = useRef(0);
   const remoteSelectionKey = useRef<string>();
@@ -142,14 +145,29 @@ const OrganizationAndRobotPicker = ({
       return;
     }
     setRemoteRobots(undefined);
+    setDirectoryError(undefined);
     void loadRobots(account.organizationId ?? account.accountId)
       .then((items) => {
         if (requestId === robotRequest.current) setRemoteRobots(items);
       })
-      .catch(() => {
-        if (requestId === robotRequest.current) setRemoteRobots(undefined);
+      .catch((error: unknown) => {
+        if (requestId !== robotRequest.current) return;
+        setRemoteRobots(undefined);
+        setDirectoryError(
+          error instanceof ManagerIntegrationError
+            ? `Manager directory: ${error.code}${error.status === undefined ? "" : ` (HTTP ${error.status})`}`
+            : "无法读取机器人目录，请稍后重试。",
+        );
       });
-  }, [account?.accountId, account?.organizationId, loadRobots]);
+    return () => {
+      if (requestId === robotRequest.current) robotRequest.current += 1;
+    };
+  }, [
+    account?.accountId,
+    account?.organizationId,
+    loadRobots,
+    directoryAttempt,
+  ]);
   const robots: readonly PlaygroundRobotDescriptor[] =
     account === undefined
       ? []
@@ -226,6 +244,21 @@ const OrganizationAndRobotPicker = ({
           </option>
         ))}
       </select>
+      {directoryError === undefined ? null : (
+        <Alert
+          type="error"
+          showIcon
+          message="加载机器人目录失败"
+          description={directoryError}
+          action={
+            <Button
+              onClick={() => setDirectoryAttempt((attempt) => attempt + 1)}
+            >
+              重试加载机器人
+            </Button>
+          }
+        />
+      )}
       <Typography.Text strong>机器人</Typography.Text>
       <select
         aria-label="选择机器人"

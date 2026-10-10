@@ -86,6 +86,9 @@ describe("Manager quick-chat creation through real local HTTP/Socket.IO", () => 
           else if (url.pathname === "/api/v1/digital-employees")
             reply({
               data: {
+                total: 1,
+                page: 1,
+                pageSize: 20,
                 items: [
                   {
                     id: "de-local",
@@ -105,6 +108,7 @@ describe("Manager quick-chat creation through real local HTTP/Socket.IO", () => 
                 rid: "local-robot",
                 robotType: "tfrobot",
                 socketBaseURL: "https://robot.turingfocus.cn",
+                sioPath: "/socket.io/",
               },
             });
           else if (url.pathname === "/api/v1/oauth/token") {
@@ -367,7 +371,8 @@ describe("Manager quick-chat creation through real local HTTP/Socket.IO", () => 
             await new Promise<void>((resolve) => server.close(() => resolve()));
         }
       }
-      expect(deleted).toEqual(["42"]);
+      // Logout revokes all sessions immediately: cleanup cannot retain a credential for DELETE.
+      expect(deleted).toEqual(mode === "logout" ? [] : ["42"]);
       if (mode !== "empty") expect(conversations.get(7)).toEqual(business);
     },
     20_000,
