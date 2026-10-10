@@ -1,5 +1,11 @@
 # @turingfocus/chat-runtime
 
+## 0.9.0
+
+### Patch Changes
+
+- @turingfocus/chat-protocol@0.9.0
+
 ## 0.8.4
 
 ### Patch Changes
