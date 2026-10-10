@@ -2,6 +2,7 @@ import {
   createContext,
   createElement,
   useContext,
+  useCallback,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
@@ -28,9 +29,11 @@ export const useAuth = (): AuthClient => {
 
 export const useAuthSelector = <T>(selector: AuthSelector<T>): T => {
   const client = useAuth();
-  return useSyncExternalStore(
-    (listener) => client.subscribe(listener),
-    () => selector(client.getSnapshot()),
-    () => selector(client.getSnapshot()),
+  const subscribe = useCallback(
+    (listener: () => void) => client.subscribe(listener),
+    [client],
   );
+  const getSnapshot = useCallback(() => client.getSnapshot(), [client]);
+  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  return selector(snapshot);
 };

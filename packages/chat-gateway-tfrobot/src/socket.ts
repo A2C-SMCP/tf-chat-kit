@@ -520,6 +520,7 @@ export class TFRobotSocketClient {
   readonly #path: string;
   readonly #profile: ResolvedTFRobotServerProfile;
   readonly #currentServerRestLoader: CurrentServerRestLoader;
+  readonly #messageMapper: typeof mapMessageUpdate;
   readonly #reconnectStatusLoader: ReconnectStatusLoader;
   readonly #recoveryCheckpoints = new Map<string, Set<string>>();
   readonly #runs = new Map<string, Run | null>();
@@ -531,6 +532,7 @@ export class TFRobotSocketClient {
     options: TFRobotGatewayOptions,
     reconnectStatusLoader: ReconnectStatusLoader,
     currentServerRestLoader: CurrentServerRestLoader,
+    messageMapper: typeof mapMessageUpdate = mapMessageUpdate,
   ) {
     this.#options = options;
     this.#factory = options.socketFactory ?? createSocketIoFactory;
@@ -541,6 +543,7 @@ export class TFRobotSocketClient {
       options.socketNamespaceUrl ?? this.#defaultNamespaceUrl(options.baseUrl);
     this.#reconnectStatusLoader = reconnectStatusLoader;
     this.#currentServerRestLoader = currentServerRestLoader;
+    this.#messageMapper = messageMapper;
   }
 
   async subscribe(
@@ -640,7 +643,7 @@ export class TFRobotSocketClient {
       };
     }
 
-    const initialSession = authOutcome.value;
+    let initialSession = authOutcome.value;
     // Identity changes must retire the old authenticated transport even when
     // the target's REST preflight subsequently fails.
     this.#transports.isolateAuthentication(authOf(initialSession));
@@ -657,8 +660,8 @@ export class TFRobotSocketClient {
       };
     }
     if (this.#profile.kind === "current-server") {
-      const preflight = await this.#currentServerRestLoader({
-        checkpoint: new Set(),
+      const preflightInput = {
+        checkpoint: new Set<string>(),
         conversationId,
         deadlineAt: options.deadlineAt,
         limits: {
@@ -666,9 +669,45 @@ export class TFRobotSocketClient {
           maxItems: this.#profile.rebase.pageSize,
           maxPages: 1,
         },
-        session: initialSession,
         signal: establishmentAbort.signal,
+      };
+      let preflight = await this.#currentServerRestLoader({
+        ...preflightInput,
+        session: initialSession,
       });
+      // The REST preflight and the Socket handshake must validate the same
+      // credential. HTTP cannot retry a pinned session itself: reacquire it
+      // here and repeat the complete preflight before creating the transport.
+      if (
+        !preflight.ok &&
+        preflight.error.code === "authentication" &&
+        preflight.error.diagnostic?.httpStatus === 401 &&
+        !this.#disposed &&
+        !establishmentAbort.signal.aborted &&
+        this.#now() < options.deadlineAt
+      ) {
+        const refreshed = await awaitBounded(
+          () => this.#getSocketSession(conversationId, "connect"),
+          {
+            deadlineAt: options.deadlineAt,
+            now: this.#now,
+            signal: establishmentAbort.signal,
+          },
+        );
+        if (refreshed.kind === "value") {
+          initialSession = refreshed.value;
+          this.#transports.isolateAuthentication(authOf(initialSession));
+          preflight = await this.#currentServerRestLoader({
+            ...preflightInput,
+            session: initialSession,
+          });
+        } else if (refreshed.kind === "deadline") {
+          preflight = {
+            ok: false,
+            error: createGatewayDeadlineExceededError(),
+          };
+        }
+      }
       if (this.#disposed || establishmentAbort.signal.aborted) {
         clearPendingEstablishment();
         return {
@@ -1508,7 +1547,7 @@ export class TFRobotSocketClient {
           return;
         }
         mapAndNext("TFRobot chat_message could not be normalized", () =>
-          mapMessageUpdate(parsed.data),
+          this.#messageMapper(parsed.data),
         );
       }, payload);
     });

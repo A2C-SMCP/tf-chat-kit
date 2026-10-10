@@ -197,8 +197,12 @@ const httpServer = createServer(async (request, response) => {
   }
 
   if (url.pathname === "/v1/chat/conversations") {
-    if (url.searchParams.get("platformId") !== "platform-e2e") {
-      error(response, 422, "platformId is required");
+    // Legacy deployed contract: platformId is optional. This fixture supports
+    // one explicit platform, plus the unfiltered Manager route. It does not
+    // model newer RobotServer JSON-body creation contracts.
+    const platformId = url.searchParams.get("platformId");
+    if (platformId !== null && platformId !== "platform-e2e") {
+      error(response, 422, "Unsupported fixture platformId");
       return;
     }
     if (request.method === "GET") {
@@ -295,10 +299,14 @@ const httpServer = createServer(async (request, response) => {
   }
   if (request.method === "POST" && url.pathname.endsWith("/messages")) {
     const body = await readBody(request);
-    if (
-      body["creator"]?.uid !== "current-user" ||
-      body["creator"]?.name !== "CurrentUser"
-    ) {
+    const creator = body["creator"];
+    const manualCreator =
+      creator?.uid === "current-user" && creator?.name === "CurrentUser";
+    const managerCreator =
+      auth === "bearer" &&
+      creator?.uid === "user-real" &&
+      creator?.name === "Manager 用户";
+    if (!manualCreator && !managerCreator) {
       error(response, 422, "Creator rejected");
       return;
     }

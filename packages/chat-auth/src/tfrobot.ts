@@ -1,5 +1,6 @@
 import type {
   AccountContext,
+  AccountOption,
   AuthErrorCode,
   AuthSession,
   AuthTransport,
@@ -49,131 +50,178 @@ const defaultFetch: TfRobotFetch = async (input, init) => {
   return globalThis.fetch(input, init) as unknown as AuthResponse;
 };
 
-const objectOf = (value: unknown): Record<string, unknown> =>
-  typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : {};
-
-const stringField = (
-  value: Record<string, unknown>,
-  ...names: string[]
-): string | undefined => {
-  for (const name of names) {
-    const candidate = value[name];
-    if (typeof candidate === "string" && candidate.length > 0) return candidate;
-  }
-  return undefined;
+const invalidResponse = (): never => {
+  throw new TfRobotAuthError(
+    "invalid_response",
+    "TFRobot authentication response is invalid",
+  );
 };
 
-const scalarStringField = (
-  value: Record<string, unknown>,
+const objectOf = (value: unknown): Record<string, unknown> => {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return invalidResponse();
+  return value as Record<string, unknown>;
+};
+
+const stringField = (
+  record: Record<string, unknown>,
   ...names: string[]
 ): string | undefined => {
+  let result: string | undefined;
   for (const name of names) {
-    const candidate = value[name];
-    if (
-      (typeof candidate === "string" && candidate.length > 0) ||
-      (typeof candidate === "number" && Number.isFinite(candidate))
-    )
-      return String(candidate);
+    const value = record[name];
+    if (value == null) continue;
+    if (typeof value !== "string" || value.trim().length === 0)
+      return invalidResponse();
+    if (result !== undefined && result !== value) return invalidResponse();
+    result = value;
   }
-  return undefined;
+  return result;
+};
+
+const identifierField = (
+  record: Record<string, unknown>,
+  ...names: string[]
+): string | undefined => {
+  let result: string | undefined;
+  for (const name of names) {
+    const value = record[name];
+    if (value == null) continue;
+    if (
+      !(typeof value === "string" && value.trim().length > 0) &&
+      !(typeof value === "number" && Number.isSafeInteger(value) && value > 0)
+    )
+      return invalidResponse();
+    const identifier = String(value);
+    if (result !== undefined && result !== identifier) return invalidResponse();
+    result = identifier;
+  }
+  return result;
 };
 
 const dataFrom = (value: unknown): unknown => {
   const record = objectOf(value);
-  return record["data"] === undefined ? value : record["data"];
+  if (!("code" in record)) return value;
+  if (record["code"] !== 200 || !("data" in record)) return invalidResponse();
+  return record["data"];
 };
 
-const accountFrom = (value: unknown): AccountContext => {
+const accountOptionFrom = (value: unknown): AccountOption => {
   const record = objectOf(value);
-  const userId = scalarStringField(record, "userId", "uid", "user_id", "id");
-  const accountId = scalarStringField(record, "accountId", "id", "account_id");
-  if (userId === undefined || accountId === undefined) {
-    throw new TfRobotAuthError(
-      "invalid_response",
-      "TFRobot auth response did not contain an account",
-    );
-  }
-  const organizationId = scalarStringField(
-    record,
+  const accountId =
+    identifierField(record, "accountId", "account_id") ?? invalidResponse();
+  const userId = identifierField(record, "userId", "uid", "user_id");
+  const organizationId = identifierField(
+    Object.fromEntries(
+      Object.entries(record).filter(
+        ([key, value]) =>
+          !["organizationId", "organization_id", "orgId", "org_id"].includes(
+            key,
+          ) ||
+          (value !== "" && value !== 0),
+      ),
+    ),
     "organizationId",
     "organization_id",
     "orgId",
     "org_id",
   );
-  const displayName = stringField(
-    record,
-    "displayName",
-    "accountName",
-    "name",
-    "username",
-  );
+  // These are alternative presentation fields, not aliases of one ID.
+  const displayName = ["displayName", "accountName", "name", "username"]
+    .map((name) => {
+      const value = record[name];
+      if (value == null || value === "") return undefined;
+      if (typeof value !== "string") return invalidResponse();
+      return value;
+    })
+    .find((value) => value !== undefined);
   return {
-    userId,
     accountId,
+    ...(userId === undefined ? {} : { userId }),
     ...(organizationId === undefined ? {} : { organizationId }),
     ...(displayName === undefined ? {} : { displayName }),
   };
 };
 
+const accountFrom = (value: unknown): AccountContext => {
+  const record = objectOf(value);
+  const option = accountOptionFrom(record);
+  const userId =
+    identifierField(record, "userId", "uid", "user_id", "id") ??
+    invalidResponse();
+  return { ...option, userId };
+};
+
 const tokenFrom = (value: unknown): AuthSession | null => {
   const record = objectOf(value);
-  const credentialValue = stringField(
-    record,
-    "token",
-    "access_token",
-    "accessToken",
-  );
-  if (credentialValue === undefined) return null;
-  const expiresAt =
-    typeof record["expiresAt"] === "number" ? record["expiresAt"] : undefined;
+  const token = stringField(record, "token", "access_token", "accessToken");
+  if (token === undefined) return null;
+  const expiresAt = record["expiresAt"];
+  if (
+    expiresAt !== undefined &&
+    !(
+      typeof expiresAt === "number" &&
+      Number.isFinite(expiresAt) &&
+      expiresAt > 0
+    )
+  )
+    return invalidResponse();
   return {
     kind: "bearer",
-    ["token"]: credentialValue,
-    ...(expiresAt === undefined ? {} : { expiresAt }),
+    token,
+    ...(expiresAt === undefined ? {} : { expiresAt: expiresAt as number }),
   };
 };
 
-const accountsFrom = (value: unknown): AccountContext[] => {
-  const record = objectOf(value);
-  const source = Array.isArray(record["accounts"])
-    ? record["accounts"]
-    : Array.isArray(value)
-      ? value
-      : [];
-  return source.map(accountFrom);
+const accountsFrom = (value: unknown): AccountOption[] => {
+  const source = Array.isArray(value) ? value : objectOf(value)["accounts"];
+  if (!Array.isArray(source)) return invalidResponse();
+  const accounts = source.map(accountOptionFrom);
+  if (
+    new Set(accounts.map((account) => account.accountId)).size !==
+    accounts.length
+  )
+    return invalidResponse();
+  return accounts;
 };
 
 const resultFrom = (
-  payload: unknown,
+  data: unknown,
   session: AuthSession | null,
 ): LoginResult => {
-  const data = dataFrom(payload);
   const record = objectOf(data);
-  const accounts = accountsFrom(data);
-  if (
-    accounts.length > 1 ||
-    record["accountSelectionRequired"] === true ||
-    record["requiresAccountSelection"] === true
-  ) {
+  const onboarding = [
+    "needsOnboarding",
+    "onboardingRequired",
+    "requiresOnboarding",
+  ];
+  const selection = ["accountSelectionRequired", "requiresAccountSelection"];
+  for (const key of [...onboarding, ...selection]) {
+    if (record[key] !== undefined && typeof record[key] !== "boolean")
+      return invalidResponse();
+  }
+  const needsOnboarding = onboarding.some((key) => record[key] === true);
+  const tempToken = stringField(record, "tempToken", "temp_token");
+  const needsSelection =
+    tempToken !== undefined || selection.some((key) => record[key] === true);
+  if (needsOnboarding && needsSelection) return invalidResponse();
+  if (needsSelection) {
+    if (tempToken === undefined || session !== null) return invalidResponse();
+    const accounts = accountsFrom(data);
+    if (accounts.length === 0) return invalidResponse();
     return { kind: "account-selection-required", accounts };
   }
-  const accountValue = record["account"] ?? record["user"] ?? data;
-  const account = accountFrom(accountValue);
-  if (
-    record["onboardingRequired"] === true ||
-    record["requiresOnboarding"] === true
-  ) {
-    return { kind: "onboarding-required", account };
+  if (needsOnboarding) {
+    if (session === null) return invalidResponse();
+    const userId =
+      identifierField(record, "userId", "uid", "user_id") ?? invalidResponse();
+    return { kind: "onboarding-required", user: { userId } };
   }
-  if (session === null) {
-    throw new TfRobotAuthError(
-      "invalid_response",
-      "TFRobot login response did not contain a session",
-    );
-  }
-  return { kind: "authenticated", account };
+  if (session === null) return invalidResponse();
+  return {
+    kind: "authenticated",
+    account: accountFrom(record["account"] ?? record["user"] ?? data),
+  };
 };
 
 export const createTfRobotAuthTransport = (
@@ -207,42 +255,57 @@ export const createTfRobotAuthTransport = (
         "TFRobot authentication request failed",
       );
     }
+    const failure = (status: number): never => {
+      const code =
+        status === 401
+          ? "authentication_required"
+          : status === 403
+            ? "authorization_denied"
+            : status === 404
+              ? "unsupported"
+              : "unknown";
+      throw new TfRobotAuthError(
+        code,
+        status === 401
+          ? "Authentication is required"
+          : status === 403
+            ? "Authentication is not authorized"
+            : status === 404
+              ? "TFRobot authentication endpoint is unavailable"
+              : "TFRobot authentication request failed",
+        status,
+      );
+    };
+    if (response.status < 200 || response.status >= 300)
+      return failure(response.status);
     let payload: unknown;
     try {
       payload = await response.json();
     } catch {
-      payload = undefined;
+      return invalidResponse();
     }
-    const serverMessage = stringField(objectOf(payload), "message", "detail");
-    if (response.status === 401)
-      throw new TfRobotAuthError(
-        "authentication_required",
-        serverMessage ?? "Authentication is required",
-        401,
-      );
-    if (response.status === 403)
-      throw new TfRobotAuthError(
-        "authorization_denied",
-        "Authentication is not authorized",
-        403,
-      );
-    if (response.status === 404)
-      throw new TfRobotAuthError(
-        "unsupported",
-        "TFRobot authentication endpoint is unavailable",
-        404,
-      );
-    if (response.status < 200 || response.status >= 300)
-      throw new TfRobotAuthError(
-        "unknown",
-        serverMessage ?? "TFRobot authentication request failed",
-        response.status,
-      );
-    return payload;
+    const envelope = objectOf(payload);
+    if ("code" in envelope && envelope["code"] !== 200) {
+      if (
+        typeof envelope["code"] !== "number" ||
+        !Number.isInteger(envelope["code"]) ||
+        envelope["code"] < 400 ||
+        envelope["code"] > 599
+      )
+        return invalidResponse();
+      return failure(envelope["code"]);
+    }
+    return dataFrom(payload);
   };
 
   let currentSession: AuthSession | null = null;
   let pendingTempToken: string | undefined;
+  let generation = 0;
+  const clearSession = () => {
+    ++generation;
+    currentSession = null;
+    pendingTempToken = undefined;
+  };
   const authHeaders = () =>
     currentSession === null
       ? {}
@@ -253,77 +316,125 @@ export const createTfRobotAuthTransport = (
     body: JSON.stringify(body),
   });
 
+  const verifyAccount = async (
+    account: AccountContext,
+    session: AuthSession,
+  ): Promise<AccountContext> => {
+    const verified = accountFrom(
+      await request("/api/v1/auth/me", {
+        headers: { Authorization: `Bearer ${session.token}` },
+      }),
+    );
+    if (
+      verified.userId !== account.userId ||
+      verified.accountId !== account.accountId ||
+      (account.organizationId !== undefined &&
+        verified.organizationId !== account.organizationId)
+    )
+      return invalidResponse();
+    return verified;
+  };
+
+  const complete = async (
+    data: unknown,
+    requestGeneration: number,
+    selectedId?: string,
+  ): Promise<LoginResult> => {
+    const session = tokenFrom(data);
+    let result = resultFrom(data, session);
+    if (selectedId !== undefined) {
+      if (
+        result.kind !== "authenticated" ||
+        result.account.accountId !== selectedId
+      )
+        return invalidResponse();
+      if (requestGeneration === generation) {
+        result = {
+          kind: "authenticated",
+          account: await verifyAccount(result.account, session!),
+        };
+      }
+    }
+    if (requestGeneration === generation) {
+      // Parse and verify first; only a complete, current result owns credentials.
+      currentSession = result.kind === "authenticated" ? session : null;
+      pendingTempToken =
+        result.kind === "account-selection-required"
+          ? stringField(objectOf(data), "tempToken", "temp_token")
+          : undefined;
+    }
+    return result;
+  };
+
   return {
     async login(input: LoginInput) {
+      const requestGeneration = ++generation;
+      currentSession = null;
+      pendingTempToken = undefined;
       const identifier = input.identifier.trim();
       const credentials = identifier.includes("@")
         ? { email: identifier, password: input.password }
         : { phone: identifier, password: input.password };
-      const payload = await request(
-        "/auth/login-by-password",
-        json(credentials),
+      return complete(
+        await request("/auth/login-by-password", json(credentials)),
+        requestGeneration,
       );
-      const data = dataFrom(payload);
-      const session = tokenFrom(data);
-      pendingTempToken = stringField(objectOf(data), "tempToken", "temp_token");
-      if (session !== null) {
-        currentSession = session;
-        pendingTempToken = undefined;
-      }
-      return resultFrom(payload, session);
     },
     async selectAccount(accountId: string) {
+      const requestGeneration = ++generation;
       const body =
         pendingTempToken === undefined
           ? { accountId }
           : { tempToken: pendingTempToken, accountId };
-      const payload = await request("/auth/select-account", json(body));
-      const data = dataFrom(payload);
-      const session = tokenFrom(data);
-      if (session !== null) {
-        currentSession = session;
-        pendingTempToken = undefined;
-      }
-      return resultFrom(payload, session ?? currentSession);
+      return complete(
+        await request("/auth/select-account", json(body)),
+        requestGeneration,
+        accountId,
+      );
     },
     async getCurrentAccount() {
       return accountFrom(
-        dataFrom(await request("/api/v1/auth/me", { headers: authHeaders() })),
+        await request("/api/v1/auth/me", { headers: authHeaders() }),
       );
     },
     async listAccounts() {
       return accountsFrom(
-        dataFrom(
-          await request("/api/v1/accounts/my", { headers: authHeaders() }),
-        ),
+        await request("/api/v1/accounts/my", { headers: authHeaders() }),
       );
     },
     async switchAccount(accountId: string) {
-      const payload = await request(
+      const requestGeneration = ++generation;
+      const data = await request(
         "/api/v1/auth/switch-account",
         json({ accountId }),
       );
-      const data = dataFrom(payload);
-      const session = tokenFrom(data);
-      if (session !== null) currentSession = session;
-      const accountValue =
-        objectOf(data)["identity"] ??
-        objectOf(data)["account"] ??
-        objectOf(data)["user"] ??
-        data;
-      return accountFrom(accountValue);
+      const record = objectOf(data);
+      const result = await complete(
+        {
+          ...record,
+          account:
+            record["identity"] ?? record["account"] ?? record["user"] ?? data,
+        },
+        requestGeneration,
+        accountId,
+      );
+      if (result.kind !== "authenticated") return invalidResponse();
+      return result.account;
     },
     async getSession() {
       return currentSession;
     },
     restoreSession(session: AuthSession) {
+      ++generation;
       currentSession = session;
+      pendingTempToken = undefined;
     },
-    clearSession() {
-      currentSession = null;
+    invalidatePending() {
+      ++generation;
     },
+    clearSession,
     async logout() {
-      currentSession = null;
+      clearSession();
     },
   };
 };

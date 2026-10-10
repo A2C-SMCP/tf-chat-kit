@@ -50,6 +50,7 @@ import {
   writePlaygroundEventDetailSplitRatio,
 } from "./playground-layout-preferences.js";
 import { RobotServerConnectionPanel } from "./robotserver-panel.js";
+import { observeAuthChatScope } from "./auth-chat-scope.js";
 import {
   createPlaygroundAuthClient,
   PlaygroundAuthGate,
@@ -82,6 +83,7 @@ const allowedManagerServerOrigins = (): readonly string[] =>
     .filter(Boolean);
 
 export interface PlaygroundAppProps {
+  readonly createAuthClient?: (() => AuthClient) | undefined;
   readonly createSession?: (() => PlaygroundSession) | undefined;
   readonly createRobotServerSession?:
     ((config: RobotServerConnectionConfig) => PlaygroundSession) | undefined;
@@ -487,9 +489,7 @@ const PlaygroundWorkspace = ({
 
               <section className="chat-stage">
                 <ChatUiShell
-                  compactNavigation={
-                    experience === "quick" ? undefined : compactNavigation
-                  }
+                  compactNavigation={compactNavigation}
                   contentState={state.contentState}
                   conversationListError={
                     state.listError === undefined
@@ -789,12 +789,12 @@ const ManagerQuickChat = ({
 };
 
 export const PlaygroundApp = ({
+  createAuthClient: createHostAuthClient = createPlaygroundAuthClient,
   createSession = createMockPlaygroundSession,
   createRobotServerSession = createRobotServerPlaygroundSession,
 }: PlaygroundAppProps) => {
-  const [authClient, setAuthClient] = useState<AuthClient>(
-    createPlaygroundAuthClient,
-  );
+  const [authClient, setAuthClient] =
+    useState<AuthClient>(createHostAuthClient);
   const authClientRef = useRef(authClient);
   const loginGeneration = useRef(0);
   const managerConnectionGeneration = useRef(0);
@@ -811,6 +811,7 @@ export const PlaygroundApp = ({
     null,
   );
   const [session, setSession] = useState<PlaygroundSession | null>(null);
+  const sessionRef = useRef<PlaygroundSession | null>(null);
   const [managerConnecting, setManagerConnecting] = useState(false);
   const [managerConnectionError, setManagerConnectionError] = useState<
     string | null
@@ -830,14 +831,29 @@ export const PlaygroundApp = ({
   }, []);
 
   useEffect(() => {
+    if (playgroundModule !== "manager") return;
+    return observeAuthChatScope(authClient, () => {
+      managerConnectionGeneration.current += 1;
+      setSelectedRobot(undefined);
+      setSelectedRobotId("");
+      setSessionPlan(null);
+      setSession(null);
+      void sessionRef.current?.dispose();
+      sessionRef.current = null;
+    });
+  }, [authClient, playgroundModule]);
+
+  useEffect(() => {
     if (sessionPlan === null) {
       setSession(null);
       return;
     }
     const next = sessionPlan.create();
+    sessionRef.current = next;
     setSession(next);
     void next.start();
     return () => {
+      if (sessionRef.current === next) sessionRef.current = null;
       setSession((current) => (current === next ? null : current));
       void next.dispose();
     };
@@ -936,6 +952,9 @@ export const PlaygroundApp = ({
       throw new Error("请填写 Manager 地址、账号和密码");
     const generation = ++loginGeneration.current;
     managerConnectionGeneration.current += 1;
+    setSelectedRobot(undefined);
+    setSelectedRobotId("");
+    setSessionPlan(null);
     const client = createAuthClient({
       // AuthClient only has canonical staging/production scopes; a custom
       // URL uses staging semantics while retaining its explicit transport URL.

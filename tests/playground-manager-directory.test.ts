@@ -128,6 +128,7 @@ describe("Playground Manager directory adapter", () => {
     }
     try {
       const client = authClient();
+      await client.login({ identifier: "fixture", password: "fixture" });
       const robots = await loadManagerRobotDirectory(
         client,
         `http://127.0.0.1:${address.port}`,
@@ -151,6 +152,7 @@ describe("Playground Manager directory adapter", () => {
 
   it("loads connection-info with the Manager bearer and rejects legacy auth fields", async () => {
     const client = authClient();
+    await client.login({ identifier: "fixture", password: "fixture" });
     const info = await loadManagerConnectionInfo(
       client,
       "https://manager.example",

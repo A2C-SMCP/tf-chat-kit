@@ -1857,13 +1857,24 @@ describe("Playground Manager quick chat", () => {
           expect(connectionAttempts).toBe(1);
           await clickButton("重试连接当前机器人");
         }
-        const sidebar = () =>
-          container.querySelector('aside[aria-label="会话列表"]');
-        await vi.waitFor(() => expect(sidebar()).not.toBeNull());
         await vi.waitFor(() =>
-          expect(sidebar()?.textContent ?? "").toContain(conversationTitle),
+          expect(
+            container.querySelector('button[aria-label="历史会话"]'),
+          ).not.toBeNull(),
         );
-        expect(sidebar()?.textContent ?? "").not.toContain("暂无会话");
+        await act(async () => {
+          container
+            .querySelector<HTMLButtonElement>('button[aria-label="历史会话"]')!
+            .click();
+        });
+        await vi.waitFor(() =>
+          expect(
+            document.querySelector('[role="menu"]')?.textContent,
+          ).toContain(conversationTitle),
+        );
+        expect(
+          document.querySelector('[role="menu"]')?.textContent,
+        ).not.toContain("暂无会话");
         expect(connectionAttempts).toBe(failFirst ? 2 : 1);
         expect(container.textContent).toContain(
           `正在查看「${conversationTitle}」`,

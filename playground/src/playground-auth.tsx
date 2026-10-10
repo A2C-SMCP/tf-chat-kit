@@ -3,7 +3,6 @@ import {
   AccountSelectionPanel,
   AuthStatus,
   LoginPanel,
-  OrganizationSwitcher,
 } from "../../packages/chat-auth/src/antd.js";
 import {
   AuthProvider,
@@ -449,11 +448,10 @@ const PlaygroundAuthGateContent = ({
         aria-label="认证与机器人选择"
       >
         <Space align="center" wrap>
-          <AuthStatus />
+          <AuthStatus showLogout={false} />
           {loadRobots === undefined ? null : (
             <Tag color="gold">Manager 真实账号与目录</Tag>
           )}
-          <OrganizationSwitcher />
           <OrganizationAndRobotPicker
             onRobotChange={setRobotId}
             onSelectionReset={onSelectionReset}

@@ -26,6 +26,7 @@ interface ProxyTarget {
   readonly robotId: string;
   readonly robotType: string;
   readonly routingHeaders: Readonly<Record<string, string>>;
+  readonly routePath: string;
   readonly upstreamUrl: URL;
 }
 
@@ -178,6 +179,7 @@ const parseTarget = (requestUrl: string): ProxyTarget | undefined => {
     robotId: robotId!,
     robotType: robotType!,
     routingHeaders: routeHeaders,
+    routePath: pathname,
     upstreamUrl,
   };
 };
@@ -388,7 +390,11 @@ const proxyRequest = async (
   for (const [name, value] of Object.entries(target.routingHeaders)) {
     headers.set(name, value);
   }
-  if (target.kind === "chat" && target.frontendBff && authorization !== undefined) {
+  if (
+    target.kind === "chat" &&
+    target.frontendBff &&
+    authorization !== undefined
+  ) {
     headers.set(
       "Cookie",
       `tfNamespace=${target.namespace}; tfRobotId=${target.robotId}; tfUserToken=${authorization.slice("Bearer ".length)}`,
@@ -401,6 +407,27 @@ const proxyRequest = async (
   }
   const contentType = request.headers["content-type"];
   if (contentType !== undefined) headers.set("Content-Type", contentType);
+
+  // The deployed Front BFF reads creation fields from JSON, whereas the direct
+  // legacy Server gateway sends query parameters. Adapt only this host route.
+  if (
+    target.frontendBff &&
+    request.method === "POST" &&
+    /\/api\/v1\/chat\/conversations\/?$/u.test(target.upstreamUrl.pathname) &&
+    body?.byteLength === 0
+  ) {
+    const title = target.upstreamUrl.searchParams.get("title");
+    const platformId = target.upstreamUrl.searchParams.get("platformId");
+    if (title !== null) {
+      body = Buffer.from(
+        JSON.stringify({
+          title,
+          ...(platformId === null ? {} : { platformId }),
+        }),
+      );
+      headers.set("Content-Type", "application/json");
+    }
+  }
 
   const controller = new AbortController();
   const abortUpstream = (): void => controller.abort();
@@ -480,7 +507,7 @@ export const createRobotServerProxyPlugin = (
           : request.method === "GET" ||
             request.method === "POST" ||
             ((request.method === "DELETE" || request.method === "PATCH") &&
-              CONVERSATION_ITEM_PATH.test(target.upstreamUrl.pathname));
+              CONVERSATION_ITEM_PATH.test(target.routePath));
       if (!methodAllowed) {
         sendJson(response, 405, "该 RobotServer 代理请求方法不受支持。");
         return;

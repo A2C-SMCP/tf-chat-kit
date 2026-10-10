@@ -196,6 +196,7 @@ describe("chat-auth headless AuthClient", () => {
       return { kind: "bearer", token: `refreshed-${refreshCalls}` };
     };
     const client = createAuthClient({ environment: "staging", transport });
+    await client.login({ identifier: "user", password: "transient" });
     const [first, second] = await Promise.all([
       client.refresh(),
       client.refresh(),
@@ -207,6 +208,7 @@ describe("chat-auth headless AuthClient", () => {
       environment: "production",
       transport: new MemoryTransport(),
     });
+    await unavailable.login({ identifier: "user", password: "transient" });
     await expect(unavailable.refresh()).rejects.toMatchObject({
       authError: { code: "authentication_required" },
     });
@@ -243,20 +245,28 @@ describe("chat-auth headless AuthClient", () => {
     transport.login = async () => {
       throw new Error("Bearer secret-token");
     };
-    await expect(client.login({ identifier: "u", password: "p" })).rejects.toThrow();
+    await expect(
+      client.login({ identifier: "u", password: "p" }),
+    ).rejects.toThrow();
     expect(JSON.stringify(client.getSnapshot())).not.toContain("secret-token");
   });
 
   it("retries an operation once after a 401 using the refreshed session", async () => {
     const transport = new MemoryTransport();
     transport.current = account("account-1");
-    transport.refresh = async () => ({ kind: "bearer", token: "rotated-token" });
-    const provider = createAuthClient({ environment: "staging", transport }).createSessionProvider();
+    transport.refresh = async () => ({
+      kind: "bearer",
+      token: "rotated-token",
+    });
+    const client = createAuthClient({ environment: "staging", transport });
+    await client.login({ identifier: "user", password: "transient" });
+    const provider = client.createSessionProvider();
     let attempts = 0;
     await expect(
       provider.withAuthRetry(async () => {
         attempts += 1;
-        if (attempts === 1) throw Object.assign(new Error("expired"), { status: 401 });
+        if (attempts === 1)
+          throw Object.assign(new Error("expired"), { status: 401 });
         return "ok";
       }),
     ).resolves.toBe("ok");
@@ -273,19 +283,23 @@ describe("chat-auth headless AuthClient", () => {
     };
     const transport = new MemoryTransport();
     transport.current = account("account-1");
-    transport.refresh = async () => ({ kind: "bearer", token: "rotated-token" });
+    transport.refresh = async () => ({
+      kind: "bearer",
+      token: "rotated-token",
+    });
     const client = createAuthClient({
       environment: "staging",
       transport,
       credentialStore: store,
       credentialScope: scope,
     });
+    await client.login({ identifier: "user", password: "transient" });
     const provider = client.createSessionProvider();
     await expect(
       provider.withAuthRetry(async () => {
         throw Object.assign(new Error("expired"), { status: 401 });
       }),
-    ).rejects.toThrow("expired");
+    ).rejects.toMatchObject({ authError: { code: "authentication_required" } });
     expect(client.getSnapshot().status).toBe("auth_required");
     await expect(provider.getSession()).rejects.toMatchObject({
       authError: { code: "authentication_required" },

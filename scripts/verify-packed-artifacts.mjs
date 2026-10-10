@@ -9,6 +9,7 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { build } from "vite";
 
 import { PACKAGE_POLICY } from "./workspace-policy.mjs";
 import { validatePackedArtifact } from "./packed-artifact-policy.mjs";
@@ -139,6 +140,7 @@ const assertPackagesAbsent = async (directory, forbiddenMarkers) => {
  *   tsconfig: Record<string, unknown>;
  *   packageNames?: readonly string[];
  *   forbiddenPackageMarkers?: readonly string[];
+ *   bundle?: boolean;
  * }} ConsumerProject
  */
 
@@ -162,9 +164,11 @@ const verifyConsumerProject = async (project, packedPackages) => {
       `${JSON.stringify(project.tsconfig, null, 2)}\n`,
       "utf8",
     ),
-    ...Object.entries(project.sourceFiles).map(([fileName, source]) =>
-      writeFile(path.join(project.directory, fileName), source, "utf8"),
-    ),
+    ...Object.entries(project.sourceFiles).map(async ([fileName, source]) => {
+      const filePath = path.join(project.directory, fileName);
+      await mkdir(path.dirname(filePath), { recursive: true });
+      await writeFile(filePath, source, "utf8");
+    }),
   ]);
 
   installBuildAndRunConsumer(project.directory);
@@ -181,6 +185,49 @@ const verifyConsumerProject = async (project, packedPackages) => {
       project.directory,
       project.forbiddenPackageMarkers,
     );
+  }
+  if (project.bundle) {
+    const bundleDirectory = path.join(project.directory, "bundled");
+    const result = await (async () => {
+      const previousNodeEnvironment = process.env["NODE_ENV"];
+      try {
+        return await build({
+          configFile: false,
+          root: project.directory,
+          logLevel: "warn",
+          build: {
+            target: "es2022",
+            minify: false,
+            outDir: bundleDirectory,
+            lib: {
+              entry: path.join(project.directory, "index.ts"),
+              formats: ["es"],
+              fileName: () => "consumer.mjs",
+            },
+          },
+        });
+      } finally {
+        if (previousNodeEnvironment === undefined)
+          delete process.env["NODE_ENV"];
+        else process.env["NODE_ENV"] = previousNodeEnvironment;
+      }
+    })();
+    for (const output of Array.isArray(result) ? result : [result]) {
+      if (!("output" in output))
+        throw new Error("Bundler did not return artifacts");
+      for (const chunk of output.output) {
+        if (chunk.type !== "chunk") continue;
+        for (const moduleId of chunk.moduleIds) {
+          if (
+            /node_modules\/(?:\.pnpm\/)?(?:react|react-dom|antd)(?:@|\/)/u.test(
+              moduleId.replaceAll("\\", "/"),
+            )
+          )
+            throw new Error("Headless bundle unexpectedly includes UI modules");
+        }
+      }
+    }
+    run("node", [path.join(bundleDirectory, "consumer.mjs")]);
   }
 };
 
@@ -283,6 +330,14 @@ const authHeadlessConsumerDirectory = path.join(
   verificationRoot,
   "auth-headless-consumer",
 );
+const authReactConsumerDirectory = path.join(
+  verificationRoot,
+  "auth-react-consumer",
+);
+const authAntdConsumerDirectory = path.join(
+  verificationRoot,
+  "auth-antd-consumer",
+);
 
 try {
   await Promise.all([
@@ -295,6 +350,8 @@ try {
     mkdir(tauriStyleConsumerDirectory),
     mkdir(tfrobotfrontStyleConsumerDirectory),
     mkdir(authHeadlessConsumerDirectory),
+    mkdir(authReactConsumerDirectory),
+    mkdir(authAntdConsumerDirectory),
   ]);
   if (packageSource === "packed") {
     for (const packedPackage of packManifest.packages) {
@@ -456,36 +513,230 @@ try {
     devDependencies: {
       typescript: "5.9.3",
     },
-    pnpm: { overrides: { "@turingfocus/chat-auth": packageFiles["@turingfocus/chat-auth"] } },
+    pnpm: {
+      overrides: {
+        "@turingfocus/chat-auth": packageFiles["@turingfocus/chat-auth"],
+      },
+    },
   };
+  const authHeadlessConsumerSource = await readFile(
+    path.join(
+      rootDirectory,
+      "tests",
+      "consumers",
+      "auth-headless",
+      "consumer.ts",
+    ),
+    "utf8",
+  );
   await verifyConsumerProject(
     {
       directory: authHeadlessConsumerDirectory,
+      bundle: true,
       manifest: authHeadlessConsumerManifest,
       packageNames: ["@turingfocus/chat-auth"],
       forbiddenPackageMarkers: ["react@", "antd@", "react-dom@"],
       sourceFiles: {
+        "consumer.ts": authHeadlessConsumerSource,
         "index.ts": [
-          'import { createAuthClient } from "@turingfocus/chat-auth/headless";',
-          'import { createTfRobotAuthTransport } from "@turingfocus/chat-auth/tfrobot";',
-          'if (typeof createAuthClient !== "function" || typeof createTfRobotAuthTransport !== "function") throw new Error("Auth headless exports unavailable");',
-          'console.log("Verified packed auth headless without React or Ant Design.");',
+          'import { runAuthHeadlessConsumerVerification } from "./consumer.js";',
+          "await runAuthHeadlessConsumerVerification();",
           "",
         ].join("\n"),
       },
       tsconfig: {
         compilerOptions: {
+          lib: ["ES2022"],
+          types: [],
           module: "NodeNext",
           moduleResolution: "NodeNext",
           outDir: "dist",
           strict: true,
           target: "ES2022",
         },
-        include: ["index.ts"],
+        include: ["consumer.ts", "index.ts"],
       },
     },
     packManifest.packages,
   );
+
+  console.log(
+    "Verified packed auth headless lifecycle without UI dependencies.",
+  );
+  const authCommonSource = await readFile(
+    path.join(rootDirectory, "tests", "consumers", "auth-common.ts"),
+    "utf8",
+  );
+  for (const ui of [false, true]) {
+    const kind = ui ? "auth-antd" : "auth-react";
+    const runName = ui
+      ? "runAuthAntdConsumerVerification"
+      : "runAuthReactConsumerVerification";
+    const source = await readFile(
+      path.join(rootDirectory, "tests", "consumers", kind, "consumer.ts"),
+      "utf8",
+    );
+    await verifyConsumerProject(
+      {
+        directory: ui ? authAntdConsumerDirectory : authReactConsumerDirectory,
+        manifest: {
+          name: `tf-chat-kit-${kind}-consumer`,
+          version: "0.0.0",
+          private: true,
+          type: "module",
+          packageManager: "pnpm@10.34.5",
+          dependencies: {
+            "@turingfocus/chat-auth": packageFiles["@turingfocus/chat-auth"],
+            react: "18.3.1",
+            "react-dom": "18.3.1",
+            jsdom: "29.1.1",
+            ...(ui ? { antd: "5.23.4" } : {}),
+          },
+          devDependencies: {
+            typescript: "5.9.3",
+            "@types/react": "18.3.31",
+            "@types/react-dom": "18.3.7",
+            "@types/jsdom": "28.0.3",
+            "@types/node": "24.13.3",
+          },
+          pnpm: {
+            overrides: {
+              "@turingfocus/chat-auth": packageFiles["@turingfocus/chat-auth"],
+            },
+          },
+        },
+        packageNames: ["@turingfocus/chat-auth"],
+        forbiddenPackageMarkers: ui
+          ? ["next@", "office-js@", "@tauri-apps+"]
+          : ["antd@", "next@", "office-js@", "@tauri-apps+"],
+        sourceFiles: {
+          "auth-common.ts": authCommonSource,
+          [`${kind}/consumer.ts`]: source,
+          "index.ts": `import { ${runName} } from "./${kind}/consumer.js";\nawait ${runName}();\n`,
+        },
+        tsconfig: {
+          compilerOptions: {
+            module: "NodeNext",
+            moduleResolution: "NodeNext",
+            target: "ES2022",
+            outDir: "dist",
+            strict: true,
+            skipLibCheck: true,
+            exactOptionalPropertyTypes: true,
+            lib: ["ES2022", "DOM", "DOM.Iterable"],
+          },
+          include: ["**/*.ts"],
+        },
+      },
+      packManifest.packages,
+    );
+    console.log(`Verified packed ${kind} lifecycle and dependency isolation.`);
+  }
+
+  const authChatSource = await readFile(
+    path.join(rootDirectory, "tests/consumers/auth-chat/consumer.ts"),
+    "utf8",
+  );
+  const authChatUiSource = await readFile(
+    path.join(rootDirectory, "tests/consumers/auth-chat/ui.ts"),
+    "utf8",
+  );
+  for (const ui of [false, true]) {
+    const directory = path.join(
+      verificationRoot,
+      ui ? "auth-chat-ui-consumer" : "auth-chat-headless-consumer",
+    );
+    await mkdir(directory);
+    const runName = ui
+      ? "runAuthChatUiConsumerVerification"
+      : "runAuthChatConsumerVerification";
+    await verifyConsumerProject(
+      {
+        directory,
+        manifest: {
+          name: ui
+            ? "tf-chat-kit-auth-chat-ui-consumer"
+            : "tf-chat-kit-auth-chat-headless-consumer",
+          version: "0.0.0",
+          private: true,
+          type: "module",
+          packageManager: "pnpm@10.34.5",
+          dependencies: {
+            "@turingfocus/chat-auth": packageFiles["@turingfocus/chat-auth"],
+            "@turingfocus/chat-kit": packageFiles["@turingfocus/chat-kit"],
+            "socket.io": "4.8.1",
+            ...(ui
+              ? {
+                  react: "18.3.1",
+                  "react-dom": "18.3.1",
+                  antd: "5.23.4",
+                  jsdom: "29.1.1",
+                }
+              : {}),
+          },
+          devDependencies: {
+            typescript: "5.9.3",
+            "@types/node": "24.13.3",
+            ...(ui
+              ? {
+                  "@types/react": "18.3.31",
+                  "@types/react-dom": "18.3.7",
+                  "@types/jsdom": "28.0.3",
+                }
+              : {}),
+          },
+          pnpm: {
+            overrides: packageFiles,
+            ...(ui
+              ? {}
+              : {
+                  peerDependencyRules: {
+                    ignoreMissing: [
+                      "react",
+                      "react-dom",
+                      "antd",
+                      "@types/react",
+                    ],
+                  },
+                }),
+          },
+        },
+        packageNames: ["@turingfocus/chat-auth", "@turingfocus/chat-kit"],
+        forbiddenPackageMarkers: ui
+          ? ["next@", "office-js@", "@tauri-apps+"]
+          : ["react@", "react-dom@", "antd@"],
+        sourceFiles: {
+          ...(!ui ? { ".npmrc": "auto-install-peers=false\n" } : {}),
+          "auth-chat/consumer.ts": authChatSource,
+          ...(ui
+            ? {
+                "auth-chat/ui.ts": authChatUiSource,
+                "auth-common.ts": authCommonSource,
+              }
+            : {}),
+          "index.ts": `import { ${runName} } from "./auth-chat/${ui ? "ui" : "consumer"}.js";\nawait ${runName}();\n`,
+        },
+        tsconfig: {
+          compilerOptions: {
+            module: "NodeNext",
+            moduleResolution: "NodeNext",
+            target: "ES2022",
+            outDir: "dist",
+            strict: true,
+            skipLibCheck: true,
+            exactOptionalPropertyTypes: true,
+            lib: ui ? ["ES2022", "DOM", "DOM.Iterable"] : ["ES2022"],
+            types: ["node"],
+          },
+          include: ["**/*.ts"],
+        },
+      },
+      packManifest.packages,
+    );
+    console.log(
+      `Verified packed authenticated chat ${ui ? "UI" : "headless"} through real HTTP/Socket.IO.`,
+    );
+  }
 
   const minimumUiConsumerManifest = {
     ...consumerManifest,
@@ -535,6 +786,7 @@ try {
   await verifyConsumerProject(
     {
       directory: reactConsumerDirectory,
+      forbiddenPackageMarkers: ["@turingfocus+chat-auth@"],
       manifest: reactConsumerManifest,
       sourceFiles: {
         "index.ts": [
@@ -702,6 +954,7 @@ try {
     {
       directory: officeStyleConsumerDirectory,
       forbiddenPackageMarkers: [
+        "@turingfocus+chat-auth@",
         "@microsoft+office-js@",
         "@tauri-apps+",
         "@turingfocus+chat-gateway-tfrobot@",
@@ -793,7 +1046,12 @@ try {
   await verifyConsumerProject(
     {
       directory: tauriStyleConsumerDirectory,
-      forbiddenPackageMarkers: ["@tauri-apps+", "next@", "office-js@"],
+      forbiddenPackageMarkers: [
+        "@turingfocus+chat-auth@",
+        "@tauri-apps+",
+        "next@",
+        "office-js@",
+      ],
       manifest: tauriStyleConsumerManifest,
       packageNames: ["@turingfocus/chat-kit", "@turingfocus/chat-testing"],
       sourceFiles: {

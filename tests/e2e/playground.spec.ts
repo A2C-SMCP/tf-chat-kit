@@ -94,7 +94,7 @@ const enterManager = async (page: Page) => {
 const loginPlayground = async (page: Page) => {
   await enterManager(page);
   await page.getByText("Mock 模式", { exact: true }).click();
-  await page.getByLabel("登录", { exact: true }).fill("demo-user");
+  await page.getByLabel("Email or phone").fill("demo-user");
   await page.getByLabel("Password", { exact: true }).fill("demo-password");
   await page.locator('button[type="submit"]').click();
   await expect(
@@ -240,8 +240,16 @@ const installManagerRoute = async (
 
 test("真实用户模式的 Token Exchange 走浏览器 fetch 并建立当前机器人会话", async ({
   page,
+  request,
 }) => {
   const exchanges: URLSearchParams[] = [];
+  const conversationRequests: URL[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.endsWith("/v1/chat/conversations")) {
+      conversationRequests.push(url);
+    }
+  });
   await installManagerRoute(page, "https://api-staging.turingfocus.cn", {
     connectable: true,
     onTokenExchange: (body) => exchanges.push(body),
@@ -271,10 +279,115 @@ test("真实用户模式的 Token Exchange 走浏览器 fetch 并建立当前机
   expect(exchanges[0]?.get("audience")).toBe("robot:one-person-org-3:000001");
   expect(exchanges[0]?.get("scope")).toBe("chat:read chat:send");
   expect(exchanges[0]?.get("token_profile")).toBe("session");
+
+  await expect(
+    page.getByText("RobotServer fixture conversation").first(),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "新建会话" }).click();
+  await page
+    .getByRole("dialog", { name: "新建会话" })
+    .getByRole("button", { name: "确认新建" })
+    .click();
+  await expect(
+    page.getByText(/^\[tf-chat-kit playground\] \d{4}-/u).first(),
+  ).toBeVisible();
+  await page.getByLabel("消息").fill("Manager browser message");
+  await composerSendButton(page).click();
+  await expect(
+    page.getByText("RobotServer streamed: Manager browser message"),
+  ).toBeVisible();
+  await expect(page.getByText("运行中", { exact: true })).toBeHidden();
+  expect(conversationRequests.length).toBeGreaterThanOrEqual(2);
+  expect(
+    conversationRequests.every((url) => !url.searchParams.has("platformId")),
+  ).toBe(true);
+  const beforeLogout = await stateOf(request);
+  expect(beforeLogout.conversations).toHaveLength(2);
+  expect(beforeLogout.observations.joins).toBeGreaterThanOrEqual(2);
+  expect(beforeLogout.observations.bearerRequests).toBeGreaterThan(0);
+  expect(beforeLogout.observations.adminRequests).toBe(0);
+
+  await page.getByRole("button", { name: "退出登录" }).click();
+  await expect
+    .poll(async () => (await stateOf(request)).conversations)
+    .toEqual(["RobotServer fixture conversation"]);
+  await expect
+    .poll(async () => (await stateOf(request)).observations.activeSockets)
+    .toBe(0);
+  const browserState = await page.evaluate(() => ({
+    cookie: document.cookie,
+    dom: document.documentElement.outerHTML,
+    local: Object.values(localStorage),
+    session: Object.values(sessionStorage),
+    url: location.href,
+  }));
+  expect(JSON.stringify(browserState)).not.toContain("bearer-good");
+  expect(JSON.stringify(browserState)).not.toContain("manager-user-token");
 });
 
 test.beforeEach(async ({ request }) => {
   await request.post(`${ROBOTSERVER}/__test/reset`);
+});
+
+test("legacy fixture accepts omitted platformId while retaining authentication and routing checks", async ({
+  request,
+}) => {
+  const headers = {
+    ...ORIGIN_HEADERS,
+    Authorization: "Bearer bearer-good",
+    "X-TF-Namespace": "e2e-ns",
+    "X-TF-RobotId": "e2e-robot",
+    "X-TF-RobotType": "tfrobot",
+  };
+  const endpoint = `${ROBOTSERVER}/v1/chat/conversations`;
+  expect((await request.get(endpoint, { headers })).status()).toBe(200);
+  expect(
+    (
+      await request.get(`${endpoint}?platformId=platform-e2e`, { headers })
+    ).status(),
+  ).toBe(200);
+  expect(
+    (
+      await request.get(`${endpoint}?platformId=unsupported`, { headers })
+    ).status(),
+  ).toBe(422);
+  expect(
+    (await request.get(endpoint, { headers: ORIGIN_HEADERS })).status(),
+  ).toBe(401);
+  expect(
+    (
+      await request.get(endpoint, {
+        headers: { ...ORIGIN_HEADERS, Authorization: "Bearer bearer-good" },
+      })
+    ).status(),
+  ).toBe(422);
+  const created = await request.post(`${endpoint}?title=contract-test`, {
+    headers,
+  });
+  expect(created.status()).toBe(200);
+  const payload = (await created.json()) as {
+    data: { conversationId: number };
+  };
+  const conversationId = payload.data.conversationId;
+  expect(
+    (
+      await request.post(`${endpoint}?title=rejected&platformId=unsupported`, {
+        headers,
+      })
+    ).status(),
+  ).toBe(422);
+  expect((await stateOf(request)).conversations).toEqual([
+    "RobotServer fixture conversation",
+    "contract-test",
+  ]);
+  expect(
+    (
+      await request.delete(`${endpoint}/${conversationId}`, { headers })
+    ).status(),
+  ).toBe(200);
+  expect((await stateOf(request)).conversations).toEqual([
+    "RobotServer fixture conversation",
+  ]);
 });
 
 test("真实用户模式默认选择 staging 环境，也支持切换自定义地址", async ({

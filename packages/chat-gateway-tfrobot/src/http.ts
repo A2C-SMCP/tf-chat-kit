@@ -428,7 +428,22 @@ export class TFRobotHttpClient {
           ),
         });
         if (attempt.skipInvalidation !== true) {
-          this.#invalidateSession(response.status, error);
+          const invalidation = this.#invalidateSession(response.status, error);
+          if (input.session !== undefined && response.status === 401) {
+            // A pinned-session caller owns the retry and must wait until the
+            // host has invalidated that credential before reacquiring it.
+            const invalidated = await awaitBounded(() => invalidation, {
+              deadlineAt: input.options.deadlineAt,
+              now: this.#now,
+              signal: controller.signal,
+            });
+            if (
+              invalidated.kind === "deadline" ||
+              invalidated.kind === "aborted"
+            ) {
+              return this.#interruptedResult(errorConversationId);
+            }
+          }
         }
         return { ok: false, error };
       }
@@ -556,15 +571,13 @@ export class TFRobotHttpClient {
     };
   }
 
-  #invalidateSession(status: number, error: ChatError): void {
+  async #invalidateSession(status: number, error: ChatError): Promise<void> {
     if (status !== 401 && status !== 403) return;
     try {
-      void Promise.resolve(
-        this.#options.sessionProvider.onSessionInvalid?.({
-          reason: status === 401 ? "expired" : "forbidden",
-          error,
-        }),
-      ).catch(() => undefined);
+      await this.#options.sessionProvider.onSessionInvalid?.({
+        reason: status === 401 ? "expired" : "forbidden",
+        error,
+      });
     } catch {
       // A host refresh failure must not replace the original request error.
     }

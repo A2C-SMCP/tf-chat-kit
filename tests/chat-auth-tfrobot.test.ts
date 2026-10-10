@@ -42,7 +42,13 @@ describe("TFRobot auth transport", () => {
           });
         }
         if (url.endsWith("auth/me")) {
-          return response(200, { userId: "user-1", accountId: "account-1" });
+          return response(200, {
+            userId: "user-1",
+            accountId:
+              init?.headers?.["Authorization"] === "Bearer rotated-token"
+                ? "account-2"
+                : "account-1",
+          });
         }
         return response(200, {
           accessToken: "rotated-token",
@@ -95,9 +101,15 @@ describe("TFRobot auth transport", () => {
             message: "success",
             data: {
               id: 9,
-              accountId: 16,
+              accountId:
+                init?.headers?.["Authorization"] === "Bearer switched-token"
+                  ? 17
+                  : 16,
               accountName: "client_uat",
-              organizationId: 42,
+              organizationId:
+                init?.headers?.["Authorization"] === "Bearer switched-token"
+                  ? 43
+                  : 42,
               organizationName: "Client UAT Org",
             },
           });

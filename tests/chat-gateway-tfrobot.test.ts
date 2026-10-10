@@ -2865,7 +2865,10 @@ describe("TFRobotChatGateway current-server profile", () => {
     "fails preflight closed for HTTP %i",
     async (status, expectedCode) => {
       const fixture = createCurrentServerFixture({
-        status: [new Response("failure", { status })],
+        status: [
+          new Response("failure", { status }),
+          new Response("failure", { status }),
+        ],
       });
       const gateway = createTFRobotChatGateway({
         baseUrl: "https://robot.example/",
@@ -2889,6 +2892,39 @@ describe("TFRobotChatGateway current-server profile", () => {
       gateway.dispose({ deadlineAt: deadline() });
     },
   );
+
+  it("bounds asynchronous invalidation during pinned-session preflight", async () => {
+    vi.useFakeTimers();
+    try {
+      const fixture = createCurrentServerFixture({
+        status: [new Response("Unauthorized", { status: 401 })],
+      });
+      const gateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        serverProfile: currentServerProfile,
+        sessionProvider: {
+          getSession: fixture.sessionProvider.getSession,
+          onSessionInvalid: () => new Promise<void>(() => undefined),
+        },
+        fetch: fixture.fetch,
+        socketFactory: fixture.socketFactory,
+      });
+      const pending = gateway.subscribe(
+        { conversationId: "42", deadlineAt: Date.now() + 100 },
+        { next: () => undefined },
+      );
+      await vi.advanceTimersByTimeAsync(100);
+      await expect(pending).resolves.toMatchObject({
+        ok: false,
+        error: { code: "timeout" },
+      });
+      expect(() => fixture.socket).toThrow("Socket was not created");
+      gateway.dispose({ deadlineAt: deadline() });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("fails preflight closed when REST history belongs to another conversation", async () => {
     const fixture = createCurrentServerFixture({

@@ -57,6 +57,153 @@ const rawGet = async (
 };
 
 describe("Playground RobotServer proxy", () => {
+  it("adapts legacy creation queries to the Front BFF JSON contract over actual HTTP", async () => {
+    const requests: Array<{
+      path: string;
+      body: string;
+      contentType: string | undefined;
+      method: string | undefined;
+    }> = [];
+    const upstream = createHttpServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const body = Buffer.concat(chunks).toString("utf8");
+      requests.push({
+        path: request.url ?? "",
+        body,
+        contentType: request.headers["content-type"],
+        method: request.method,
+      });
+      const title =
+        body.length > 0 ? (JSON.parse(body).title as string) : undefined;
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(
+        JSON.stringify({ code: 200, data: { conversationId: 42, title } }),
+      );
+    });
+    const upstreamOrigin = await listen(upstream);
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      (
+        input: Parameters<typeof fetch>[0],
+        init: Parameters<typeof fetch>[1],
+      ) => {
+        const url = new URL(
+          input instanceof Request ? input.url : input.toString(),
+        );
+        if (url.origin === "https://fixture.turingfocus.cn") {
+          const actual = new URL(upstreamOrigin);
+          url.protocol = actual.protocol;
+          url.hostname = actual.hostname;
+          url.port = actual.port;
+        }
+        return originalFetch(url, init);
+      },
+    );
+    try {
+      const localVite = await createViteServer({
+        appType: "custom",
+        plugins: [createRobotServerProxyPlugin()],
+        server: { middlewareMode: true },
+      });
+      const localServer = createHttpServer(localVite.middlewares);
+      const origin = await listen(localServer);
+      try {
+        const path = `/__tfrobot_proxy/${encodeURIComponent("https://fixture.turingfocus.cn")}/tfrobot/example-ns/example-robot/v1/chat/conversations`;
+        for (const platform of [undefined, "fixture-platform"]) {
+          const query = new URLSearchParams({
+            title: "[tf-chat-kit playground] retained",
+          });
+          if (platform !== undefined) query.set("platformId", platform);
+          const response = await originalFetch(`${origin}${path}?${query}`, {
+            method: "POST",
+            headers: { Origin: origin, Authorization: "Bearer fixture-only" },
+          });
+          expect(response.status).toBe(200);
+          expect((await response.json()).data.title).toBe(
+            "[tf-chat-kit playground] retained",
+          );
+        }
+        expect(
+          requests.map(({ body, contentType }) => ({
+            body: JSON.parse(body),
+            contentType,
+          })),
+        ).toEqual([
+          {
+            body: { title: "[tf-chat-kit playground] retained" },
+            contentType: "application/json",
+          },
+          {
+            body: {
+              title: "[tf-chat-kit playground] retained",
+              platformId: "fixture-platform",
+            },
+            contentType: "application/json",
+          },
+        ]);
+        expect(
+          requests.every(({ path }) =>
+            path.startsWith(
+              "/c/tfrobot/example-ns/example-robot/api/v1/chat/conversations",
+            ),
+          ),
+        ).toBe(true);
+        const headers = {
+          Origin: origin,
+          Authorization: "Bearer fixture-only",
+          "Content-Type": "application/json",
+        };
+        const renamed = await originalFetch(`${origin}${path}/42`, {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({ title: "Renamed" }),
+        });
+        const deleted = await originalFetch(`${origin}${path}/42`, {
+          method: "DELETE",
+          headers,
+        });
+        expect(renamed.status).toBe(200);
+        expect(deleted.status).toBe(200);
+        expect(requests.slice(2)).toEqual([
+          {
+            method: "PATCH",
+            path: "/c/tfrobot/example-ns/example-robot/api/v1/chat/conversations/42",
+            body: JSON.stringify({ title: "Renamed" }),
+            contentType: "application/json",
+          },
+          {
+            method: "DELETE",
+            path: "/c/tfrobot/example-ns/example-robot/api/v1/chat/conversations/42",
+            body: "",
+            contentType: "application/json",
+          },
+        ]);
+        const rejectedCollection = await originalFetch(`${origin}${path}`, {
+          method: "DELETE",
+          headers,
+        });
+        const rejectedNested = await originalFetch(
+          `${origin}${path}/42/messages`,
+          {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({ title: "Wrong route" }),
+          },
+        );
+        expect(rejectedCollection.status).toBe(405);
+        expect(rejectedNested.status).toBe(405);
+        expect(requests).toHaveLength(4);
+      } finally {
+        await close(localServer);
+        await localVite.close();
+      }
+    } finally {
+      vi.unstubAllGlobals();
+      await close(upstream);
+    }
+  });
   let vite: ViteDevServer | undefined;
   let playgroundServer: Server | undefined;
   let upstreamServer: Server | undefined;
