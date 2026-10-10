@@ -235,11 +235,24 @@ describe("packed artifact policy", () => {
     ["Bearer token", `Bearer ${"a".repeat(24)}`],
     ["credential assignment", 'const token = "real-secret-value";'],
     ["template credential assignment", "const token = `real-secret-value`;"],
+    ["credential assignment inside a comment", "// password: value.password"],
+    [
+      "credential assignment inside a string",
+      'const text = "token: value.token";',
+    ],
+    [
+      "literal in a member expression",
+      'const token = secrets["real-secret-value"];',
+    ],
     [
       "npm auth token assignment",
       "//registry.npmjs.org/:_authToken=super-secret-token-value",
     ],
     ["unquoted credential assignment", "password=real-secret-value"],
+    [
+      "literal in a credential call",
+      'const token = decode("real-secret-value");',
+    ],
     [
       "camelCase access token assignment",
       'const accessToken = "real-production-token-value";',
@@ -257,6 +270,18 @@ describe("packed artifact policy", () => {
     input.extractedFiles[2] = { path: "dist/index.js", content };
 
     expect(validatePackedArtifact(input)).not.toEqual([]);
+  });
+
+  it.each([
+    "export const project = value => ({ token: value.token, password: value.password });",
+    "export const project = input => { const password = input.password; return password; };",
+    "export const project = input => { let token; token = input.session.token; return token; };",
+    'export const project = record => { const token = stringField(record, "token", "access_token"); return token; };',
+    'export const labels = { authorization: "access denied" };',
+  ])("permits runtime projections and ordinary labels: %s", (content) => {
+    const input = validInput();
+    input.extractedFiles[2] = { path: "dist/index.js", content };
+    expect(validatePackedArtifact(input)).toEqual([]);
   });
 
   it("rejects files hidden from pnpm pack output", () => {

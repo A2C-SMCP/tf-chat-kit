@@ -6,6 +6,7 @@ test("session diagnostics remain keyboard accessible, copyable and inside the pa
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto("/");
+  await page.getByRole("button", { name: /进入 Chat Kit/ }).click();
   await expect(page.getByText("欢迎使用本地 Chat Kit 调试台。")).toBeVisible();
   await page.getByRole("button", { name: "服务端错误", exact: true }).click();
   await page.getByRole("button", { name: "服务端错误", exact: true }).click();

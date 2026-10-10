@@ -4,6 +4,7 @@ import { demoReferenceText } from "../../playground/src/capability-scenarios.js"
 const detailSelector = 'aside[aria-label="事件详情"]';
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
+  await page.getByRole("button", { name: /进入 Chat Kit/ }).click();
   await expect(page.getByText("欢迎使用本地 Chat Kit 调试台。")).toBeVisible();
 });
 
@@ -172,7 +173,10 @@ test("long result expansion, persistent selection and mobile detail", async ({
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(390);
-  await page.getByRole("button", { name: "重建实例", exact: true }).click();
+  await page
+    .getByRole("button", { name: "返回 Playground", exact: true })
+    .click();
+  await page.getByRole("button", { name: /进入 Chat Kit/ }).click();
   await expect(page.getByText("欢迎使用本地 Chat Kit 调试台。")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "追加事件", exact: true }),

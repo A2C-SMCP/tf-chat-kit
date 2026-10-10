@@ -10,10 +10,18 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "noEmit": true,
     "paths": {
+      "@turingfocus/chat-auth/headless": [
+        "./packages/chat-auth/src/headless.ts"
+      ],
+      "@turingfocus/chat-auth/tfrobot": ["./packages/chat-auth/src/tfrobot.ts"],
+      "@turingfocus/chat-auth/react": ["./packages/chat-auth/src/react.ts"],
+      "@turingfocus/chat-auth/antd": ["./packages/chat-auth/src/antd.ts"],
       "@turingfocus/chat-gateway-tfrobot": [
         "./packages/chat-gateway-tfrobot/src/index.ts"
       ],
       "@turingfocus/chat-kit": ["./packages/chat-kit/src/index.ts"],
+      "@turingfocus/chat-kit/headless": ["./packages/chat-kit/src/headless.ts"],
+      "@turingfocus/chat-kit/antd": ["./packages/chat-kit/src/antd.ts"],
       "@turingfocus/chat-protocol": ["./packages/chat-protocol/src/index.ts"],
       "@turingfocus/chat-react": ["./packages/chat-react/src/index.ts"],
       "@turingfocus/chat-runtime": ["./packages/chat-runtime/src/index.ts"],

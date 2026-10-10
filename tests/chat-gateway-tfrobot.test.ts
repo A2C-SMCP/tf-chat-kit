@@ -971,6 +971,122 @@ describe("TFRobotChatGateway REST boundary", () => {
     }
   });
 
+  it("retries once with a refreshed session when the credential was rejected", async () => {
+    const issuedTokens = ["stale-token", "fresh-token"];
+    const authorizations: string[] = [];
+    const onSessionInvalid = vi.fn();
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/api/",
+      fetch: vi.fn(
+        async (
+          _input: Parameters<typeof globalThis.fetch>[0],
+          init?: Parameters<typeof globalThis.fetch>[1],
+        ) => {
+          const authorization =
+            new Headers(init?.headers).get("Authorization") ?? "";
+          authorizations.push(authorization);
+          if (authorization === "Bearer stale-token") {
+            return new Response(JSON.stringify({ detail: "expired" }), {
+              status: 401,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          return envelope({ conversations: [conversationDto], cursor: null });
+        },
+      ),
+      messageCreatorProvider,
+      sessionProvider: {
+        getSession: () => ({
+          kind: "bearer" as const,
+          token: issuedTokens.shift() ?? "fresh-token",
+        }),
+        onSessionInvalid,
+      },
+    });
+    try {
+      await expect(
+        gateway.listConversations({ deadlineAt: deadline() }),
+      ).resolves.toMatchObject({
+        ok: true,
+        value: { conversations: [{ id: "42" }] },
+      });
+      expect(authorizations).toEqual([
+        "Bearer stale-token",
+        "Bearer fresh-token",
+      ]);
+      expect(onSessionInvalid).toHaveBeenCalledOnce();
+    } finally {
+      await gateway.dispose({ deadlineAt: deadline() });
+    }
+  });
+
+  it("stops after one retry when the refreshed credential is rejected too", async () => {
+    const authorizations: string[] = [];
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/api/",
+      fetch: vi.fn(
+        async (
+          _input: Parameters<typeof globalThis.fetch>[0],
+          init?: Parameters<typeof globalThis.fetch>[1],
+        ) => {
+          authorizations.push(
+            new Headers(init?.headers).get("Authorization") ?? "",
+          );
+          return new Response(JSON.stringify({ detail: "unauthorized" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+      ),
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+    });
+    try {
+      await expect(
+        gateway.listConversations({ deadlineAt: deadline() }),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { code: "authentication" },
+      });
+      expect(authorizations).toHaveLength(2);
+      expect(new Set(authorizations).size).toBe(1);
+    } finally {
+      await gateway.dispose({ deadlineAt: deadline() });
+    }
+  });
+
+  it("invokes a host-provided fetch without a foreign receiver", async () => {
+    // Hosts may hand their own transport to the gateway. Browsers brand-check
+    // `fetch`, so the gateway must not turn that reference into an instance
+    // method of the HTTP client, which would throw "Illegal invocation" in a
+    // real browser even though Node accepts any receiver.
+    const hostFetch = vi.fn(function (this: typeof globalThis | undefined) {
+      if (this !== undefined && this !== globalThis) {
+        throw new TypeError("Failed to execute 'fetch': Illegal invocation");
+      }
+      return Promise.resolve(
+        envelope({ conversations: [conversationDto], cursor: null }),
+      );
+    });
+    const gateway = createTFRobotChatGateway({
+      baseUrl: "https://robot.example/api/",
+      fetch: hostFetch as unknown as typeof globalThis.fetch,
+      messageCreatorProvider,
+      sessionProvider: sessionProvider(),
+    });
+    try {
+      await expect(
+        gateway.listConversations({ deadlineAt: deadline() }),
+      ).resolves.toMatchObject({
+        ok: true,
+        value: { conversations: [{ id: "42" }] },
+      });
+      expect(hostFetch).toHaveBeenCalledOnce();
+    } finally {
+      await gateway.dispose({ deadlineAt: deadline() });
+    }
+  });
+
   it.each([
     {
       credentialHeader: "Authorization",
@@ -2749,7 +2865,10 @@ describe("TFRobotChatGateway current-server profile", () => {
     "fails preflight closed for HTTP %i",
     async (status, expectedCode) => {
       const fixture = createCurrentServerFixture({
-        status: [new Response("failure", { status })],
+        status: [
+          new Response("failure", { status }),
+          new Response("failure", { status }),
+        ],
       });
       const gateway = createTFRobotChatGateway({
         baseUrl: "https://robot.example/",
@@ -2773,6 +2892,39 @@ describe("TFRobotChatGateway current-server profile", () => {
       gateway.dispose({ deadlineAt: deadline() });
     },
   );
+
+  it("bounds asynchronous invalidation during pinned-session preflight", async () => {
+    vi.useFakeTimers();
+    try {
+      const fixture = createCurrentServerFixture({
+        status: [new Response("Unauthorized", { status: 401 })],
+      });
+      const gateway = createTFRobotChatGateway({
+        baseUrl: "https://robot.example/",
+        messageCreatorProvider,
+        serverProfile: currentServerProfile,
+        sessionProvider: {
+          getSession: fixture.sessionProvider.getSession,
+          onSessionInvalid: () => new Promise<void>(() => undefined),
+        },
+        fetch: fixture.fetch,
+        socketFactory: fixture.socketFactory,
+      });
+      const pending = gateway.subscribe(
+        { conversationId: "42", deadlineAt: Date.now() + 100 },
+        { next: () => undefined },
+      );
+      await vi.advanceTimersByTimeAsync(100);
+      await expect(pending).resolves.toMatchObject({
+        ok: false,
+        error: { code: "timeout" },
+      });
+      expect(() => fixture.socket).toThrow("Socket was not created");
+      gateway.dispose({ deadlineAt: deadline() });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("fails preflight closed when REST history belongs to another conversation", async () => {
     const fixture = createCurrentServerFixture({

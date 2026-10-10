@@ -11,13 +11,19 @@ import {
   registryVersions,
   readRegistryPackage,
   RELEASE_CHANNELS,
-  RELEASE_PACKAGE_NAMES,
   RELEASE_REGISTRY,
 } from "./release-policy.mjs";
 import {
   isPrereleaseVersion,
   isZeroMajorVersion,
 } from "./workspace-policy.mjs";
+
+import {
+  releaseGroup,
+  releaseSourceTag,
+  validateReleaseGroup,
+  registryConsumerPackages,
+} from "./release-group-policy.mjs";
 
 export const BOOTSTRAP_FACADE_PACKAGE = "@turingfocus/chat-kit";
 export const REGISTRY_RECONCILIATION_DELAYS_MS = Object.freeze([
@@ -41,6 +47,8 @@ export const REGISTRY_RECONCILIATION_DELAYS_MS = Object.freeze([
  *   tag: string;
  *   commit: string;
  *   packages: ReleasePackage[];
+ *   releaseGroup?: import("./release-group-policy.mjs").ReleaseGroup;
+ *   consumerPackages?: { name: string; version: string }[];
  * }} ReleaseManifest
  */
 
@@ -55,7 +63,8 @@ export function validateReleaseManifestForPublish(value) {
     !isZeroMajorVersion(manifest["version"]) ||
     typeof manifest["channel"] !== "string" ||
     !RELEASE_CHANNELS.includes(manifest["channel"]) ||
-    manifest["tag"] !== `v${manifest["version"]}` ||
+    manifest["tag"] !==
+      releaseSourceTag(manifest["releaseGroup"], manifest["version"]) ||
     typeof manifest["commit"] !== "string" ||
     !/^[0-9a-f]{40}$/u.test(manifest["commit"]) ||
     !Array.isArray(manifest["packages"])
@@ -73,12 +82,16 @@ export function validateReleaseManifestForPublish(value) {
     );
   }
   const packages = /** @type {ReleasePackage[]} */ (manifest["packages"]);
+  validateReleaseGroup(
+    packages,
+    releaseGroup(manifest["releaseGroup"]),
+    manifest["version"],
+    manifest["channel"],
+  );
+  registryConsumerPackages(/** @type {ReleaseManifest} */ (value));
   if (
-    JSON.stringify(packages.map(({ name }) => name)) !==
-      JSON.stringify(RELEASE_PACKAGE_NAMES) ||
     packages.some(
-      ({ version, tarball, integrity, size }) =>
-        version !== manifest["version"] ||
+      ({ tarball, integrity, size }) =>
         path.basename(tarball) !== tarball ||
         !/^[a-z0-9][a-z0-9._-]*\.tgz$/u.test(tarball) ||
         !/^sha512-[A-Za-z0-9+/]+={0,2}$/u.test(integrity) ||
@@ -87,7 +100,7 @@ export function validateReleaseManifestForPublish(value) {
     )
   ) {
     throw new Error(
-      "release manifest must contain the complete fixed package group with safe immutable artifacts at one version.",
+      "release manifest must contain the complete selected package group with safe immutable artifacts.",
     );
   }
   return /** @type {ReleaseManifest} */ (value);

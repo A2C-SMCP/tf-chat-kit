@@ -1,4 +1,5 @@
 import { TextDecoder } from "node:util";
+import ts from "typescript";
 
 import { validateFacadeEntryIsolation } from "./facade-entry-policy.mjs";
 
@@ -34,6 +35,97 @@ const sensitiveAssignment =
   /(?:^|[^A-Za-z0-9_])(_authToken|npmAuthToken|access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|admin[_-]?key|_auth|_password|token|api[_-]?key|secret|password|cookie|authorization)\s*[:=]\s*(?:(["'`])([^"'`\s]{8,})\2|([^\s,"'`;\]]{8,}))/gimu;
 const documentedPlaceholder =
   /^(?:<[^>]+>|\$\{[^}]+\}|example|placeholder|redacted|changeme|not-a-real-|dummy)/iu;
+const credentialFieldName =
+  /^(?:_authToken|npmAuthToken|access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|admin[_-]?key|_auth|_password|token|api[_-]?key|secret|password|cookie|authorization)$/iu;
+
+/**
+ * Source field projections are references, not embedded credential values.
+ * Only AST-confirmed references or calls with references/field-name arguments
+ * qualify. Comments, strings, config text and credential literals keep checks.
+ * @param {string} filePath
+ * @param {string} text
+ * @returns {{references: Map<number, number>, embedded: Set<string>}}
+ */
+const sourceReferenceSpans = (filePath, text) => {
+  const spans = new Map();
+  const embedded = new Set();
+  if (!/\.[cm]?[jt]sx?$/u.test(filePath))
+    return { references: spans, embedded };
+  const source = ts.createSourceFile(
+    filePath,
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  /** @param {import("typescript").Expression} node
+   * @returns {boolean}
+   */
+  const memberReference = (node) =>
+    ts.isPropertyAccessExpression(node) &&
+    (ts.isIdentifier(node.expression) || memberReference(node.expression));
+  /** @param {import("typescript").Expression} node */
+  const runtimeReference = (node) =>
+    memberReference(node) ||
+    (ts.isCallExpression(node) &&
+      (ts.isIdentifier(node.expression) || memberReference(node.expression)) &&
+      node.arguments.every(
+        (argument) =>
+          ts.isIdentifier(argument) ||
+          memberReference(argument) ||
+          (ts.isStringLiteral(argument) &&
+            /^(?:token|access_token|accessToken|refresh_token|refreshToken|password|secret|authorization|cookie)$/u.test(
+              argument.text,
+            )),
+      ));
+  /** @param {import("typescript").Node} node */
+  const visit = (node) => {
+    const value =
+      ts.isPropertyAssignment(node) || ts.isVariableDeclaration(node)
+        ? node.initializer
+        : ts.isBinaryExpression(node) &&
+            node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+          ? node.right
+          : undefined;
+    if (value !== undefined && runtimeReference(value))
+      spans.set(value.getStart(source), value.getEnd());
+    const field =
+      ts.isPropertyAssignment(node) || ts.isVariableDeclaration(node)
+        ? node.name
+        : ts.isBinaryExpression(node)
+          ? node.left
+          : undefined;
+    const name =
+      field !== undefined &&
+      (ts.isIdentifier(field) || ts.isStringLiteral(field))
+        ? field.text
+        : field !== undefined && ts.isPropertyAccessExpression(field)
+          ? field.name.text
+          : undefined;
+    if (
+      value !== undefined &&
+      name !== undefined &&
+      credentialFieldName.test(name) &&
+      (ts.isCallExpression(value) || ts.isElementAccessExpression(value))
+    ) {
+      /** @param {import("typescript").Node} child */
+      const inspectLiteral = (child) => {
+        if (
+          (ts.isStringLiteral(child) ||
+            ts.isNoSubstitutionTemplateLiteral(child)) &&
+          child.text.length >= 8 &&
+          !documentedPlaceholder.test(child.text) &&
+          !credentialFieldName.test(child.text)
+        )
+          embedded.add(name);
+        ts.forEachChild(child, inspectLiteral);
+      };
+      inspectLiteral(value);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return { references: spans, embedded };
+};
 
 const utf8Decoder = new TextDecoder("utf-8");
 const utf16LittleEndianDecoder = new TextDecoder("utf-16le");
@@ -171,6 +263,11 @@ export function validatePackedArtifact({
     }
     const fileErrors = new Set();
     for (const text of textViews) {
+      const { references, embedded } = sourceReferenceSpans(file.path, text);
+      for (const field of embedded)
+        fileErrors.add(
+          `${packageName}: ${file.path} contains a credential-like ${field} assignment`,
+        );
       for (const { label, pattern } of forbiddenArtifactText) {
         if (pattern.test(text)) {
           fileErrors.add(
@@ -180,6 +277,12 @@ export function validatePackedArtifact({
       }
       for (const match of text.matchAll(sensitiveAssignment)) {
         const value = match[3] ?? match[4] ?? "";
+        const start = match.index + match[0].lastIndexOf(value);
+        if (
+          match[2] === undefined &&
+          (references.get(start) ?? -1) >= start + value.length
+        )
+          continue;
         if (!documentedPlaceholder.test(value)) {
           fileErrors.add(
             `${packageName}: ${file.path} contains a credential-like ${match[1] ?? "secret"} assignment`,

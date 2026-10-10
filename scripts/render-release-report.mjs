@@ -74,19 +74,26 @@ export function renderReleaseIncident(manifest, progress) {
             : `\`${String(value)}\``;
       return `- \`${name}\`: ${String(state)}; before=${formatTag(before)}; current=${formatTag(current)}`;
     });
-  const targetVersion = String(manifest["version"]);
+  const packages = Array.isArray(manifest["packages"])
+    ? manifest["packages"].map(requireObject)
+    : [];
+  const targetVersions = new Map(
+    packages.map((entry) => [String(entry["name"]), String(entry["version"])]),
+  );
+  const targetVersionFor = (/** @type {string} */ name) =>
+    targetVersions.get(name) ?? String(manifest["version"]);
   const channel = String(manifest["channel"]);
   const packagesAtTargetTag = Object.keys(states).filter(
-    (name) => currentTags[name] === targetVersion,
+    (name) => currentTags[name] === targetVersionFor(name),
   );
   const packagesWithUnknownCurrentTag = Object.keys(states).filter(
     (name) => !(name in currentTags),
   );
   const recoveryCommands = Object.keys(states).flatMap((name) => {
-    if (currentTags[name] !== targetVersion) return [];
+    if (currentTags[name] !== targetVersionFor(name)) return [];
     if (!(name in beforeTags)) return [];
     const before = beforeTags[name];
-    if (before === targetVersion) return [];
+    if (before === targetVersionFor(name)) return [];
     return before !== null
       ? [`- \`npm dist-tag add ${name}@${String(before)} ${channel}\``]
       : [`- \`npm dist-tag rm ${name} ${channel}\``];

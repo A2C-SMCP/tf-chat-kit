@@ -899,9 +899,10 @@ export const mapSnapshot = (
   conversation: Conversation,
   history: HistoryDto,
   status: StatusDto,
+  messageMapper: (dto: MessageDto) => Message = mapMessage,
 ): ChatSnapshot => {
   const timeline = [
-    ...(history.messages ?? []).map(mapMessage),
+    ...(history.messages ?? []).map(messageMapper),
     ...mergeEvents((history.events ?? []).map(mapEvent)),
   ].sort(compareTimelineItems);
   return chatSnapshotSchema.parse({
@@ -918,11 +919,14 @@ export const mapSnapshot = (
   });
 };
 
-export const mapMessageUpdate = (dto: MessageDto): ChatUpdate =>
+export const mapMessageUpdate = (
+  dto: MessageDto,
+  messageMapper: (dto: MessageDto) => Message = mapMessage,
+): ChatUpdate =>
   chatUpdateSchema.parse({
     kind: "timeline.upsert",
     conversationId: asId(dto.conversationId),
-    item: mapMessage(dto),
+    item: messageMapper(dto),
   });
 
 export const mapEventUpdate = (dto: EventDto): ChatUpdate => {

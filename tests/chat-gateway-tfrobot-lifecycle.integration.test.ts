@@ -15,6 +15,104 @@ describe("TFRobot Gateway real Socket.IO lifecycle", () => {
     await Promise.allSettled(cleanups.splice(0).map((cleanup) => cleanup()));
   });
 
+  it.each([401, 403, 200])(
+    "retries current-server subscription preflight once after a 401 (second status %i)",
+    async (secondStatus) => {
+      const requestTokens: Array<string | undefined> = [];
+      const handshakeTokens: unknown[] = [];
+      let statusRequests = 0;
+      let token = "rejected-session";
+      const httpServer = createServer((request, response) => {
+        requestTokens.push(request.headers.authorization);
+        const isStatus = request.url?.endsWith("/status");
+        const status = isStatus
+          ? ++statusRequests === 1
+            ? 401
+            : secondStatus
+          : 200;
+        response.writeHead(status, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            code: status,
+            message: status === 200 ? "Success" : "Authentication failed",
+            data: isStatus
+              ? { working: false, taskId: null }
+              : { messages: [], events: [] },
+          }),
+        );
+      });
+      const socketServer = new SocketIoServer(httpServer, {
+        transports: ["websocket"],
+      });
+      socketServer.of("/chat").on("connection", (socket) => {
+        handshakeTokens.push(socket.handshake.auth["token"]);
+        socket.on("join_conversation", (_payload, acknowledge) =>
+          acknowledge(),
+        );
+      });
+      await new Promise<void>((resolve) =>
+        httpServer.listen(0, "127.0.0.1", resolve),
+      );
+      const address = httpServer.address();
+      if (address === null || typeof address === "string")
+        throw new Error("Missing TCP port");
+      const origin = `http://127.0.0.1:${address.port}`;
+      const onSessionInvalid = vi.fn(async () => {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        token = "refreshed-session";
+      });
+      const updates: ChatUpdate[] = [];
+      const gateway = createTFRobotChatGateway({
+        baseUrl: origin,
+        socketNamespaceUrl: `${origin}/chat`,
+        serverProfile: { kind: "current-server" },
+        messageCreatorProvider: () => ({ uid: "user-1", name: "User" }),
+        sessionProvider: {
+          getSession: () => ({ kind: "bearer", token }),
+          onSessionInvalid,
+        },
+      });
+      cleanups.push(async () => {
+        await gateway.dispose({ deadlineAt: deadlineAt() });
+        await new Promise<void>((resolve) =>
+          socketServer.close(() => resolve()),
+        );
+        if (httpServer.listening)
+          await new Promise<void>((resolve) =>
+            httpServer.close(() => resolve()),
+          );
+      });
+      const result = await gateway.subscribe(
+        { conversationId: "42", deadlineAt: deadlineAt() },
+        { next: (update) => updates.push(update) },
+      );
+      expect(statusRequests).toBe(2);
+      expect(requestTokens.slice(0, 2)).toEqual([
+        "Bearer rejected-session",
+        "Bearer refreshed-session",
+      ]);
+      if (secondStatus === 200) {
+        expect(result.ok).toBe(true);
+        expect(handshakeTokens).toEqual(["refreshed-session"]);
+        expect(updates.at(-1)).toMatchObject({
+          kind: "lifecycle.changed",
+          lifecycle: { status: "degraded" },
+        });
+        expect(updates.some((update) => update.kind === "error.reported")).toBe(
+          false,
+        );
+      } else {
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            code: secondStatus === 401 ? "authentication" : "authorization",
+          },
+        });
+        expect(handshakeTokens).toEqual([]);
+      }
+    },
+  );
+
   it("acknowledges join, refreshes a server-forced disconnect, and verifies recovery", async () => {
     const httpServer = createServer();
     const socketServer = new SocketIoServer(httpServer, {

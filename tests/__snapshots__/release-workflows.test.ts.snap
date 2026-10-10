@@ -129,12 +129,20 @@ corepack prepare pnpm@10.34.5 --activate
         },
         {
           "env": {
+            "CONSUMER_AUTH_VERSION": "\${{ inputs.consumer-auth-version }}",
+            "CONSUMER_CORE_VERSION": "\${{ inputs.consumer-core-version }}",
+            "EXPECTED_AUTH_VERSION": "\${{ inputs.expected-auth-version }}",
             "EXPECTED_VERSION": "\${{ inputs.expected-version }}",
             "RELEASE_CHANNEL": "\${{ inputs.channel }}",
+            "RELEASE_GROUP": "\${{ inputs.group }}",
           },
           "id": "manifest",
           "name": "Build the immutable release manifest",
           "run": "node scripts/create-release-manifest.mjs \\
+  --consumer-core-version "\${CONSUMER_CORE_VERSION}" \\
+  --consumer-auth-version "\${CONSUMER_AUTH_VERSION}" \\
+  --group "\${RELEASE_GROUP}" \\
+  --expected-auth-version "\${EXPECTED_AUTH_VERSION}" \\
   --channel "\${RELEASE_CHANNEL}" \\
   --commit "\${GITHUB_SHA}" \\
   --run-url "\${GITHUB_SERVER_URL}/\${GITHUB_REPOSITORY}/actions/runs/\${GITHUB_RUN_ID}" \\
@@ -142,7 +150,8 @@ corepack prepare pnpm@10.34.5 --activate
   --output .artifacts/release/release-manifest.json
 version="$(node -p "JSON.parse(require('node:fs').readFileSync('.artifacts/release/release-manifest.json', 'utf8')).version")"
 echo "version=\${version}" >> "\${GITHUB_OUTPUT}"
-echo "tag=v\${version}" >> "\${GITHUB_OUTPUT}"
+tag="$(node -p "JSON.parse(require('node:fs').readFileSync('.artifacts/release/release-manifest.json', 'utf8')).tag")"
+echo "tag=\${tag}" >> "\${GITHUB_OUTPUT}"
 ",
         },
         {
@@ -210,7 +219,7 @@ fi
         {
           "id": "registry_consumers",
           "name": "Verify unauthenticated Registry consumers",
-          "run": "node scripts/verify-packed-artifacts.mjs --source registry --version "\${{ steps.manifest.outputs.version }}"",
+          "run": "node scripts/verify-packed-artifacts.mjs --source registry --manifest .artifacts/release/release-manifest.json",
         },
         {
           "id": "release_notes",
@@ -228,10 +237,11 @@ fi
           },
           "id": "github_release",
           "name": "Create or reconcile the GitHub Release after Registry verification",
-          "run": "if gh release view "\${RELEASE_TAG}" --repo "\${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+          "run": "mapfile -t package_assets < <(node --input-type=module -e 'import fs from "node:fs"; const m = JSON.parse(fs.readFileSync(".artifacts/release/release-manifest.json", "utf8")); for (const p of m.packages) console.log(\`.artifacts/packages/\${p.tarball}\`);')
+if gh release view "\${RELEASE_TAG}" --repo "\${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
   reconcile_dir="\${RUNNER_TEMP}/tf-chat-kit-release-reconcile"
   mkdir -p "\${reconcile_dir}"
-  for asset in .artifacts/release/release-manifest.json .artifacts/packages/*.tgz; do
+  for asset in .artifacts/release/release-manifest.json "\${package_assets[@]}"; do
     asset_name="$(basename "\${asset}")"
     if gh release view "\${RELEASE_TAG}" \\
       --repo "\${GITHUB_REPOSITORY}" \\
@@ -261,7 +271,7 @@ else
     --title "tf-chat-kit \${RELEASE_TAG}" \\
     --notes-file .artifacts/release/release-notes.md \\
     .artifacts/release/release-manifest.json \\
-    .artifacts/packages/*.tgz
+    "\${package_assets[@]}"
 fi
 ",
         },
@@ -355,10 +365,36 @@ fi
           "required": true,
           "type": "choice",
         },
+        "consumer-auth-version": {
+          "description": "Optional already-published auth version for core-only consumers",
+          "required": false,
+          "type": "string",
+        },
+        "consumer-core-version": {
+          "description": "Optional already-published core version for auth-only consumers",
+          "required": false,
+          "type": "string",
+        },
+        "expected-auth-version": {
+          "description": "Exact independent auth version (required for group all)",
+          "required": false,
+          "type": "string",
+        },
         "expected-version": {
-          "description": "Exact unified 0.x package version on main",
+          "description": "Exact core version for all/core, or auth version for auth",
           "required": true,
           "type": "string",
+        },
+        "group": {
+          "default": "all",
+          "description": "Publish the fixed core group, independent auth, or both",
+          "options": [
+            "all",
+            "core",
+            "auth",
+          ],
+          "required": true,
+          "type": "choice",
         },
       },
     },

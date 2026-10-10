@@ -152,6 +152,10 @@ describe("TFCK-13 release workflows", () => {
     expect(objectField(manifest, "env")).toEqual({
       RELEASE_CHANNEL: "${{ inputs.channel }}",
       EXPECTED_VERSION: "${{ inputs.expected-version }}",
+      RELEASE_GROUP: "${{ inputs.group }}",
+      EXPECTED_AUTH_VERSION: "${{ inputs.expected-auth-version }}",
+      CONSUMER_CORE_VERSION: "${{ inputs.consumer-core-version }}",
+      CONSUMER_AUTH_VERSION: "${{ inputs.consumer-auth-version }}",
     });
     expect(manifest["run"]).not.toContain("${{ inputs.");
     expect(bootstrapConfig["if"]).toBe(

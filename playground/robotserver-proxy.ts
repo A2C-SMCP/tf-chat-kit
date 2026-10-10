@@ -21,9 +21,12 @@ const LOGIN_PATH = "/v1/auth/login";
 
 interface ProxyTarget {
   readonly kind: "chat" | "login";
+  readonly frontendBff: boolean;
   readonly namespace: string;
   readonly robotId: string;
-  readonly robotType: "tfrobot";
+  readonly robotType: string;
+  readonly routingHeaders: Readonly<Record<string, string>>;
+  readonly routePath: string;
   readonly upstreamUrl: URL;
 }
 
@@ -73,11 +76,16 @@ const isAllowedUpstream = (url: URL): boolean => {
   if (allowedOrigins().has(url.origin)) return true;
   return (
     url.protocol === "https:" &&
-    (url.hostname === "api.turingfocus.cn" ||
-      (url.hostname.startsWith("api.") &&
-        url.hostname.endsWith(".turingfocus.cn")))
+    (url.hostname === "turingfocus.cn" ||
+      url.hostname.endsWith(".turingfocus.cn"))
   );
 };
+
+const isFrontendBffOrigin = (url: URL): boolean =>
+  (url.hostname === "turingfocus.cn" ||
+    url.hostname.endsWith(".turingfocus.cn")) &&
+  !url.hostname.startsWith("api.") &&
+  !url.hostname.startsWith("api-");
 
 const parseTarget = (requestUrl: string): ProxyTarget | undefined => {
   const queryIndex = requestUrl.indexOf("?");
@@ -86,7 +94,9 @@ const parseTarget = (requestUrl: string): ProxyTarget | undefined => {
   const prefix = `${ROBOTSERVER_PROXY_PREFIX}/`;
   if (!rawPathname.startsWith(prefix)) return undefined;
   const rawParts = rawPathname.slice(prefix.length).split("/");
-  if (/%(?:2e|2f|5c)/iu.test(rawParts.slice(4).join("/"))) {
+  const rawTail = rawParts.slice(4);
+  const rawPathTail = rawTail[0] === "headers" ? rawTail.slice(2) : rawTail;
+  if (/%(?:2e|2f|5c)/iu.test(rawPathTail.join("/"))) {
     return undefined;
   }
   const url = new URL(requestUrl, "http://playground.invalid");
@@ -95,7 +105,7 @@ const parseTarget = (requestUrl: string): ProxyTarget | undefined => {
   const [encodedOrigin, robotType, namespace, robotId, ...rest] = parts;
   if (
     encodedOrigin === undefined ||
-    robotType !== "tfrobot" ||
+    !ROUTING_SEGMENT.test(robotType ?? "") ||
     !ROUTING_SEGMENT.test(namespace ?? "") ||
     !ROUTING_SEGMENT.test(robotId ?? "")
   ) {
@@ -115,23 +125,61 @@ const parseTarget = (requestUrl: string): ProxyTarget | undefined => {
     return undefined;
   }
 
-  const pathname = `/${rest.join("/")}`;
+  let routeHeaders: Readonly<Record<string, string>> = {};
+  let pathParts = rest;
+  if (pathParts[0] === "headers") {
+    const encodedHeaders = pathParts[1];
+    if (encodedHeaders === undefined) return undefined;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(decodeURIComponent(encodedHeaders)) as unknown;
+    } catch {
+      return undefined;
+    }
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed)
+    ) {
+      return undefined;
+    }
+    const entries = Object.entries(parsed as Record<string, unknown>);
+    if (
+      entries.some(
+        ([name, value]) =>
+          !/^x-tf-[a-z0-9-]+$/iu.test(name) ||
+          typeof value !== "string" ||
+          value.length === 0 ||
+          value.length > 512 ||
+          /[\r\n]/u.test(value),
+      )
+    ) {
+      return undefined;
+    }
+    routeHeaders = Object.fromEntries(entries as Array<[string, string]>);
+    pathParts = pathParts.slice(2);
+  }
+  const pathname = `/${pathParts.join("/")}`;
   const kind =
     pathname === LOGIN_PATH && url.search.length === 0 ? "login" : "chat";
   if (kind === "chat" && !CHAT_PATH.test(pathname)) return undefined;
-  const upstreamUrl = new URL(pathname, upstreamOrigin);
-  if (
-    (kind === "chat" && !CHAT_PATH.test(upstreamUrl.pathname)) ||
-    (kind === "login" && upstreamUrl.pathname !== LOGIN_PATH)
-  ) {
+  const frontendBff = kind === "chat" && isFrontendBffOrigin(upstreamOrigin);
+  const upstreamPath = frontendBff
+    ? `/c/${robotType}/${namespace}/${robotId}/api${pathname}`
+    : pathname;
+  const upstreamUrl = new URL(upstreamPath, upstreamOrigin);
+  if (kind === "login" && upstreamUrl.pathname !== LOGIN_PATH) {
     return undefined;
   }
   upstreamUrl.search = url.search;
   return {
     kind,
+    frontendBff,
     namespace: namespace!,
     robotId: robotId!,
-    robotType,
+    robotType: robotType!,
+    routingHeaders: routeHeaders,
+    routePath: pathname,
     upstreamUrl,
   };
 };
@@ -339,14 +387,47 @@ const proxyRequest = async (
     "X-TF-RobotId": target.robotId,
     "X-TF-RobotType": target.robotType,
   });
-  if (target.kind === "chat" && authorization !== undefined) {
+  for (const [name, value] of Object.entries(target.routingHeaders)) {
+    headers.set(name, value);
+  }
+  if (
+    target.kind === "chat" &&
+    target.frontendBff &&
+    authorization !== undefined
+  ) {
+    headers.set(
+      "Cookie",
+      `tfNamespace=${target.namespace}; tfRobotId=${target.robotId}; tfUserToken=${authorization.slice("Bearer ".length)}`,
+    );
+  } else if (target.kind === "chat" && authorization !== undefined) {
     headers.set("Authorization", authorization);
   }
-  if (target.kind === "chat" && adminKey !== undefined) {
+  if (target.kind === "chat" && !target.frontendBff && adminKey !== undefined) {
     headers.set("admin_key", adminKey);
   }
   const contentType = request.headers["content-type"];
   if (contentType !== undefined) headers.set("Content-Type", contentType);
+
+  // The deployed Front BFF reads creation fields from JSON, whereas the direct
+  // legacy Server gateway sends query parameters. Adapt only this host route.
+  if (
+    target.frontendBff &&
+    request.method === "POST" &&
+    /\/api\/v1\/chat\/conversations\/?$/u.test(target.upstreamUrl.pathname) &&
+    body?.byteLength === 0
+  ) {
+    const title = target.upstreamUrl.searchParams.get("title");
+    const platformId = target.upstreamUrl.searchParams.get("platformId");
+    if (title !== null) {
+      body = Buffer.from(
+        JSON.stringify({
+          title,
+          ...(platformId === null ? {} : { platformId }),
+        }),
+      );
+      headers.set("Content-Type", "application/json");
+    }
+  }
 
   const controller = new AbortController();
   const abortUpstream = (): void => controller.abort();
@@ -426,7 +507,7 @@ export const createRobotServerProxyPlugin = (
           : request.method === "GET" ||
             request.method === "POST" ||
             ((request.method === "DELETE" || request.method === "PATCH") &&
-              CONVERSATION_ITEM_PATH.test(target.upstreamUrl.pathname));
+              CONVERSATION_ITEM_PATH.test(target.routePath));
       if (!methodAllowed) {
         sendJson(response, 405, "该 RobotServer 代理请求方法不受支持。");
         return;
