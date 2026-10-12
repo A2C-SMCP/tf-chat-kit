@@ -28,7 +28,7 @@ employeeId、robotId、robotAccountId 不互换。目录只有 running + tfrserv
 目录快照按身份取消并清空；响应校验错误不能冒充空目录。
 
 仅接受明确列举的相对路径、旧完整 namespace 路径和新 domain-alias 完整路径。
-REST 部署策略独立声明为 routed-api、direct 或显式 BFF baseUrl，不通过 Socket 后缀猜测。
+REST 部署策略独立声明为 routed-server、routed-api、direct 或显式 BFF baseUrl，不通过 Socket 后缀猜测。
 宿主配置 origin 白名单或信任函数；默认没有 vendor 域名信任。BFF 必须支持换票后的
 Bearer REST 凭据；Socket 使用 auth.token，浏览器不依赖自定义 WebSocket Header。
 cookie-only BFF、未确认的其他部署路径需要新的契约，不能自动兼容。
@@ -44,3 +44,14 @@ Token 在每个 Provider 私有内存内按需单飞换取，提前 30 秒失效
 消费者形成可重复门禁。它们不代表 Production Word、生产 issuer/audience 或任意 BFF
 已通过。新 domain-alias 连接信息来自本地 Manager 代码的明确 DTO/路由生成器；
 生产 `/socket.io/` 观察来源为 #111。生产服务部署差异应单独验收。
+
+## 2026-10-12：Word 浏览器直连修正（#116）
+
+新增 `routed-server`，REST 使用实例前缀加 Server `/v1/chat`，入口负责去前缀，
+OPTIONS 与业务请求到达同一 Server。保留旧 `routed-api` 的 `/api` 布局避免破坏已有
+兼容 Bearer 的 BFF。两者不是凭据转换开关。Playground Manager 与独立宿主采用同一
+公共直连策略，移除该模式下的私有代理和 Cookie/请求体转换。
+
+正式旧入口目前只将实例前缀下的 Socket 转给 Server，REST 落入 Front。配套修复仅将
+`/v1/chat` 家族交给 Server，保留 `/api`、Front 页面和其他旧路由。Server 自身负责
+跨域 Origin/方法/Header 策略及 JWT/scope 校验，网关不伪造认证也不全局放开 CORS。

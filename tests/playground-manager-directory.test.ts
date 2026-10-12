@@ -23,6 +23,19 @@ const policy = {
   http: { kind: "routed-api" as const },
 };
 describe("public Manager directory and routing", () => {
+  it.each([
+    ["/socket.io/", "/c/tfrobot/tenant-a/robot-41"],
+    ["/c/tfrobot/tenant-a/robot-41/socket.io/", "/c/tfrobot/tenant-a/robot-41"],
+    ["/c/tfrobot/robot-41/socket.io/", "/c/tfrobot/robot-41"],
+  ])("routes browser REST directly to Server for %s", (sioPath, prefix) => {
+    const target = resolveManagerTarget(
+      parseManagerConnectionInfo({ ...info, sioPath }),
+      { robotId: "robot-41" },
+      { ...policy, http: { kind: "routed-server" } },
+    );
+    expect(target.baseUrl).toBe(`https://robot.example${prefix}`);
+    expect(target.socketPath).toBe(`${prefix}/socket.io/`);
+  });
   it("keeps employee, robot and account identities separate, deduplicating directory rows", () => {
     const parsed = parseManagerRobots({
       data: { items: [robot, robot, { id: 42 }] },

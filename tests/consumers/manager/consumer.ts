@@ -19,7 +19,8 @@ export const runManagerConsumerVerification = async (
       format === "legacy"
         ? "/c/tfrobot/tenant/robot-a/socket.io/"
         : "/c/tfrobot/robot-a/socket.io/";
-    const chatPrefix = host === "web" ? "/api" : "";
+    const chatPrefix =
+      host === "web" ? "/api" : socketPath.replace(/\/socket\.io\/$/u, "");
     const wire: string[] = [],
       handshakes: string[] = [];
     let origin = "",
@@ -167,7 +168,7 @@ export const runManagerConsumerVerification = async (
         http:
           host === "web"
             ? { kind: "bff", baseUrl: `${origin}/api` }
-            : { kind: "direct" },
+            : { kind: "routed-server" },
       },
     });
     const controller = createManagerChatController<ManagerRobot>({

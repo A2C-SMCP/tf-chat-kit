@@ -301,6 +301,13 @@ test("真实用户模式的 Token Exchange 走浏览器 fetch 并建立当前机
   await expect(page.getByText("运行中", { exact: true })).toBeHidden();
   expect(conversationRequests.length).toBeGreaterThanOrEqual(2);
   expect(
+    conversationRequests.every(
+      (url) =>
+        url.origin === ROBOTSERVER &&
+        url.pathname === "/c/tfrobot/e2e-ns/e2e-robot/v1/chat/conversations",
+    ),
+  ).toBe(true);
+  expect(
     conversationRequests.every((url) => !url.searchParams.has("platformId")),
   ).toBe(true);
   const beforeLogout = await stateOf(request);
