@@ -248,6 +248,8 @@ const ROOT_SCRIPT_POLICY = Object.freeze({
   preinstall: "node scripts/check-node-version.mjs",
   test: "vitest run",
   "test:e2e": "playwright test",
+  "test:manager-browser":
+    "pnpm pack:workspace && node scripts/verify-manager-browser.mjs",
   typecheck:
     "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false && tsc -p playground/tsconfig.json --pretty false",
   "dev:playground":

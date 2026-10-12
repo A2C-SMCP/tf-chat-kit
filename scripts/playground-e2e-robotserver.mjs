@@ -151,10 +151,14 @@ const httpServer = createServer(async (request, response) => {
     response.end();
     return;
   }
+  const routedPrefix = "/c/tfrobot/e2e-ns/e2e-robot";
+  const hasRoutedChatPath = url.pathname.startsWith(`${routedPrefix}/v1/chat/`);
+  if (hasRoutedChatPath) url.pathname = url.pathname.slice(routedPrefix.length);
   const hasRoutingHeaders =
-    request.headers["x-tf-namespace"] === "e2e-ns" &&
-    request.headers["x-tf-robotid"] === "e2e-robot" &&
-    request.headers["x-tf-robottype"] === "tfrobot";
+    hasRoutedChatPath ||
+    (request.headers["x-tf-namespace"] === "e2e-ns" &&
+      request.headers["x-tf-robotid"] === "e2e-robot" &&
+      request.headers["x-tf-robottype"] === "tfrobot");
   if (request.headers.origin !== PLAYGROUND_ORIGIN && !hasRoutingHeaders) {
     observations.invalidOrigins += 1;
     error(response, 403, "Origin rejected");

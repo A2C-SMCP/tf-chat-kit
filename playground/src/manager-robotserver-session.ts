@@ -5,14 +5,12 @@ import {
 } from "../../packages/chat-auth/src/manager.js";
 import type { AuthClient } from "../../packages/chat-auth/src/headless.js";
 import type { PlaygroundRobotDescriptor } from "./manager-directory.js";
-import { parseTFRobotTarget } from "./robotserver-target.js";
 import type { RobotServerConnectionConfig } from "./robotserver-session.js";
 
 export interface ManagerRobotServerSessionOptions {
   readonly client: AuthClient;
   readonly managerBaseUrl: string;
   readonly robot: PlaygroundRobotDescriptor;
-  readonly proxyOrigin: string;
   readonly allowedServerOrigins?: readonly string[] | undefined;
   readonly fetch?: typeof globalThis.fetch | undefined;
   readonly now?: (() => number) | undefined;
@@ -20,7 +18,7 @@ export interface ManagerRobotServerSessionOptions {
   readonly creator?:
     { readonly name: string; readonly uid: string } | undefined;
 }
-/** Host-only local development proxy; all Manager behavior lives in public adapters. */
+/** Uses the same public browser-to-Server contract as independent hosts. */
 export const createManagerRobotServerConnection = async (
   options: ManagerRobotServerSessionOptions,
 ): Promise<RobotServerConnectionConfig> => {
@@ -51,24 +49,13 @@ export const createManagerRobotServerConnection = async (
             url.hostname.endsWith(".turingfocus.cn"))
         );
       },
-      http: { kind: "direct" },
+      http: { kind: "routed-server" },
     },
   });
   try {
     const connection = await manager.connect(robot, { signal: options.signal });
-    const target = parseTFRobotTarget(
-      {
-        namespace: connection.target.namespace,
-        robotId: connection.target.robotId,
-        robotType: connection.target.robotType,
-        serverOrigin: new URL(connection.target.socketNamespaceUrl).origin,
-      },
-      options.proxyOrigin,
-      allowedOrigins,
-    );
-    if (!target.ok) throw new Error(target.message);
     return {
-      httpBaseUrl: target.value.httpBaseUrl,
+      httpBaseUrl: connection.target.baseUrl,
       socketNamespaceUrl: connection.target.socketNamespaceUrl,
       socketPath: connection.target.socketPath,
       creator: options.creator ?? {

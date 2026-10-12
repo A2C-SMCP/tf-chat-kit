@@ -15,7 +15,7 @@ const manager = createManagerClient({
   fetch: globalThis.fetch,
   routing: {
     allowedOrigins: deployment.trustedOrigins,
-    http: { kind: "routed-api" },
+    http: { kind: "routed-server" },
   },
 });
 const first = await manager.loadPage(1, 20);
@@ -56,7 +56,12 @@ unsupported_template、ready。目录 key、employeeId、robotId、robotAccountI
 | domain-alias 完整格式 | `/c/{type}/{rid}/socket.io/` 原样保留                    | `/chat`        | 独立配置                |
 | 本地直连              | 显式 `socket: "direct"` 与相对 `/socket.io/`             | `/chat`        | `http: {kind:"direct"}` |
 
-`http: {kind:"routed-api"}` 按对应已知路由契约生成 `/c/.../api`，Gateway 后续追加
+`http: {kind:"routed-server"}` 是浏览器直连 Server 策略：按明确的路径格式生成
+`/c/{type}/{namespace}/{rid}` 或 `/c/{type}/{rid}`，随后追加 `/v1/chat/...`。
+入口必须按该路径将 REST 和无凭据 OPTIONS 转给同一 Server，由 Server 处理 CORS、
+Bearer 与 scope。它不依赖 Cookie、宿主代理或浏览器不能在预检中发送的路由头。
+
+兼容保留的 `http: {kind:"routed-api"}` 按对应已知路由契约生成 `/c/.../api`，Gateway 后续追加
 `/v1/chat/...`。`direct` 使用 origin；`bff` 使用宿主显式 baseUrl，例如 `https://host/api`。
 这三项属于部署配置，不能由 Socket transport path 自动决定。所有目标 origin（含 BFF）
 必须在 allowedOrigins 内或通过宿主 isTrustedOrigin 策略。URL 凭据、查询、片段、穿越、
@@ -64,7 +69,7 @@ unsupported_template、ready。目录 key、employeeId、robotId、robotAccountI
 
 Manager 请求用用户 Bearer；换票 body 使用 RFC 8693 subject_token、
 `audience=robot:{robotAccountId}`、`scope=chat:read chat:send`、`token_profile=session`。
-Robot REST/BFF 仅接收换票后的 Bearer，Socket.IO 通过 auth.token 接收同一短期票据。
+公共 Gateway 向 Robot REST/BFF 发送换票后的 Bearer，Socket.IO 通过 auth.token 接收同一短期票据。
 浏览器不使用自定义 WebSocket Header。cookie-only BFF 没有受支持契约，需要另行评审。
 ManagerClient 的 HTTP 禁用重定向和隐式 cookie。Gateway 的 BFF 安全策略仍由宿主部署保障。
 
@@ -102,5 +107,20 @@ namespace 元数据/domain-alias 路径，#111 提供的 Production 相对路径
 本次门禁覆盖真实本地 HTTP/Socket、React StrictMode 与 tarball Web/Office 风格消费者，
 Chromium/WebKit 使用浏览器原生 fetch 完成目录、两种路径、BFF/直连、换票和释放。
 Production Word 真正会话/回复、生产 issuer/audience、cookie BFF、Manager refresh 与可靠重放
-没有由这些 fixture 证明。npm 发布是独立授权动作；Changeset 仅准备 Minor 发布，未发布前
-registry 版本仍不含新增入口。宿主无需 UAT Seed 变更，本地设施不写生产数据。
+没有由这些 fixture 证明。Manager 公共入口已发布于 chat-auth 0.10.0 / chat-kit 0.9.0；
+本次新增的 routed-server 尚未发布，不能让旧包消费者提前使用。宿主无需 UAT Seed 变更，本地设施不写生产数据。
+
+## Issue #116：Word 直连验收边界
+
+Playground Manager 模式现在直接使用公共 `routed-server`，不经过 `/__tfrobot_proxy`。
+旧管理员调试模式的代理不作为 Manager/Office 验收证据。
+
+| 场景                                        | 证据与限制                                                                                                   |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 已发布 0.9.0/0.10.0 + 旧正式入口 routed-api | 2026-10-12 Word 失败；无凭据 OPTIONS 307 登录跳转，缺少 CORS 头                                              |
+| 旧正式 API host + X-TF 路由头               | 无凭据预检 400 missing routing context；不适合浏览器接入                                                     |
+| Server 0.3.7 自身                           | 端口转发直达真实 Server，来自 https://localhost:3002 的 POST/authorization,content-type 预检 200，返回允许头 |
+| 新 routed-server + 配套入口修复             | 需独立 HTTPS packed 消费者、入口部署、正式 REST/Socket/回复与真实 Word 分别验收                              |
+
+不能通过 `no-cors`、客户端写 Cookie、自动猜测 API 域名或复制 Playground 代理解决入口问题。
+入口未升级时，新策略不能让现有部署自动可用。部署及真实 Word 未通过前，#111/#113/#116 保持未完成。

@@ -936,7 +936,6 @@ export const PlaygroundApp = ({
       client: authClient,
       managerBaseUrl,
       robot: selectedRobot,
-      proxyOrigin: window.location.origin,
       allowedServerOrigins: allowedManagerServerOrigins(),
     })
       .then((config) => {

@@ -241,6 +241,9 @@ export interface ManagerRoutingPolicy {
   readonly isTrustedOrigin?: ((origin: string) => boolean) | undefined;
   /** REST policy is independent of the Engine.IO path. BFF must forward exchanged Bearer tokens. */
   readonly http:
+    /** Path-routed Server REST, without a Front BFF or routing headers. */
+    | { readonly kind: "routed-server" }
+    /** Front/BFF path layout; requires an explicitly Bearer-compatible BFF. */
     | { readonly kind: "routed-api" }
     | { readonly kind: "direct" }
     | { readonly kind: "bff"; readonly baseUrl: string };
@@ -307,6 +310,9 @@ export const resolveManagerTarget = (
   const route = alias ? aliasPrefix : legacyPrefix;
   let baseUrl: string;
   switch (policy.http.kind) {
+    case "routed-server":
+      baseUrl = `${origin}${route}`;
+      break;
     case "direct":
       baseUrl = origin;
       break;

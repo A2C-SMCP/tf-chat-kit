@@ -244,6 +244,9 @@ describe("Manager quick-chat creation through real local HTTP/Socket.IO", () => 
           root.render(
             createElement(PlaygroundApp, {
               createRobotServerSession: (config) => {
+                expect(config.httpBaseUrl).toBe(
+                  "https://robot.turingfocus.cn/c/tfrobot/local-ns/local-robot",
+                );
                 expect(config.credential).toBeUndefined();
                 expect(config.sessionProvider).toBeDefined();
                 const session = createRobotServerPlaygroundSession(

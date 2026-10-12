@@ -1,19 +1,35 @@
 import { createServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
+import { readFileSync } from "node:fs";
 import { Server } from "socket.io";
-const origin = "http://127.0.0.1:4312";
+const origin = process.env["TF_CHAT_MANAGER_ORIGIN"] ?? "http://127.0.0.1:4312";
+const cert = process.env["TF_CHAT_MANAGER_CERT"];
+const key = process.env["TF_CHAT_MANAGER_KEY"];
 const account = {
   userId: "manager-user",
   accountId: "account",
   organizationId: "org",
 };
 let activeAccount = account;
-const server = createServer((req, res) => {
+let nextConversation = 43;
+/** @type {Map<number, {conversationId: number; title: string; updateTimestamp: number}>} */
+const createdConversations = new Map();
+/** @type {(handler: import("node:http").RequestListener) => import("node:http").Server | import("node:https").Server} */
+const createListener =
+  cert && key
+    ? (handler) =>
+        createHttpsServer(
+          { cert: readFileSync(cert), key: readFileSync(key) },
+          handler,
+        )
+    : createServer;
+const server = createListener((req, res) => {
   const url = new URL(req.url ?? "/", origin);
   const cors = {
     "Access-Control-Allow-Origin":
       process.env["TF_CHAT_PLAYGROUND_ORIGIN"] ?? "http://localhost:4311",
     "Access-Control-Allow-Headers": "Authorization, Content-Type",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
   };
   /** @param {unknown} data @param {number} [status] */
   const reply = (data, status = 200) => {
@@ -39,7 +55,10 @@ const server = createServer((req, res) => {
       return;
     }
     const isExchange = url.pathname === "/api/v1/oauth/token";
-    const isChat = /^(?:\/api)?\/v1\/chat\//u.test(url.pathname);
+    const isChat =
+      /^(?:\/api|\/c\/tfrobot\/(?:tenant\/)?robot-[ab])?\/v1\/chat\//u.test(
+        url.pathname,
+      );
     if (
       !isExchange &&
       req.headers.authorization !==
@@ -127,12 +146,78 @@ const server = createServer((req, res) => {
       return;
     }
     if (isChat) {
+      if (req.headers.cookie !== undefined) {
+        reply({}, 400);
+        return;
+      }
+      const conversationId = Number(
+        url.pathname.match(/conversations\/(\d+)/u)?.[1],
+      );
+      if (req.method === "POST" && url.pathname.endsWith("/conversations")) {
+        const title = url.searchParams.get("title");
+        if (!title || body.length > 0) {
+          reply({}, 422);
+          return;
+        }
+        const created = {
+          conversationId: nextConversation++,
+          title,
+          updateTimestamp: Date.now(),
+        };
+        createdConversations.set(created.conversationId, created);
+        reply({ code: 200, message: "Success", data: created });
+        return;
+      }
+      if (req.method === "POST" && url.pathname.endsWith("/messages")) {
+        const message = JSON.parse(body);
+        if (
+          !createdConversations.has(conversationId) ||
+          message.content !== "Browser round trip" ||
+          message.creator?.uid !== "manager-user"
+        ) {
+          reply({}, 422);
+          return;
+        }
+        reply({
+          code: 200,
+          message: "Success",
+          data: { taskId: `run-${conversationId}` },
+        });
+        for (const io of sockets)
+          io.of("/chat")
+            .to(String(conversationId))
+            .emit("chat_message", {
+              msgId: `assistant-${conversationId}`,
+              content: "Direct browser reply",
+              conversationId,
+              createTimestamp: Date.now(),
+              role: "assistant",
+              msgType: "text",
+              additionalKwargs: {},
+              attachments: null,
+              creator: { uid: "robot", name: "Fixture", avatar: null },
+            });
+        return;
+      }
+      if (req.method === "DELETE") {
+        if (!createdConversations.delete(conversationId)) {
+          reply({}, 404);
+          return;
+        }
+        reply({
+          code: 200,
+          message: "Success",
+          data: { conversationId, message: "deleted" },
+        });
+        return;
+      }
       const data = url.pathname.endsWith("/messages")
         ? { messages: [], events: [], cursor: null }
         : url.pathname.endsWith("/status")
           ? { working: false, taskId: null }
           : {
               conversations: [
+                ...createdConversations.values(),
                 {
                   conversationId: 42,
                   title: "Manager browser fixture",
@@ -164,7 +249,10 @@ const sockets = [
     ),
   );
   io.of("/chat").on("connection", (socket) => {
-    socket.on("join_conversation", (_input, ack) => ack());
+    socket.on("join_conversation", async (input, ack) => {
+      await socket.join(String(input.conversation_id));
+      ack();
+    });
   });
   return io;
 });
