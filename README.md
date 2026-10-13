@@ -37,24 +37,24 @@ V1 提供可选的认证接入模块，复用宿主的 Manager 账号体系；�
 chat-ui-antd -> chat-react -> chat-runtime -> chat-protocol
 chat-ui-antd -------------------------------> chat-protocol
                          chat-gateway-tfrobot -> chat-protocol
-chat-kit -> chat-ui-antd/chat-react/chat-runtime/chat-gateway-tfrobot/chat-protocol
-chat-auth (可选，独立；react/antd 为可选 peer UI)
+chat-kit -> chat-auth/chat-ui-antd/chat-react/chat-runtime/chat-gateway-tfrobot/chat-protocol
+chat-auth (独立发布，门面显式 auth 子入口；react/antd 为可选 peer UI)
                                   chat-testing -> chat-protocol
 ```
 
-普通宿主只需安装 `@turingfocus/chat-kit`：非 React 使用 `/headless`，自定义 React UI 使用 `/react`，成品 UI 使用根入口或 `/antd`。需要认证时再安装可选的 `@turingfocus/chat-auth`：认证状态与 transport 使用 `/headless`，TFRobotServer 适配使用 `/tfrobot`，React/Ant Design 默认 UI 分别使用 `/react` 与 `/antd`。高级消费者仍可按需安装叶子包；`chat-testing` 是独立开发依赖，不进入生产门面。
+普通宿主只需安装 `@turingfocus/chat-kit`：非 React 使用 `/headless`，自定义 React UI 使用 `/react`，成品 UI 使用根入口或 `/antd`。需要认证时使用门面 `/auth`，TFRobotServer 适配使用 `/auth/tfrobot`，React/Ant Design 默认 UI 分别使用 `/auth/react` 与 `/auth/antd`。高级消费者仍可按需安装叶子包；`chat-testing` 是独立开发依赖，不进入生产门面。
 
-需要 Manager 机器人目录与自动连接时，可选使用 `chat-auth/manager`、`chat-kit/manager`
+需要 Manager 机器人目录与自动连接时，可选使用 `chat-kit/auth/manager`、`chat-kit/manager`
 和 `chat-kit/manager-react`。接法、部署策略与验证范围见 [Manager 集成指南](docs/manager-integration.md)。
 
 任何 Chat Kit 包都不得反向依赖 TFRobotFront 或其他宿主项目。
 
 ## 登录、Chat Token 与会话接入
 
-以下接入示例使用核心七包 `0.8.4`；可选认证包独立发布，版本为 `0.9.0`。已经有登录系统的宿主可以只使用核心包，并注入自己的 `SessionProvider`。
+以下接入示例面向目标版本 `0.10.0`（需本次变更发布后使用）；认证叶子包独立发布，由门面声明兼容依赖。已经有登录系统的宿主可以只使用核心包，并注入自己的 `SessionProvider`。
 
 ```bash
-pnpm add @turingfocus/chat-kit@0.8.4 @turingfocus/chat-auth@0.9.0
+pnpm add @turingfocus/chat-kit@0.10.0
 # 使用下面的 React / Ant Design UI 时还需要：
 pnpm add react@^18.2.0 react-dom@^18.2.0 antd@^5.23.4
 ```
@@ -64,8 +64,8 @@ pnpm add react@^18.2.0 react-dom@^18.2.0 antd@^5.23.4
 `AuthClient` 每个宿主实例单独创建；环境固定为 `staging` 或 `production`。`baseUrl` 由宿主选择，指向对应 Manager 或同源认证 BFF。
 
 ```ts
-import { createAuthClient } from "@turingfocus/chat-auth/headless";
-import { createTfRobotAuthTransport } from "@turingfocus/chat-auth/tfrobot";
+import { createAuthClient } from "@turingfocus/chat-kit/auth";
+import { createTfRobotAuthTransport } from "@turingfocus/chat-kit/auth/tfrobot";
 
 export const createHostAuth = (managerBaseUrl: string) =>
   createAuthClient({
@@ -84,15 +84,15 @@ export const createHostAuth = (managerBaseUrl: string) =>
 React 宿主可直接挂载默认登录、账号选择、组织切换和过期提示 UI，也可以用 `/react` 的 `useAuthSelector` 实现自己的界面：
 
 ```tsx
-import type { AuthClient } from "@turingfocus/chat-auth/headless";
-import { AuthProvider } from "@turingfocus/chat-auth/react";
+import type { AuthClient } from "@turingfocus/chat-kit/auth";
+import { AuthProvider } from "@turingfocus/chat-kit/auth/react";
 import {
   AccountSelectionPanel,
   AuthStatus,
   LoginPanel,
   OrganizationSwitcher,
   SessionExpiredNotice,
-} from "@turingfocus/chat-auth/antd";
+} from "@turingfocus/chat-kit/auth/antd";
 
 export function HostLogin({ auth }: { auth: AuthClient }) {
   return (
@@ -118,7 +118,7 @@ export function HostLogin({ auth }: { auth: AuthClient }) {
 
 选择机器人后，宿主先读取该机器人的 `connection-info`，解析最终 REST / Socket 地址与路由；交换请求使用 `audience=robot:{robotAccountId}`、`scope=chat:read chat:send`、`token_profile=session`。`subject_token_type` 为 `urn:ietf:params:oauth:token-type:jwt`，`grant_type` 为 `urn:ietf:params:oauth:grant-type:token-exchange`，请求体使用 `application/x-www-form-urlencoded`。
 
-`auth.createSessionProvider()` 返回的是 **Manager 会话**，不能直接交给需要机器人 audience 的 RobotServer。可选公共入口 `@turingfocus/chat-auth/manager` 提供目录、寻址和机器人专属 SessionProvider；`@turingfocus/chat-kit/manager` 与 `manager-react` 负责聊天实例生命周期。用法见 [Manager 集成指南](docs/manager-integration.md)。自有 BFF 或 Token Source 仍可通过现有端口注入；新增入口随本次 Changeset 发布后可从 npm 导入。
+`auth.createSessionProvider()` 返回的是 **Manager 会话**，不能直接交给需要机器人 audience 的 RobotServer。可选公共入口 `@turingfocus/chat-kit/auth/manager` 提供目录、寻址和机器人专属 SessionProvider；`@turingfocus/chat-kit/manager` 与 `manager-react` 负责聊天实例生命周期。用法见 [Manager 集成指南](docs/manager-integration.md)。自有 BFF 或 Token Source 仍可通过现有端口注入；新增入口随本次 Changeset 发布后可从 npm 导入。
 
 ### 3. 保持 Chat Token 可用并创建会话工作区
 
@@ -127,7 +127,7 @@ export function HostLogin({ auth }: { auth: AuthClient }) {
 下面的工厂只使用公开 API；`RobotTokenSource` 是可由公共 Manager SessionProvider 或宿主实现提供的端口，每个环境、用户、账号、组织和机器人拥有独立实例：
 
 ```ts
-import type { AuthClient } from "@turingfocus/chat-auth/headless";
+import type { AuthClient } from "@turingfocus/chat-kit/auth";
 import { createTFRobotChatClientFactory } from "@turingfocus/chat-kit/antd";
 
 interface RobotTokenSource {
@@ -276,3 +276,36 @@ Ask User 的“聊聊这个”按具体问题通过显式宿主回调交还给�
 时间轴默认虚拟化，离开底部后不会抢滚动，并通过提示返回最新消息。渲染器注册表支持宿主覆盖，
 文本内容默认按经过清洗的 GFM Markdown 渲染；未知事件和单个渲染器异常均安全降级。自定义文案通过 `labels` 注入，主题沿用宿主的 Ant Design
 `ConfigProvider` token。
+
+### Word 宿主：单包认证与新版会话协议
+
+只安装 `@turingfocus/chat-kit`，认证能力通过显式子入口使用：
+
+```ts
+import { createAuthClient } from "@turingfocus/chat-kit/auth";
+import { createTfRobotAuthTransport } from "@turingfocus/chat-kit/auth/tfrobot";
+import { createManagerClient } from "@turingfocus/chat-kit/auth/manager";
+import { createManagerChatController } from "@turingfocus/chat-kit/manager";
+```
+
+`/auth/react`、`/auth/antd` 分别要求宿主提供相应 React、Ant Design peers。
+`/auth`、`/auth/tfrobot`、`/auth/manager` 无需 React/DOM。门面负责声明兼容的 auth 依赖；
+`chat-auth` 仍独立发布。已有 SessionProvider 接入不需要创建 AuthClient。
+
+当部署的 Server 使用 JSON 创建会话协议时，在 `chat` 配置中显式设置
+`conversationContract: "json-v2"`。默认 `query-v1` 保留旧 Server 查询参数协议；
+此选项与 Socket 的 `serverProfile` 无关，SDK 不会通过失败后重试创建来猜协议。
+Manager 的 `apiBaseURL` 是 BFF 地址；Word 直连 Server 使用已验证的 `routed-server`
+路由及允许来源配置，不能把 BFF 地址当成 Bearer Server 地址。
+
+`await controller.select(robot)` 会读取该 Server 的真实平台列表，并返回
+`platform-selection-required` 快照。宿主展示 `snapshot.platforms`，让用户明确选择后调用
+`await controller.select(robot, { platformId })`。也可在 chat 配置中注入已知的真实 platformId；
+Manager 编排仍会校验该 ID 存在。空列表表示没有可选平台；403 与无效 ID 是错误，
+不能当作成功。SDK 不自动创建平台，也不自动选择第一项。
+
+`ManagerChatProvider` 的 `platformId` 属性支持 React 宿主受控选择；改变机器人或平台会
+释放原聊天实例。平台读取有 30 秒截止时间，账户变更或释放会中止请求并丢弃迟到结果。
+直接使用 SessionProvider 的宿主可从 `chat-kit/headless` 导入
+`createTFRobotPlatformClient`，通过 `list({ deadlineAt, signal })` 读取平台，显式选择后
+传给 `createTFRobotChatClient`；切换平台时释放旧 client，结束时释放平台 client。

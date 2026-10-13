@@ -50,6 +50,31 @@
       "types": "./dist/manager-react.d.ts",
       "import": "./dist/manager-react.js",
       "default": "./dist/manager-react.js"
+    },
+    "./auth": {
+      "types": "./dist/auth.d.ts",
+      "import": "./dist/auth.js",
+      "default": "./dist/auth.js"
+    },
+    "./auth/tfrobot": {
+      "types": "./dist/auth-tfrobot.d.ts",
+      "import": "./dist/auth-tfrobot.js",
+      "default": "./dist/auth-tfrobot.js"
+    },
+    "./auth/react": {
+      "types": "./dist/auth-react.d.ts",
+      "import": "./dist/auth-react.js",
+      "default": "./dist/auth-react.js"
+    },
+    "./auth/antd": {
+      "types": "./dist/auth-antd.d.ts",
+      "import": "./dist/auth-antd.js",
+      "default": "./dist/auth-antd.js"
+    },
+    "./auth/manager": {
+      "types": "./dist/auth-manager.d.ts",
+      "import": "./dist/auth-manager.js",
+      "default": "./dist/auth-manager.js"
     }
   },
   "dependencies": {
@@ -57,7 +82,8 @@
     "@turingfocus/chat-protocol": "workspace:^",
     "@turingfocus/chat-react": "workspace:^",
     "@turingfocus/chat-runtime": "workspace:^",
-    "@turingfocus/chat-ui-antd": "workspace:^"
+    "@turingfocus/chat-ui-antd": "workspace:^",
+    "@turingfocus/chat-auth": "workspace:^"
   },
   "peerDependencies": {
     "antd": ">=5.23.4 <6.0.0",

@@ -84,6 +84,11 @@ const ROOT_DEV_ENGINE_POLICY = Object.freeze({
 });
 const RELEASE_NPM_VERSION = "11.18.0";
 const FACADE_EXPORT_POLICY = Object.freeze({
+  "./auth": "auth",
+  "./auth/tfrobot": "auth-tfrobot",
+  "./auth/react": "auth-react",
+  "./auth/antd": "auth-antd",
+  "./auth/manager": "auth-manager",
   "./manager": "manager",
   "./manager-react": "manager-react",
   ".": "index",
@@ -177,6 +182,7 @@ export const PACKAGE_POLICY = Object.freeze({
   "chat-kit": {
     name: "@turingfocus/chat-kit",
     internalDependencies: [
+      "@turingfocus/chat-auth",
       "@turingfocus/chat-gateway-tfrobot",
       "@turingfocus/chat-protocol",
       "@turingfocus/chat-react",

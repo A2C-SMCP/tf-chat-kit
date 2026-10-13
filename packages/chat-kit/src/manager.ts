@@ -3,14 +3,18 @@ import {
   type TFRobotChatClientOptions,
 } from "./tfrobot-client.js";
 import type { ChatClient } from "@turingfocus/chat-runtime";
-import type { TFRobotSession } from "@turingfocus/chat-gateway-tfrobot";
+import {
+  createTFRobotPlatformClient,
+  type TFRobotConversationPlatform,
+  type TFRobotSession,
+} from "@turingfocus/chat-gateway-tfrobot";
 import {
   safeDiagnosticError,
   type ChatError,
   type SessionProvider,
 } from "@turingfocus/chat-protocol";
 
-/** Structural port: optional Manager integration never installs or imports chat-auth. */
+/** Structural port: hosts may also supply their own Manager integration. */
 export interface ManagerChatConnection {
   readonly target: {
     readonly baseUrl: string;
@@ -37,8 +41,16 @@ export interface ManagerChatSource<Robot> {
   ): () => void;
 }
 export interface ManagerChatSnapshot {
-  readonly status: "idle" | "connecting" | "ready" | "error" | "disposed";
+  readonly status:
+    | "idle"
+    | "connecting"
+    | "platform-selection-required"
+    | "ready"
+    | "error"
+    | "disposed";
   readonly client?: ChatClient | undefined;
+  readonly platforms?: readonly TFRobotConversationPlatform[] | undefined;
+  readonly platformId?: number | string | undefined;
   readonly error?:
     { readonly code: string; readonly message: string } | undefined;
 }
@@ -139,7 +151,11 @@ export class ManagerChatController<Robot> {
       this.#cleanup.add(work);
     }
   }
-  async select(robot: Robot | undefined): Promise<void> {
+  /** A new robot or platform selection releases the previous client and validates the current catalog. */
+  async select(
+    robot: Robot | undefined,
+    options?: { readonly platformId?: number | undefined },
+  ): Promise<void> {
     if (this.#disposed) return;
     const generation = ++this.#generation;
     this.#release();
@@ -156,13 +172,61 @@ export class ManagerChatController<Robot> {
         connection.dispose();
         return;
       }
+      this.#connection = connection;
+      const platformId = options?.platformId ?? this.#options.chat.platformId;
+      let platforms: readonly TFRobotConversationPlatform[] | undefined;
+      if (this.#options.chat.conversationContract === "json-v2") {
+        const catalog = createTFRobotPlatformClient({
+          ...this.#options.chat,
+          baseUrl: connection.target.baseUrl,
+          sessionProvider: connection.sessionProvider,
+        });
+        const result = await catalog.list({
+          signal: controller.signal,
+          deadlineAt: (this.#options.chat.now ?? Date.now)() + 30_000,
+        });
+        catalog.dispose();
+        if (this.#disposed || generation !== this.#generation) return;
+        if (!result.ok) {
+          this.#release();
+          this.#update({
+            status: "error",
+            error: {
+              code: result.error.code,
+              message:
+                "Unable to load Server platforms. Inspect chat diagnostics and retry.",
+            },
+          });
+          return;
+        }
+        platforms = result.value;
+        if (platformId === undefined) {
+          this.#release();
+          this.#update({ status: "platform-selection-required", platforms });
+          return;
+        }
+        if (!platforms.some((platform) => platform.platformId === platformId)) {
+          this.#release();
+          this.#update({
+            status: "error",
+            platforms,
+            error: {
+              code: "invalid_platform",
+              message:
+                "The selected platform is unavailable. Select a current Server platform.",
+            },
+          });
+          return;
+        }
+      }
       const client = createTFRobotChatClient({
         ...this.#options.chat,
+        platformId,
         ...connection.target,
         sessionProvider: connection.sessionProvider,
       });
       this.#connection = connection;
-      this.#update({ status: "ready", client });
+      this.#update({ status: "ready", client, platforms, platformId });
     } catch {
       connection?.dispose();
       if (!this.#disposed && generation === this.#generation)

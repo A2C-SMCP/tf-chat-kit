@@ -101,15 +101,20 @@ interface RequestInput<T> {
   readonly signal?: AbortSignal | undefined;
 }
 
+type TFRobotHttpOptions = Pick<
+  TFRobotGatewayOptions,
+  "baseUrl" | "sessionProvider" | "fetch" | "now" | "onDiagnostic"
+>;
+
 export class TFRobotHttpClient {
   readonly #baseUrl: URL;
   readonly #fetch: typeof globalThis.fetch;
   readonly #inFlight = new Set<AbortController>();
   readonly #now: () => number;
-  readonly #options: TFRobotGatewayOptions;
+  readonly #options: TFRobotHttpOptions;
   #disposed = false;
 
-  constructor(options: TFRobotGatewayOptions) {
+  constructor(options: TFRobotHttpOptions | TFRobotGatewayOptions) {
     this.#options = options;
     this.#baseUrl = new URL(
       options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`,
@@ -153,6 +158,7 @@ export class TFRobotHttpClient {
                 "source",
                 "cos",
                 "conversations",
+                "platforms",
                 "messages",
                 "events",
                 "status",

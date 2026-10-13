@@ -58,3 +58,5 @@ Server Contract Reviewer 确认；确认前只能实现安全降级和可重复�
 - 在 SDK 内保存密码、长期 Token 或使用浏览器全局存储；
 - 允许 UI 任意输入环境或后端 URL；
 - 在缺少 refresh 契约时用密码静默登录。
+
+> 2026-10-13：门面安装 auth 的限制由 [ADR-014](014-auth-facade-and-server-contract.md) 替代，其余决策继续有效。

@@ -18,6 +18,8 @@
 | [012](012-optional-auth-module.md)              | 可选认证模块与 Headless 认证契约        | Accepted   |
 | [013](013-optional-manager-integration.md)      | 可选 Manager 目录、寻址、换票与聊天编排 | Accepted   |
 
+| [014](014-auth-facade-and-server-contract.md) | 认证门面与显式 Server 会话契约 | Accepted |
+
 ## 状态规则
 
 - `Proposed`：仍在讨论，不能作为实现约束。

@@ -26,6 +26,8 @@ export interface ManagerChatProviderProps<Robot> {
   /** Stable factory. Resources are created in effects, including StrictMode replay. */
   readonly create: () => ManagerChatControllerOptions<Robot>;
   readonly robot?: Robot | undefined;
+  /** Explicit platform choice; changing it releases the previous chat client. */
+  readonly platformId?: number | undefined;
   readonly children?: ReactNode;
   readonly fallback?:
     ((snapshot: ManagerChatSnapshot) => ReactNode) | undefined;
@@ -34,6 +36,7 @@ export interface ManagerChatProviderProps<Robot> {
 export function ManagerChatProvider<Robot>({
   create,
   robot,
+  platformId,
   children,
   fallback,
   onDisposeError,
@@ -50,6 +53,7 @@ export function ManagerChatProvider<Robot>({
   return createElement(ManagerChatBinding<Robot>, {
     controller,
     robot,
+    platformId,
     children,
     fallback,
   });
@@ -57,6 +61,7 @@ export function ManagerChatProvider<Robot>({
 function ManagerChatBinding<Robot>({
   controller,
   robot,
+  platformId,
   children,
   fallback,
 }: Omit<ManagerChatProviderProps<Robot>, "create"> & {
@@ -64,11 +69,11 @@ function ManagerChatBinding<Robot>({
 }) {
   const snapshot = useManagerChat(controller);
   useEffect(() => {
-    void controller.select(robot);
+    void controller.select(robot, { platformId });
     return () => {
       void controller.select(undefined);
     };
-  }, [controller, robot]);
+  }, [controller, robot, platformId]);
   return snapshot.status === "ready" && snapshot.client
     ? createElement(ChatProvider, { client: snapshot.client }, children)
     : (fallback?.(snapshot) ?? null);

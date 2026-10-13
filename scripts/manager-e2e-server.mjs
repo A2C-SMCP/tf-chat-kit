@@ -150,12 +150,25 @@ const server = createListener((req, res) => {
         reply({}, 400);
         return;
       }
+      if (req.method === "GET" && url.pathname.endsWith("/platforms")) {
+        reply({
+          code: 200,
+          message: "Success",
+          data: [{ platformId: 17, name: "Word fixture" }],
+        });
+        return;
+      }
       const conversationId = Number(
         url.pathname.match(/conversations\/(\d+)/u)?.[1],
       );
       if (req.method === "POST" && url.pathname.endsWith("/conversations")) {
-        const title = url.searchParams.get("title");
-        if (!title || body.length > 0) {
+        const modern = body.length > 0;
+        const input = modern ? JSON.parse(body) : undefined;
+        const title = modern ? input.title : url.searchParams.get("title");
+        if (
+          !title ||
+          (modern && (input.platformId !== 17 || url.search !== ""))
+        ) {
           reply({}, 422);
           return;
         }

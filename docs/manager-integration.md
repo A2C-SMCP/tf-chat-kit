@@ -1,11 +1,11 @@
 # Manager 公共集成（Issue #111）
 
-可选入口：`@turingfocus/chat-auth/manager`、`@turingfocus/chat-kit/manager`、
+可选入口：`@turingfocus/chat-kit/auth/manager`、`@turingfocus/chat-kit/manager`、
 `@turingfocus/chat-kit/manager-react`。它们复用现有 AuthClient 与 ChatWorkspace。
-宿主仍可以直接注入 SessionProvider，不安装或初始化 Manager 集成。
+宿主仍可以直接注入 SessionProvider，不初始化 Manager 集成。
 
 ```ts
-import { createManagerClient } from "@turingfocus/chat-auth/manager";
+import { createManagerClient } from "@turingfocus/chat-kit/auth/manager";
 import { createManagerChatController } from "@turingfocus/chat-kit/manager";
 
 // auth 为已创建的 AuthClient。部署配置由宿主维护，不向用户询问 Token 或路径。
@@ -29,9 +29,14 @@ const owned = createManagerChatController({
     }),
     // Only select this profile for an explicitly compatible current Server.
     serverProfile: { kind: "current-server" },
+    // 显式匹配部署的 Server REST 契约（旧版保持默认 query-v1）。
+    conversationContract: "json-v2",
   },
 });
 await owned.select(first.items.find((robot) => robot.eligibility === "ready"));
+// json-v2 先返回 platform-selection-required；宿主展示 platforms，
+// 再以用户选择的真实 ID 调用 owned.select(robot, { platformId })。
+// 只有 ready 快照才提供 client；不自动创建或选择平台。
 const chat = owned.getSnapshot().client;
 // Render with ChatProvider + ChatWorkspace, or use ChatClient commands headlessly.
 await owned.dispose();
@@ -124,3 +129,15 @@ Playground Manager 模式现在直接使用公共 `routed-server`，不经过 `/
 
 不能通过 `no-cors`、客户端写 Cookie、自动猜测 API 域名或复制 Playground 代理解决入口问题。
 入口未升级时，新策略不能让现有部署自动可用。部署及真实 Word 未通过前，#111/#113/#116 保持未完成。
+
+## 0.10.0 单包接入与 test 验收
+
+认证入口随 chat-kit 一起安装，auth 叶子仍独立发布。React 的 ManagerChatProvider 支持
+受控 platformId；JSON 会话的平台查询、空列表、403、失效 ID 与切换释放遵循
+[ADR-014](adr/014-auth-facade-and-server-contract.md)。
+
+测试登录入口为 https://user.test.turingfocus.cn；本次确认的 Manager API 为
+https://rest.test.turingfocus.cn。实际机器人来源必须根据账户的 connection-info 配置允许列表。
+登录 Portal Cookie 不能直接作为 Word 的认证方案；宿主需显式调用 auth 或注入 SessionProvider。
+本次浏览器测试的认证恢复与真实 Word 登录验收分别记录，见
+[验收记录](baselines/word-010-test-2026-10-13.md)。

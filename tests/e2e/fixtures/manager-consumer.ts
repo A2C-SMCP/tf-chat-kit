@@ -11,12 +11,11 @@ export const registerManagerConsumerTests = () => {
       process.env["TF_CHAT_MANAGER_ORIGIN"] ?? "http://127.0.0.1:4312";
     const result = await page.evaluate(
       async ({ root, entry, origin }) => {
-        const authPath =
-          entry ?? `/@fs/${root}packages/chat-auth/src/headless.ts`;
+        const authPath = entry ?? `/@fs/${root}packages/chat-kit/src/auth.ts`;
         const transportPath =
-          entry ?? `/@fs/${root}packages/chat-auth/src/tfrobot.ts`;
+          entry ?? `/@fs/${root}packages/chat-kit/src/auth-tfrobot.ts`;
         const managerPath =
-          entry ?? `/@fs/${root}packages/chat-auth/src/manager.ts`;
+          entry ?? `/@fs/${root}packages/chat-kit/src/auth-manager.ts`;
         const chatPath =
           entry ?? `/@fs/${root}packages/chat-kit/src/manager.ts`;
         const { createAuthClient } = await import(authPath);
@@ -50,6 +49,8 @@ export const registerManagerConsumerTests = () => {
             manager,
             chat: {
               serverProfile: { kind: "current-server" },
+              conversationContract: "json-v2",
+              platformId: 17,
               messageCreatorProvider: () => ({
                 name: "Browser fixture",
                 uid: "manager-user",

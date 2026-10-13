@@ -31,6 +31,19 @@
       "@turingfocus/chat-kit/manager": ["./packages/chat-kit/src/manager.ts"],
       "@turingfocus/chat-kit/manager-react": [
         "./packages/chat-kit/src/manager-react.ts"
+      ],
+      "@turingfocus/chat-kit/auth": ["./packages/chat-kit/src/auth.ts"],
+      "@turingfocus/chat-kit/auth/manager": [
+        "./packages/chat-kit/src/auth-manager.ts"
+      ],
+      "@turingfocus/chat-kit/auth/tfrobot": [
+        "./packages/chat-kit/src/auth-tfrobot.ts"
+      ],
+      "@turingfocus/chat-kit/auth/react": [
+        "./packages/chat-kit/src/auth-react.ts"
+      ],
+      "@turingfocus/chat-kit/auth/antd": [
+        "./packages/chat-kit/src/auth-antd.ts"
       ]
     },
     "rootDir": ".",

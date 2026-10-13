@@ -42,6 +42,7 @@ export default {
       "chat-protocol",
     ]),
     packageRule("facade-only-depends-on-production-leaves", "chat-kit", [
+      "chat-auth",
       "chat-kit",
       "chat-gateway-tfrobot",
       "chat-ui-antd",
