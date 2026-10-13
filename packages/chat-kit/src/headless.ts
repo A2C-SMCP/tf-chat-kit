@@ -179,3 +179,11 @@ export {
   type AskUserRemoteToolOptions,
   type AskUserRemoteToolEntry,
 } from "@turingfocus/chat-runtime";
+
+export {
+  createTFRobotPlatformClient,
+  type TFRobotPlatformClient,
+  type TFRobotPlatformClientOptions,
+  type TFRobotConversationPlatform,
+} from "@turingfocus/chat-gateway-tfrobot";
+export type { TFRobotConversationContract } from "@turingfocus/chat-gateway-tfrobot";

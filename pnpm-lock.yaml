@@ -148,6 +148,9 @@ importers:
 
   packages/chat-kit:
     dependencies:
+      '@turingfocus/chat-auth':
+        specifier: workspace:^
+        version: link:../chat-auth
       '@turingfocus/chat-gateway-tfrobot':
         specifier: workspace:^
         version: link:../chat-gateway-tfrobot

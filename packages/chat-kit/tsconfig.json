@@ -8,11 +8,24 @@
     "tsBuildInfoFile": "../../.artifacts/tsbuildinfo/chat-kit.tsbuildinfo"
   },
   "references": [
-    { "path": "../chat-protocol" },
-    { "path": "../chat-runtime" },
-    { "path": "../chat-gateway-tfrobot" },
-    { "path": "../chat-react" },
-    { "path": "../chat-ui-antd" }
+    {
+      "path": "../chat-protocol"
+    },
+    {
+      "path": "../chat-runtime"
+    },
+    {
+      "path": "../chat-gateway-tfrobot"
+    },
+    {
+      "path": "../chat-react"
+    },
+    {
+      "path": "../chat-ui-antd"
+    },
+    {
+      "path": "../chat-auth"
+    }
   ],
   "include": ["src/**/*.ts"]
 }

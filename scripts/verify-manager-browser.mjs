@@ -38,7 +38,9 @@ try {
       private: true,
       packageManager: "pnpm@10.34.5",
       type: "module",
-      dependencies: packages,
+      dependencies: {
+        "@turingfocus/chat-kit": packages["@turingfocus/chat-kit"],
+      },
       pnpm: { overrides: packages },
     }),
   );
@@ -51,9 +53,9 @@ try {
   await writeFile(
     path.join(temporary, "entry.js"),
     [
-      'export { createAuthClient } from "@turingfocus/chat-auth/headless";',
-      'export { createTfRobotAuthTransport } from "@turingfocus/chat-auth/tfrobot";',
-      'export { createManagerClient } from "@turingfocus/chat-auth/manager";',
+      'export { createAuthClient } from "@turingfocus/chat-kit/auth";',
+      'export { createTfRobotAuthTransport } from "@turingfocus/chat-kit/auth/tfrobot";',
+      'export { createManagerClient } from "@turingfocus/chat-kit/auth/manager";',
       'export { createManagerChatController } from "@turingfocus/chat-kit/manager";',
     ].join("\n"),
   );

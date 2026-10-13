@@ -31,3 +31,11 @@ export {
   createTFRobotRemoteToolTransport,
   type TFRobotRemoteToolOptions,
 } from "./remote-tool.js";
+
+export {
+  createTFRobotPlatformClient,
+  type TFRobotPlatformClient,
+  type TFRobotPlatformClientOptions,
+  type TFRobotConversationPlatform,
+} from "./platforms.js";
+export type { TFRobotConversationContract } from "./types.js";

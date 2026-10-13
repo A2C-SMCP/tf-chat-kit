@@ -197,15 +197,34 @@ export class TFRobotChatGateway implements ChatGateway {
   ): Promise<GatewayResult<Conversation>> {
     const disposed = this.#disposedResult<Conversation>();
     if (disposed !== undefined) return disposed;
+    const contract = this.#options.conversationContract ?? "query-v1";
+    if (
+      (contract !== "query-v1" && contract !== "json-v2") ||
+      (contract === "json-v2" &&
+        (typeof this.#options.platformId !== "number" ||
+          !Number.isSafeInteger(this.#options.platformId) ||
+          this.#options.platformId <= 0 ||
+          typeof input.title !== "string"))
+    )
+      return {
+        ok: false,
+        error: {
+          code: "validation",
+          message:
+            "JSON conversation creation requires a title and a positive integer platformId",
+          retryable: false,
+        },
+      };
     const result = await this.#http.request({
       method: "POST",
       path: "v1/chat/conversations",
       operation: "send",
       options: input,
-      query: {
-        title: input.title,
-        platformId: this.#options.platformId,
-      },
+      ...(contract === "json-v2"
+        ? { body: { title: input.title, platformId: this.#options.platformId } }
+        : {
+            query: { title: input.title, platformId: this.#options.platformId },
+          }),
       schema: conversationDtoSchema,
     });
     const requestDisposed = this.#disposedResult<Conversation>();

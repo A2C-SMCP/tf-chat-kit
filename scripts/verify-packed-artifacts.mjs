@@ -675,7 +675,6 @@ try {
           type: "module",
           packageManager: "pnpm@10.34.5",
           dependencies: {
-            "@turingfocus/chat-auth": packageFiles["@turingfocus/chat-auth"],
             "@turingfocus/chat-kit": packageFiles["@turingfocus/chat-kit"],
             "socket.io": "4.8.3",
           },
@@ -687,7 +686,7 @@ try {
             },
           },
         },
-        packageNames: ["@turingfocus/chat-auth", "@turingfocus/chat-kit"],
+        packageNames: ["@turingfocus/chat-kit"],
         forbiddenPackageMarkers: [
           "react@",
           "react-dom@",
@@ -719,6 +718,14 @@ try {
     );
   }
 
+  /** @param {string} source */
+  const facadeAuthSource = (source) =>
+    source
+      .replaceAll(
+        "@turingfocus/chat-auth/headless",
+        "@turingfocus/chat-kit/auth",
+      )
+      .replaceAll("@turingfocus/chat-auth/", "@turingfocus/chat-kit/auth/");
   const authChatSource = await readFile(
     path.join(rootDirectory, "tests/consumers/auth-chat/consumer.ts"),
     "utf8",
@@ -748,7 +755,6 @@ try {
           type: "module",
           packageManager: "pnpm@10.34.5",
           dependencies: {
-            "@turingfocus/chat-auth": packageFiles["@turingfocus/chat-auth"],
             "@turingfocus/chat-kit": packageFiles["@turingfocus/chat-kit"],
             "socket.io": "4.8.1",
             ...(ui
@@ -787,17 +793,17 @@ try {
                 }),
           },
         },
-        packageNames: ["@turingfocus/chat-auth", "@turingfocus/chat-kit"],
+        packageNames: ["@turingfocus/chat-kit"],
         forbiddenPackageMarkers: ui
           ? ["next@", "office-js@", "@tauri-apps+"]
           : ["react@", "react-dom@", "antd@"],
         sourceFiles: {
           ...(!ui ? { ".npmrc": "auto-install-peers=false\n" } : {}),
-          "auth-chat/consumer.ts": authChatSource,
+          "auth-chat/consumer.ts": facadeAuthSource(authChatSource),
           ...(ui
             ? {
-                "auth-chat/ui.ts": authChatUiSource,
-                "auth-common.ts": authCommonSource,
+                "auth-chat/ui.ts": facadeAuthSource(authChatUiSource),
+                "auth-common.ts": facadeAuthSource(authCommonSource),
               }
             : {}),
           "index.ts": `import { ${runName} } from "./auth-chat/${ui ? "ui" : "consumer"}.js";\nawait ${runName}();\n`,
@@ -843,6 +849,7 @@ try {
   );
 
   const facadeProductionPackageNames = [
+    "@turingfocus/chat-auth",
     "@turingfocus/chat-kit",
     "@turingfocus/chat-gateway-tfrobot",
     "@turingfocus/chat-protocol",
@@ -872,7 +879,7 @@ try {
   await verifyConsumerProject(
     {
       directory: reactConsumerDirectory,
-      forbiddenPackageMarkers: ["@turingfocus+chat-auth@"],
+      forbiddenPackageMarkers: [],
       manifest: reactConsumerManifest,
       sourceFiles: {
         "index.ts": [
@@ -1040,7 +1047,6 @@ try {
     {
       directory: officeStyleConsumerDirectory,
       forbiddenPackageMarkers: [
-        "@turingfocus+chat-auth@",
         "@microsoft+office-js@",
         "@tauri-apps+",
         "@turingfocus+chat-gateway-tfrobot@",
@@ -1132,12 +1138,7 @@ try {
   await verifyConsumerProject(
     {
       directory: tauriStyleConsumerDirectory,
-      forbiddenPackageMarkers: [
-        "@turingfocus+chat-auth@",
-        "@tauri-apps+",
-        "next@",
-        "office-js@",
-      ],
+      forbiddenPackageMarkers: ["@tauri-apps+", "next@", "office-js@"],
       manifest: tauriStyleConsumerManifest,
       packageNames: ["@turingfocus/chat-kit", "@turingfocus/chat-testing"],
       sourceFiles: {

@@ -193,6 +193,9 @@ export function resolveTFRobotServerProfile(
   });
 }
 
+/** REST creation contract, independent of Socket recovery semantics. */
+export type TFRobotConversationContract = "query-v1" | "json-v2";
+
 export interface TFRobotGatewayOptions {
   /** Direct TFRobotServer or host BFF base URL, including any route prefix. */
   readonly baseUrl: string;
@@ -200,7 +203,9 @@ export interface TFRobotGatewayOptions {
   readonly sessionProvider: SessionProvider<TFRobotSession>;
   /** Defaults to strict, replay-verified Server semantics. */
   readonly serverProfile?: TFRobotServerProfile | undefined;
-  /** Optional fixed platform filter for conversation discovery. */
+  /** Explicit REST contract. Defaults to legacy query-v1; never auto-retries another contract. */
+  readonly conversationContract?: TFRobotConversationContract | undefined;
+  /** Optional fixed platform filter for conversation discovery. Required positive integer for json-v2 creation. */
   readonly platformId?: number | string | undefined;
   /** Defaults to the origin of baseUrl plus the `/chat` namespace. */
   readonly socketNamespaceUrl?: string | undefined;

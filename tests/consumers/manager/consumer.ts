@@ -1,10 +1,10 @@
 import { createServer } from "node:http";
 import { Server } from "socket.io";
-import { createAuthClient } from "@turingfocus/chat-auth/headless";
+import { createAuthClient } from "@turingfocus/chat-kit/auth";
 import {
   createManagerClient,
   type ManagerRobot,
-} from "@turingfocus/chat-auth/manager";
+} from "@turingfocus/chat-kit/auth/manager";
 import { createManagerChatController } from "@turingfocus/chat-kit/manager";
 
 const check = (value: unknown, message: string): void => {

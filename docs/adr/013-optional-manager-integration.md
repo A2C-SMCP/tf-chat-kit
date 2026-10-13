@@ -55,3 +55,5 @@ OPTIONS 与业务请求到达同一 Server。保留旧 `routed-api` 的 `/api` �
 正式旧入口目前只将实例前缀下的 Socket 转给 Server，REST 落入 Front。配套修复仅将
 `/v1/chat` 家族交给 Server，保留 `/api`、Front 页面和其他旧路由。Server 自身负责
 跨域 Origin/方法/Header 策略及 JWT/scope 校验，网关不伪造认证也不全局放开 CORS。
+
+> 2026-10-13：门面安装 auth 的限制由 [ADR-014](014-auth-facade-and-server-contract.md) 替代，其余决策继续有效。
