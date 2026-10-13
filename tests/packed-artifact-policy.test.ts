@@ -41,12 +41,21 @@ type MutableArtifactInput = Omit<
   }>;
 };
 
+const workspaceVersions = new Map([
+  ["@turingfocus/chat-protocol", "0.1.0"],
+  ["@turingfocus/chat-runtime", "0.1.0"],
+]);
+
 const validInput = (): MutableArtifactInput => {
-  const packedManifest = expectedPackedManifest(sourceManifest);
+  const packedManifest = expectedPackedManifest(
+    sourceManifest,
+    workspaceVersions,
+  );
   return {
     packageName: "@turingfocus/chat-testing",
     sourceManifest,
     packedManifest,
+    workspaceVersions,
     declaredFiles: [
       "LICENSE",
       "package.json",
@@ -96,6 +105,56 @@ const facadeArtifactInput = (): MutableArtifactInput => {
   input.extractedFiles.push(...facadeFiles);
   return input;
 };
+
+describe("workspace dependency versions", () => {
+  const versions = new Map([
+    ["@turingfocus/chat-auth", "0.11.0"],
+    ["@turingfocus/chat-runtime", "0.10.0-next.0"],
+  ]);
+  it("resolves independently versioned dependencies using the target package", () => {
+    const manifest = {
+      name: "@turingfocus/chat-kit",
+      version: "0.10.0-next.0",
+      dependencies: { "@turingfocus/chat-auth": "workspace:^" },
+      optionalDependencies: { "@turingfocus/chat-runtime": "workspace:^" },
+      peerDependencies: {
+        "@turingfocus/chat-auth": "workspace:^",
+        react: ">=18 <19",
+      },
+    };
+    expect(expectedPackedManifest(manifest, versions)).toEqual({
+      ...manifest,
+      dependencies: { "@turingfocus/chat-auth": "^0.11.0" },
+      optionalDependencies: { "@turingfocus/chat-runtime": "^0.10.0-next.0" },
+      peerDependencies: {
+        "@turingfocus/chat-auth": "^0.11.0",
+        react: ">=18 <19",
+      },
+    });
+    expect(manifest.dependencies["@turingfocus/chat-auth"]).toBe("workspace:^");
+  });
+  it("rejects a missing workspace dependency instead of substituting the parent version", () => {
+    expect(() => expectedPackedManifest(sourceManifest, new Map())).toThrow(
+      /workspace dependency/u,
+    );
+  });
+  it("rejects a packed dependency range derived from the facade version", () => {
+    const input = validInput();
+    input.sourceManifest = {
+      ...sourceManifest,
+      version: "0.10.0-next.0",
+      dependencies: { "@turingfocus/chat-auth": "workspace:^" },
+    };
+    input.workspaceVersions = versions;
+    input.packedManifest = {
+      ...input.sourceManifest,
+      dependencies: { "@turingfocus/chat-auth": "^0.10.0-next.0" },
+    };
+    expect(validatePackedArtifact(input)).toContainEqual(
+      expect.stringContaining("packed package.json"),
+    );
+  });
+});
 
 describe("packed artifact policy", () => {
   it("accepts an exact packed manifest and safe text files", () => {

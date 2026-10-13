@@ -2,10 +2,14 @@ import { execFileSync } from "node:child_process";
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { expectedPackedManifest } from "./packed-artifact-policy.mjs";
+import {
+  expectedPackedManifest,
+  loadWorkspaceVersions,
+} from "./packed-artifact-policy.mjs";
 import { PACKAGE_POLICY } from "./workspace-policy.mjs";
 
 const rootDirectory = process.cwd();
+const workspaceVersions = await loadWorkspaceVersions(rootDirectory);
 const outputDirectory = path.join(rootDirectory, ".artifacts", "packages");
 const stagingDirectory = path.join(rootDirectory, ".artifacts", "pack-staging");
 const requiredPackageFiles = [
@@ -55,7 +59,10 @@ try {
     const sourceManifest = JSON.parse(
       await readFile(path.join(packageDirectory, "package.json"), "utf8"),
     );
-    const publishManifest = expectedPackedManifest(sourceManifest);
+    const publishManifest = expectedPackedManifest(
+      sourceManifest,
+      workspaceVersions,
+    );
     await writeFile(
       path.join(stagedPackageDirectory, "package.json"),
       `${JSON.stringify(publishManifest, null, 2)}\n`,

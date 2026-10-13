@@ -47,6 +47,37 @@ describe("workspace packaging", () => {
       );
     }
 
+    // Read tarballs and source target versions independently of the packer:
+    // comparing two outputs from its resolver would reproduce the same bug.
+    for (const packedPackage of manifest.packages) {
+      const packedManifest = JSON.parse(
+        execFileSync(
+          "tar",
+          ["-xOf", packedPackage.tarball, "package/package.json"],
+          { encoding: "utf8" },
+        ),
+      ) as {
+        dependencies?: Record<string, string>;
+      };
+      for (const [name, range] of Object.entries(
+        packedManifest.dependencies ?? {},
+      )) {
+        const target = Object.entries(PACKAGE_POLICY).find(
+          ([, policy]) => policy.name === name,
+        );
+        if (target === undefined) continue;
+        const targetManifest = JSON.parse(
+          await readFile(
+            path.join(rootDirectory, "packages", target[0], "package.json"),
+            "utf8",
+          ),
+        ) as { version: string };
+        expect(range, `${packedPackage.name} -> ${name}`).toBe(
+          `^${targetManifest.version}`,
+        );
+      }
+    }
+
     const firstTarballs = new Map(
       await Promise.all(
         manifest.packages.map(
