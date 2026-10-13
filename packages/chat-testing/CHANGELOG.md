@@ -1,5 +1,11 @@
 # @turingfocus/chat-testing
 
+## 0.10.0-next.0
+
+### Patch Changes
+
+- @turingfocus/chat-protocol@0.10.0-next.0
+
 ## 0.9.0
 
 ### Patch Changes

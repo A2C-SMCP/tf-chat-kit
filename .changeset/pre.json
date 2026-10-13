@@ -11,5 +11,5 @@
     "@turingfocus/chat-testing": "0.9.0",
     "@turingfocus/chat-ui-antd": "0.9.0"
   },
-  "changesets": []
+  "changesets": ["word-auth-facade-contract"]
 }

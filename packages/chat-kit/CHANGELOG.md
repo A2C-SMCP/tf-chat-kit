@@ -1,5 +1,20 @@
 # @turingfocus/chat-kit
 
+## 0.10.0-next.0
+
+### Minor Changes
+
+- 04ffac1: Expose explicit auth subentries through chat-kit so hosts can install one facade while chat-auth retains its independent version. Add explicit JSON conversation creation and Server platform discovery, with validated platform selection and lifecycle isolation in Manager integrations.
+
+### Patch Changes
+
+- Updated dependencies [04ffac1]
+  - @turingfocus/chat-gateway-tfrobot@0.10.0-next.0
+  - @turingfocus/chat-protocol@0.10.0-next.0
+  - @turingfocus/chat-runtime@0.10.0-next.0
+  - @turingfocus/chat-react@0.10.0-next.0
+  - @turingfocus/chat-ui-antd@0.10.0-next.0
+
 ## 0.9.0
 
 ### Minor Changes
