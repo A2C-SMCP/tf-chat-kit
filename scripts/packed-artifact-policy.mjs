@@ -2,6 +2,10 @@ import { TextDecoder } from "node:util";
 import ts from "typescript";
 
 import { validateFacadeEntryIsolation } from "./facade-entry-policy.mjs";
+import {
+  loadWorkspaceSnapshot,
+  isZeroMajorVersion,
+} from "./workspace-policy.mjs";
 
 const dependencySections = [
   "dependencies",
@@ -174,15 +178,42 @@ const canonicalJson = (value) => {
 /** @param {unknown} value */
 const stableJson = (value) => JSON.stringify(canonicalJson(value));
 
+/** Load one validated version catalog for both packaging and artifact checks.
+ * @param {string} rootDirectory
+ * @returns {Promise<ReadonlyMap<string, string>>}
+ */
+export async function loadWorkspaceVersions(rootDirectory) {
+  const { packages } = await loadWorkspaceSnapshot(rootDirectory);
+  /** @type {Map<string, string>} */
+  const versions = new Map();
+  for (const { manifest } of packages) {
+    if (
+      !manifest.name ||
+      !manifest.version ||
+      !isZeroMajorVersion(manifest.version)
+    ) {
+      throw new Error(
+        "workspace packages must declare a name and valid 0.x version",
+      );
+    }
+    if (versions.has(manifest.name)) {
+      throw new Error(`duplicate workspace package ${manifest.name}`);
+    }
+    versions.set(manifest.name, manifest.version);
+  }
+  return versions;
+}
+
 /**
  * pnpm rewrites internal workspace ranges in the packed manifest. Build the
  * exact manifest that consumers should receive so unexpected dependencies,
  * scripts, or metadata cannot hide behind a valid source workspace snapshot.
  *
  * @param {Record<string, unknown>} sourceManifest
+ * @param {ReadonlyMap<string, string>} workspaceVersions
  * @returns {Record<string, unknown>}
  */
-export function expectedPackedManifest(sourceManifest) {
+export function expectedPackedManifest(sourceManifest, workspaceVersions) {
   const expected = structuredClone(sourceManifest);
   const version = expected["version"];
   if (typeof version !== "string") {
@@ -194,7 +225,11 @@ export function expectedPackedManifest(sourceManifest) {
     const dependencyMap = /** @type {Record<string, unknown>} */ (dependencies);
     for (const [name, specifier] of Object.entries(dependencyMap)) {
       if (name.startsWith("@turingfocus/") && specifier === "workspace:^") {
-        dependencyMap[name] = `^${version}`;
+        const dependencyVersion = workspaceVersions.get(name);
+        if (!dependencyVersion) {
+          throw new Error(`missing version for workspace dependency ${name}`);
+        }
+        dependencyMap[name] = `^${dependencyVersion}`;
       }
     }
   }
@@ -206,6 +241,7 @@ export function expectedPackedManifest(sourceManifest) {
  *   packageName: string;
  *   sourceManifest: Record<string, unknown>;
  *   packedManifest: Record<string, unknown>;
+ *   workspaceVersions: ReadonlyMap<string, string>;
  *   declaredFiles: readonly string[];
  *   extractedFiles: readonly { path: string; content?: string; bytes?: Uint8Array }[];
  *   expectedFileContents?: Readonly<Record<string, Uint8Array>>;
@@ -216,13 +252,17 @@ export function validatePackedArtifact({
   packageName,
   sourceManifest,
   packedManifest,
+  workspaceVersions,
   declaredFiles,
   extractedFiles,
   expectedFileContents = {},
 }) {
   /** @type {string[]} */
   const errors = [];
-  const expectedManifest = expectedPackedManifest(sourceManifest);
+  const expectedManifest = expectedPackedManifest(
+    sourceManifest,
+    workspaceVersions,
+  );
   if (stableJson(packedManifest) !== stableJson(expectedManifest)) {
     errors.push(
       `${packageName}: packed package.json must exactly match the approved source manifest after workspace range resolution`,
