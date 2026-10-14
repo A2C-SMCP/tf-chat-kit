@@ -75,3 +75,10 @@ export {
 export type { ChatResourceLabels } from "./types.js";
 
 export type { ChatNoticeTiming } from "./chat-notices.js";
+
+export {
+  ChatCompactWorkspace,
+  type ChatCompactWorkspaceProps,
+  type ChatCompactDraft,
+} from "./chat-compact-workspace.js";
+export { compactChatZhCN } from "./compact-labels.js";

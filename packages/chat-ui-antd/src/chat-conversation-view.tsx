@@ -63,6 +63,8 @@ import {
 export type { ChatUiCommand, ChatUiCommandFailure };
 
 export interface ChatConversationViewProps {
+  /** Hide developer controls in a composed end-user interface. */
+  readonly presentation?: "standard" | "compact" | undefined;
   readonly sendShortcut?: ChatComposerSendShortcut | undefined;
   readonly noticeTiming?: ChatNoticeTiming | undefined;
   readonly onRequestAuthentication?: (() => void) | undefined;
@@ -146,6 +148,7 @@ const equalChatConversationViewSnapshot = (
     left.timeline === right.timeline);
 
 export const ChatConversationView = ({
+  presentation = "standard",
   sendShortcut,
   className,
   noticeTiming,
@@ -466,41 +469,50 @@ export const ChatConversationView = ({
     >
       <ChatNotices
         key={`notices:${viewResetKey}`}
+        showDiagnostics={presentation === "standard"}
         conversationId={conversationId}
         timing={noticeTiming}
         labels={labels}
         getDeadlineAt={getDeadlineAt}
         onRequestAuthentication={onRequestAuthentication}
       />
-      <ChatRunStatus
-        key={`${viewResetKey}:${snapshot.run?.id ?? "no-run"}`}
-        canInterrupt={lifecycleOperable && snapshot.capabilities.interrupt}
-        labels={labels}
-        onInterrupt={interrupt}
-        run={snapshot.run}
-        showInterruptButton={false}
-        showError={false}
-      />
-      <div
-        style={{
-          alignItems: "center",
-          display: "flex",
-          gap: token.marginXS,
-          justifyContent: "flex-end",
-          padding: `${token.paddingXXS}px ${token.paddingSM}px`,
-        }}
-      >
-        <Typography.Text type="secondary">
-          {labels.eventDetailModeLabel}
-        </Typography.Text>
-        <Segmented
-          aria-label={labels.eventDetailModeLabel}
-          onChange={changeEventDetailMode}
-          options={eventDetailModeOptions}
-          size="small"
-          value={requestedEventDetailMode}
+      {presentation === "standard" ? (
+        <ChatRunStatus
+          key={`${viewResetKey}:${snapshot.run?.id ?? "no-run"}`}
+          canInterrupt={lifecycleOperable && snapshot.capabilities.interrupt}
+          labels={labels}
+          onInterrupt={interrupt}
+          run={snapshot.run}
+          showInterruptButton={false}
+          showError={false}
         />
-      </div>
+      ) : snapshot.run?.status === "running" ? (
+        <span role="status" style={{ padding: "4px 12px", fontSize: 12 }}>
+          {labels.sending}
+        </span>
+      ) : null}
+      {presentation === "standard" ? (
+        <div
+          style={{
+            alignItems: "center",
+            display: "flex",
+            gap: token.marginXS,
+            justifyContent: "flex-end",
+            padding: `${token.paddingXXS}px ${token.paddingSM}px`,
+          }}
+        >
+          <Typography.Text type="secondary">
+            {labels.eventDetailModeLabel}
+          </Typography.Text>
+          <Segmented
+            aria-label={labels.eventDetailModeLabel}
+            onChange={changeEventDetailMode}
+            options={eventDetailModeOptions}
+            size="small"
+            value={requestedEventDetailMode}
+          />
+        </div>
+      ) : null}
       <div
         data-chat-event-layout={resolvedEventDetailMode}
         ref={layoutRef}

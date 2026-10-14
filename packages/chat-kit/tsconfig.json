@@ -5,7 +5,8 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "types": ["react"],
-    "tsBuildInfoFile": "../../.artifacts/tsbuildinfo/chat-kit.tsbuildinfo"
+    "tsBuildInfoFile": "../../.artifacts/tsbuildinfo/chat-kit.tsbuildinfo",
+    "jsx": "react-jsx"
   },
   "references": [
     {
@@ -27,5 +28,5 @@
       "path": "../chat-auth"
     }
   ],
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
 }

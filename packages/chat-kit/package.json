@@ -75,6 +75,11 @@
       "types": "./dist/auth-manager.d.ts",
       "import": "./dist/auth-manager.js",
       "default": "./dist/auth-manager.js"
+    },
+    "./manager-antd": {
+      "types": "./dist/manager-antd.d.ts",
+      "import": "./dist/manager-antd.js",
+      "default": "./dist/manager-antd.js"
     }
   },
   "dependencies": {

@@ -62,6 +62,7 @@ function RecoveryNotice({
 }
 
 export function ChatNotices({
+  showDiagnostics = true,
   conversationId,
   timing,
   labels,
@@ -71,6 +72,7 @@ export function ChatNotices({
   loading = false,
   error: loadError,
 }: {
+  showDiagnostics?: boolean | undefined;
   conversationId?: string | undefined;
   timing?: ChatNoticeTiming | undefined;
   labels?: ChatUiLabelOverrides | undefined;
@@ -204,7 +206,9 @@ export function ChatNotices({
         style={{ display: "flex", alignItems: "center", gap: 8, padding: 4 }}
       >
         <span role="status">{summary}</span>
-        <ChatDiagnostics conversationId={conversationId} labels={labels} />
+        {showDiagnostics ? (
+          <ChatDiagnostics conversationId={conversationId} labels={labels} />
+        ) : null}
         {active.length > 1 ? (
           <span>
             {active.length} {copy.activeFaults ?? "active faults"}

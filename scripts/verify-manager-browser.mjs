@@ -1,6 +1,13 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:https";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -32,6 +39,11 @@ try {
       `file:${path.resolve(root, item.tarball)}`,
     ]),
   );
+  const coreOverrides = Object.fromEntries(
+    Object.entries(packages).filter(
+      ([name]) => name !== "@turingfocus/chat-auth",
+    ),
+  );
   await writeFile(
     path.join(temporary, "package.json"),
     JSON.stringify({
@@ -40,8 +52,16 @@ try {
       type: "module",
       dependencies: {
         "@turingfocus/chat-kit": packages["@turingfocus/chat-kit"],
+        react: "18.3.1",
+        "react-dom": "18.3.1",
+        antd: "5.23.4",
       },
-      pnpm: { overrides: packages },
+      pnpm: {
+        overrides:
+          process.env["TF_CHAT_AUTH_FROM_REGISTRY"] === "1"
+            ? coreOverrides
+            : packages,
+      },
     }),
   );
   await writeFile(path.join(temporary, ".npmrc"), "auto-install-peers=false\n");
@@ -57,14 +77,19 @@ try {
       'export { createTfRobotAuthTransport } from "@turingfocus/chat-kit/auth/tfrobot";',
       'export { createManagerClient } from "@turingfocus/chat-kit/auth/manager";',
       'export { createManagerChatController } from "@turingfocus/chat-kit/manager";',
+      'export { ManagerChatApp } from "@turingfocus/chat-kit/manager-antd";',
+      'export { createElement, StrictMode } from "react";',
+      'export { createRoot } from "react-dom/client";',
     ].join("\n"),
   );
   await build({
     configFile: false,
     root: temporary,
     logLevel: "warn",
+    define: { "process.env.NODE_ENV": JSON.stringify("production") },
     build: {
       outDir: path.join(temporary, "dist"),
+      rollupOptions: { output: { inlineDynamicImports: true } },
       lib: {
         entry: path.join(temporary, "entry.js"),
         formats: ["es"],
@@ -72,6 +97,37 @@ try {
       },
     },
   });
+  // Check the independent auth version. TF_CHAT_AUTH_FROM_REGISTRY=1 also
+  // verifies registry resolution when the current auth version is published.
+  const installedAuth = JSON.parse(
+    await readFile(
+      path.join(
+        temporary,
+        "node_modules/@turingfocus/chat-kit/node_modules/@turingfocus/chat-auth/package.json",
+      ),
+      "utf8",
+    ).catch(async () => {
+      const { createRequire } = await import("node:module");
+      const require = createRequire(
+        await realpath(
+          path.join(
+            temporary,
+            "node_modules/@turingfocus/chat-kit/package.json",
+          ),
+        ),
+      );
+      const entry = require.resolve("@turingfocus/chat-auth");
+      return readFile(
+        path.resolve(path.dirname(entry), "../package.json"),
+        "utf8",
+      );
+    }),
+  );
+  const sourceAuth = JSON.parse(
+    await readFile(path.join(root, "packages/chat-auth/package.json"), "utf8"),
+  );
+  if (installedAuth.version !== sourceAuth.version)
+    throw new Error("Wrong independent auth dependency");
   const bundle = await readFile(path.join(temporary, "dist/consumer.js"));
   const keyPath = path.join(temporary, "key.pem");
   const certPath = path.join(temporary, "cert.pem");
@@ -121,7 +177,7 @@ try {
   ).href;
   await writeFile(
     path.join(output, "consumer.spec.ts"),
-    `import { registerManagerConsumerTests } from ${JSON.stringify(fixture)};\nregisterManagerConsumerTests();\n`,
+    `import { registerManagerConsumerTests } from ${JSON.stringify(fixture)};\nimport { registerManagerUiTests } from ${JSON.stringify(pathToFileURL(path.join(root, "tests/e2e/fixtures/manager-ui.ts")).href)};\nregisterManagerConsumerTests();\nregisterManagerUiTests();\n`,
   );
   const ws = process.env["TF_CHAT_BROWSER_WS"];
   await writeFile(
@@ -136,6 +192,7 @@ try {
       use: {
         baseURL: origin,
         ignoreHTTPSErrors: true,
+        trace: "retain-on-failure",
         ...(ws
           ? { connectOptions: { wsEndpoint: ws, exposeNetwork: "*" } }
           : {}),

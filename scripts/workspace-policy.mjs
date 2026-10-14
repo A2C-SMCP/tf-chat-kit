@@ -91,6 +91,7 @@ const FACADE_EXPORT_POLICY = Object.freeze({
   "./auth/manager": "auth-manager",
   "./manager": "manager",
   "./manager-react": "manager-react",
+  "./manager-antd": "manager-antd",
   ".": "index",
   "./headless": "headless",
   "./react": "react",

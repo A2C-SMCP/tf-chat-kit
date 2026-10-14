@@ -32,6 +32,8 @@ import { useAuth, useAuthSelector } from "./react.js";
 
 type Callback<T> = (value: T) => void | Promise<void>;
 export interface AuthUiLabels {
+  /** Optional localized copy keyed by sanitized authentication error codes. */
+  readonly errors?: Partial<Readonly<Record<AuthError["code"], string>>>;
   readonly login?: string;
   readonly identifier?: string;
   readonly password?: string;
@@ -67,6 +69,8 @@ export interface AuthLoginField {
   readonly control?: ReactNode;
 }
 export interface LoginPanelProps extends AuthUiProps, AuthEnvironmentUiProps {
+  /** Disable when the composed host already renders session-expiry state. */
+  readonly showSessionError?: boolean;
   readonly fields?: {
     readonly identifier?: AuthLoginField;
     readonly password?: AuthLoginField;
@@ -101,12 +105,15 @@ const withTheme = (
   theme: ThemeConfig | undefined,
 ): ReactNode =>
   theme === undefined ? node : createElement(ConfigProvider, { theme }, node);
-const errorNode = (error: AuthError | undefined): ReactNode =>
+const errorNode = (
+  error: AuthError | undefined,
+  labels?: AuthUiLabels,
+): ReactNode =>
   error === undefined
     ? null
     : createElement(Alert, {
         type: "error",
-        message: error.message,
+        message: labels?.errors?.[error.code] ?? error.message,
         role: "alert",
       });
 const isBusy = (status: AuthStatusValue): boolean =>
@@ -235,6 +242,7 @@ export const LoginPanel = ({
   fields,
   extraFields,
   onLogin,
+  showSessionError = true,
   ...environmentProps
 }: LoginPanelProps = {}): ReactNode => {
   const client = useAuth();
@@ -338,7 +346,10 @@ export const LoginPanel = ({
           }),
       ),
       extraFields,
-      errorNode(action.error ?? snapshot.error),
+      errorNode(
+        action.error ?? (showSessionError ? snapshot.error : undefined),
+        labels,
+      ),
       createElement(
         Button,
         { type: "primary", htmlType: "submit", loading: busy, disabled },
@@ -362,7 +373,7 @@ export const AccountSelectionPanel = ({
   const snapshot = useAuthSelector((snapshot) => snapshot);
   const action = useAction(client, onError);
   if (snapshot.status === "error")
-    return withTheme(errorNode(action.error ?? snapshot.error), theme);
+    return withTheme(errorNode(action.error ?? snapshot.error, labels), theme);
   if (snapshot.status !== "account_selection_required" && !action.busy)
     return null;
   const accounts = snapshot.accounts;
@@ -404,7 +415,7 @@ export const AccountSelectionPanel = ({
             message: labels?.emptyAccounts ?? "No accounts available",
           })
         : null,
-      errorNode(action.error ?? snapshot.error),
+      errorNode(action.error ?? snapshot.error, labels),
     ),
     theme,
   );
@@ -462,7 +473,7 @@ export const OrganizationSwitcher = ({
     snapshot.account?.organizationId,
   ]);
   if (snapshot.status === "error")
-    return withTheme(errorNode(action.error ?? snapshot.error), theme);
+    return withTheme(errorNode(action.error ?? snapshot.error, labels), theme);
   if (
     snapshot.status !== "authenticated" &&
     snapshot.status !== "refreshing" &&
@@ -519,7 +530,7 @@ export const OrganizationSwitcher = ({
             message: labels?.emptyAccounts ?? "No accounts available",
           })
         : null,
-      errorNode(action.error ?? snapshot.error),
+      errorNode(action.error ?? snapshot.error, labels),
     ),
     theme,
   );
@@ -615,7 +626,7 @@ export const AuthStatus = ({
             labels?.logout ?? "Sign out",
           )
         : null,
-      errorNode(action.error ?? snapshot.error),
+      errorNode(action.error ?? snapshot.error, labels),
     ),
     theme,
   );

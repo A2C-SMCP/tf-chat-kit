@@ -45,7 +45,7 @@ chat-auth (独立发布，门面显式 auth 子入口；react/antd 为可选 pee
 普通宿主只需安装 `@turingfocus/chat-kit`：非 React 使用 `/headless`，自定义 React UI 使用 `/react`，成品 UI 使用根入口或 `/antd`。需要认证时使用门面 `/auth`，TFRobotServer 适配使用 `/auth/tfrobot`，React/Ant Design 默认 UI 分别使用 `/auth/react` 与 `/auth/antd`。高级消费者仍可按需安装叶子包；`chat-testing` 是独立开发依赖，不进入生产门面。
 
 需要 Manager 机器人目录与自动连接时，可选使用 `chat-kit/auth/manager`、`chat-kit/manager`
-和 `chat-kit/manager-react`。接法、部署策略与验证范围见 [Manager 集成指南](docs/manager-integration.md)。
+和 `chat-kit/manager-react`。 可选完整默认界面使用 `chat-kit/manager-antd` 的 `ManagerChatApp`，见 [默认 UI 接入](docs/default-manager-ui.md)。接法、部署策略与验证范围见 [Manager 集成指南](docs/manager-integration.md)。
 
 任何 Chat Kit 包都不得反向依赖 TFRobotFront 或其他宿主项目。
 
