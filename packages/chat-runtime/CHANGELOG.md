@@ -1,5 +1,13 @@
 # @turingfocus/chat-runtime
 
+## 0.10.0-next.2
+
+### Patch Changes
+
+- ba54e24: Reconcile mutable author names and avatars independently from current-server user-message identity. Keep historical author updates across cache reads, pagination, concurrent loads and reconnects without overwriting newer message content. Add optional message provenance and author-only recovery updates. Preserve unassociated provisional messages and show them in an expandable review section in the default UI; never alias different user IDs or claim complete current-server recovery.
+- Updated dependencies [ba54e24]
+  - @turingfocus/chat-protocol@0.10.0-next.2
+
 ## 0.10.0-next.1
 
 ### Patch Changes

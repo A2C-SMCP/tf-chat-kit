@@ -1,6 +1,6 @@
 {
   "name": "@turingfocus/chat-testing",
-  "version": "0.10.0-next.1",
+  "version": "0.10.0-next.2",
   "description": "In-memory gateways, fixtures, and chat contract test utilities",
   "license": "MIT",
   "repository": {

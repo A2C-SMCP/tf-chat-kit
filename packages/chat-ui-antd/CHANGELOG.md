@@ -1,5 +1,23 @@
 # @turingfocus/chat-ui-antd
 
+## 0.10.0-next.2
+
+### Minor Changes
+
+- ba54e24: Reconcile mutable author names and avatars independently from current-server user-message identity. Keep historical author updates across cache reads, pagination, concurrent loads and reconnects without overwriting newer message content. Add optional message provenance and author-only recovery updates. Preserve unassociated provisional messages and show them in an expandable review section in the default UI; never alias different user IDs or claim complete current-server recovery.
+
+### Patch Changes
+
+- f7c1fa2: Clarify identity, organization, robot and platform context in the default Manager UI. Add consistent switch controls and preserve active chat and drafts while browsing or cancelling robot/platform candidates. Keep host-fixed platforms visible and distinguish account display names from organization IDs.
+
+  Preserve the optional Manager organizationName field independently of account displayName, with safe ID fallbacks for missing organization names.
+
+  Restore focus to the actual history/help navigation trigger in WebKit as well as Chromium.
+
+- Updated dependencies [ba54e24]
+  - @turingfocus/chat-protocol@0.10.0-next.2
+  - @turingfocus/chat-react@0.10.0-next.2
+
 ## 0.10.0-next.1
 
 ### Minor Changes

@@ -1,5 +1,24 @@
 # @turingfocus/chat-kit
 
+## 0.10.0-next.2
+
+### Patch Changes
+
+- f7c1fa2: Clarify identity, organization, robot and platform context in the default Manager UI. Add consistent switch controls and preserve active chat and drafts while browsing or cancelling robot/platform candidates. Keep host-fixed platforms visible and distinguish account display names from organization IDs.
+
+  Preserve the optional Manager organizationName field independently of account displayName, with safe ID fallbacks for missing organization names.
+
+  Restore focus to the actual history/help navigation trigger in WebKit as well as Chromium.
+
+- Updated dependencies [ba54e24]
+- Updated dependencies [f7c1fa2]
+  - @turingfocus/chat-gateway-tfrobot@0.10.0-next.2
+  - @turingfocus/chat-protocol@0.10.0-next.2
+  - @turingfocus/chat-runtime@0.10.0-next.2
+  - @turingfocus/chat-ui-antd@0.10.0-next.2
+  - @turingfocus/chat-auth@0.12.0-next.1
+  - @turingfocus/chat-react@0.10.0-next.2
+
 ## 0.10.0-next.1
 
 ### Minor Changes

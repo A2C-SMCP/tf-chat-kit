@@ -1,5 +1,12 @@
 # @turingfocus/chat-react
 
+## 0.10.0-next.2
+
+### Patch Changes
+
+- Updated dependencies [ba54e24]
+  - @turingfocus/chat-runtime@0.10.0-next.2
+
 ## 0.10.0-next.1
 
 ### Patch Changes

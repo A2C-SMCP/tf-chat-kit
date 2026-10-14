@@ -12,8 +12,10 @@
     "@turingfocus/chat-ui-antd": "0.9.0"
   },
   "changesets": [
+    "current-server-author-display",
     "default-manager-ui",
     "fix-independent-auth-package-range",
+    "manager-context-ui",
     "word-auth-facade-contract"
   ]
 }
