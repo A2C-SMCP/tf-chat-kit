@@ -11,6 +11,9 @@ const account = {
   organizationId: "org",
 };
 let activeAccount = account;
+let directoryStatus = 200;
+let chatStatus = 200;
+let historyStatus = 200;
 let nextConversation = 43;
 /** @type {Map<number, {conversationId: number; title: string; updateTimestamp: number}>} */
 const createdConversations = new Map();
@@ -50,8 +53,58 @@ const server = createListener((req, res) => {
     body += chunk.toString();
   });
   req.on("end", () => {
+    if (url.pathname === "/__test/history-status") {
+      historyStatus = Number(JSON.parse(body).status);
+      reply({});
+      return;
+    }
+    if (url.pathname === "/__test/chat-status") {
+      chatStatus = Number(JSON.parse(body).status);
+      reply({});
+      return;
+    }
+    if (url.pathname === "/__test/directory-status") {
+      directoryStatus = Number(JSON.parse(body).status);
+      reply({});
+      return;
+    }
     if (url.pathname === "/auth/login-by-password") {
-      reply({ token: "manager-browser", account });
+      directoryStatus = 200;
+      chatStatus = 200;
+      historyStatus = 200;
+      activeAccount = account;
+      const input = JSON.parse(body);
+      if (input.password === "invalid") {
+        reply({ message: "private-fixture-detail" }, 401);
+        return;
+      }
+      if (input.phone === "ui")
+        reply({
+          tempToken: "ui-selection",
+          accounts: [
+            {
+              accountId: "account",
+              organizationId: "org",
+              accountName: "Word 测试组织",
+            },
+            {
+              accountId: "other",
+              organizationId: "other-org",
+              accountName: "另一个组织",
+            },
+          ],
+        });
+      else reply({ token: "manager-browser", account });
+      return;
+    }
+    if (url.pathname === "/auth/select-account") {
+      const input = JSON.parse(body);
+      activeAccount = {
+        ...account,
+        accountId: input.accountId,
+        organizationId: input.accountId === "account" ? "org" : "other-org",
+      };
+      reply({ token: "manager-browser", account: activeAccount });
       return;
     }
     const isExchange = url.pathname === "/api/v1/oauth/token";
@@ -65,6 +118,27 @@ const server = createListener((req, res) => {
         `Bearer ${isChat ? "robot-browser" : "manager-browser"}`
     ) {
       reply({ message: "Unauthorized" }, 401);
+      return;
+    }
+    if (url.pathname === "/api/v1/accounts/my") {
+      reply({
+        accounts: [
+          {
+            accountId: "account",
+            organizationId: "org",
+            accountName: "Word 测试组织",
+          },
+          {
+            accountId: "other",
+            organizationId: "other-org",
+            accountName: "另一个组织",
+          },
+        ],
+      });
+      return;
+    }
+    if (url.pathname === "/api/v1/auth/logout") {
+      reply({});
       return;
     }
     if (url.pathname === "/api/v1/auth/me") {
@@ -82,6 +156,10 @@ const server = createListener((req, res) => {
       return;
     }
     if (url.pathname === "/api/v1/digital-employees") {
+      if (directoryStatus !== 200) {
+        reply({ message: "private-fixture-detail" }, directoryStatus);
+        return;
+      }
       const page = Number(url.searchParams.get("page")),
         pageSize = Number(url.searchParams.get("pageSize"));
       reply({
@@ -182,10 +260,15 @@ const server = createListener((req, res) => {
         return;
       }
       if (req.method === "POST" && url.pathname.endsWith("/messages")) {
+        if (chatStatus !== 200) {
+          reply({ message: "private-fixture-detail" }, chatStatus);
+          return;
+        }
         const message = JSON.parse(body);
         if (
           !createdConversations.has(conversationId) ||
-          message.content !== "Browser round trip" ||
+          (message.content !== "Browser round trip" &&
+            !String(message.content).startsWith("UI long text:")) ||
           message.creator?.uid !== "manager-user"
         ) {
           reply({}, 422);
@@ -212,6 +295,16 @@ const server = createListener((req, res) => {
             });
         return;
       }
+      if (req.method === "PATCH" && createdConversations.has(conversationId)) {
+        const item = createdConversations.get(conversationId);
+        if (!item) {
+          reply({}, 404);
+          return;
+        }
+        Object.assign(item, { title: JSON.parse(body).title });
+        reply({ code: 200, message: "Success", data: item });
+        return;
+      }
       if (req.method === "DELETE") {
         if (!createdConversations.delete(conversationId)) {
           reply({}, 404);
@@ -224,8 +317,35 @@ const server = createListener((req, res) => {
         });
         return;
       }
+      if (
+        req.method === "GET" &&
+        url.pathname.endsWith("/conversations") &&
+        historyStatus !== 200
+      ) {
+        reply({}, historyStatus);
+        return;
+      }
       const data = url.pathname.endsWith("/messages")
-        ? { messages: [], events: [], cursor: null }
+        ? {
+            messages:
+              conversationId === 42
+                ? [
+                    {
+                      msgId: "existing-private",
+                      content: "Persisted private reply",
+                      conversationId: 42,
+                      createTimestamp: Date.now(),
+                      role: "assistant",
+                      msgType: "text",
+                      additionalKwargs: {},
+                      attachments: null,
+                      creator: { uid: "robot", name: "Fixture", avatar: null },
+                    },
+                  ]
+                : [],
+            events: [],
+            cursor: null,
+          }
         : url.pathname.endsWith("/status")
           ? { working: false, taskId: null }
           : {
@@ -237,7 +357,7 @@ const server = createListener((req, res) => {
                   updateTimestamp: Date.now(),
                 },
               ],
-              cursor: null,
+              cursor: "next-page",
             };
       reply({ code: 200, message: "Success", data });
       return;

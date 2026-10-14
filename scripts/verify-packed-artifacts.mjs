@@ -15,9 +15,13 @@ import { registryConsumerPackages } from "./release-group-policy.mjs";
 import { validateReleaseManifestForPublish } from "./publish-release.mjs";
 
 import { PACKAGE_POLICY } from "./workspace-policy.mjs";
-import { validatePackedArtifact } from "./packed-artifact-policy.mjs";
+import {
+  validatePackedArtifact,
+  loadWorkspaceVersions,
+} from "./packed-artifact-policy.mjs";
 
 const rootDirectory = process.cwd();
+const workspaceVersions = await loadWorkspaceVersions(rootDirectory);
 const approvedLicense = await readFile(path.join(rootDirectory, "LICENSE"));
 const sourceFlagIndex = process.argv.indexOf("--source");
 const versionFlagIndex = process.argv.indexOf("--version");
@@ -412,6 +416,7 @@ try {
         packageName: packedPackage.name,
         sourceManifest,
         packedManifest,
+        workspaceVersions,
         declaredFiles: packedPackage.files,
         extractedFiles,
         expectedFileContents: { LICENSE: approvedLicense },
@@ -680,7 +685,9 @@ try {
           },
           devDependencies: { typescript: "5.9.3", "@types/node": "24.13.3" },
           pnpm: {
-            overrides: packageFiles,
+            // Local tarballs require substitution before publication. Registry
+            // verification must exercise consumers' actual dependency ranges.
+            ...(packageSource === "packed" ? { overrides: packageFiles } : {}),
             peerDependencyRules: {
               ignoreMissing: ["react", "react-dom", "antd", "@types/react"],
             },

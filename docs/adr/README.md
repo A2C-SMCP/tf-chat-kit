@@ -28,3 +28,5 @@
 - `Rejected`：经过讨论但未采用。
 
 已接受 ADR 的实质性变化应通过新的 ADR 完成，并在原记录中标记替代关系；不要直接改写历史决策。
+
+| [015](015-default-manager-ui.md) | 可选完整 Manager 聊天 UI 与紧凑默认体验 | Accepted |
