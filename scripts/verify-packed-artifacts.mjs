@@ -1175,6 +1175,7 @@ try {
   );
 
   const tfrobotfrontStylePackageNames = [
+    "@turingfocus/chat-auth",
     "@turingfocus/chat-kit",
     "@turingfocus/chat-gateway-tfrobot",
     "@turingfocus/chat-protocol",
@@ -1205,7 +1206,10 @@ try {
       "@types/react-test-renderer": "18.3.1",
       typescript: "5.9.3",
     },
-    pnpm: { overrides: tfrobotfrontStylePackageFiles },
+    pnpm:
+      packageSource === "packed"
+        ? { overrides: tfrobotfrontStylePackageFiles }
+        : {},
   };
   const tfrobotfrontConsumerSource = await readFile(
     path.join(
