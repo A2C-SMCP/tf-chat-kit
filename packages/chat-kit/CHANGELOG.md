@@ -10,7 +10,7 @@
 
   Restore focus to the actual history/help navigation trigger in WebKit as well as Chromium.
 
-- Updated dependencies [c7be473]
+- Updated dependencies [ba54e24]
 - Updated dependencies [f7c1fa2]
   - @turingfocus/chat-gateway-tfrobot@0.10.0-next.2
   - @turingfocus/chat-protocol@0.10.0-next.2
