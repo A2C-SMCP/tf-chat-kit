@@ -251,8 +251,11 @@ export function ChatCompactWorkspace({
     if (accessDenied) onAccessDenied?.();
   }, [accessDenied, onAccessDenied]);
   const navigationTrigger = useRef<HTMLElement>();
-  const openPage = (next: "chat" | "history" | "help") => {
-    const active = root.current?.ownerDocument.activeElement;
+  const openPage = (
+    next: "chat" | "history" | "help",
+    trigger?: HTMLElement,
+  ) => {
+    const active = trigger ?? root.current?.ownerDocument.activeElement;
     if (
       page === "chat" &&
       active instanceof HTMLElement &&
@@ -313,7 +316,12 @@ export function ChatCompactWorkspace({
           size="small"
           type="text"
           disabled={busy}
-          onClick={() => openPage(page === "history" ? "chat" : "history")}
+          onClick={(event) =>
+            openPage(
+              page === "history" ? "chat" : "history",
+              event.currentTarget,
+            )
+          }
         >
           {labels.historyConversations}
         </Button>
@@ -336,7 +344,9 @@ export function ChatCompactWorkspace({
           size="small"
           type="text"
           aria-label={zh ? "帮助与诊断" : "Help and diagnostics"}
-          onClick={() => openPage(page === "help" ? "chat" : "help")}
+          onClick={(event) =>
+            openPage(page === "help" ? "chat" : "help", event.currentTarget)
+          }
         >
           ···
         </Button>

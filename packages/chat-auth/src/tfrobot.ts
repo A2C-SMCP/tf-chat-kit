@@ -126,6 +126,10 @@ const accountOptionFrom = (value: unknown): AccountOption => {
     "orgId",
     "org_id",
   );
+  const name = record["organizationName"];
+  if (name != null && typeof name !== "string") return invalidResponse();
+  const organizationName =
+    typeof name === "string" ? name.trim() || undefined : undefined;
   // These are alternative presentation fields, not aliases of one ID.
   const displayName = ["displayName", "accountName", "name", "username"]
     .map((name) => {
@@ -139,6 +143,7 @@ const accountOptionFrom = (value: unknown): AccountOption => {
     accountId,
     ...(userId === undefined ? {} : { userId }),
     ...(organizationId === undefined ? {} : { organizationId }),
+    ...(organizationName === undefined ? {} : { organizationName }),
     ...(displayName === undefined ? {} : { displayName }),
   };
 };

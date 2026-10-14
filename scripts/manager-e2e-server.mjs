@@ -10,10 +10,21 @@ const account = {
   accountId: "account",
   organizationId: "org",
 };
+/** @type {{userId: string; accountId: string; organizationId: string; organizationName?: string; displayName?: string}} */
 let activeAccount = account;
 let directoryStatus = 200;
 let chatStatus = 200;
 let historyStatus = 200;
+let accountsStatus = 200;
+/** @type {string | undefined} */
+let accountDisplayName;
+/** @type {string | undefined} */
+let organizationDisplayName;
+/** @type {string | undefined} */
+let robotDisplayName;
+let platformsStatus = 200;
+let switchAccountStatus = 200;
+let platforms = [{ platformId: 17, name: "Word fixture" }];
 let nextConversation = 43;
 /** @type {Map<number, {conversationId: number; title: string; updateTimestamp: number}>} */
 const createdConversations = new Map();
@@ -53,6 +64,23 @@ const server = createListener((req, res) => {
     body += chunk.toString();
   });
   req.on("end", () => {
+    if (url.pathname === "/__test/ui-options") {
+      const input = JSON.parse(body);
+      if (input.platforms !== undefined) platforms = input.platforms;
+      if (input.platformsStatus !== undefined)
+        platformsStatus = input.platformsStatus;
+      if (input.accountsStatus !== undefined)
+        accountsStatus = input.accountsStatus;
+      if (input.switchAccountStatus !== undefined)
+        switchAccountStatus = input.switchAccountStatus;
+      if (input.accountName !== undefined)
+        accountDisplayName = input.accountName;
+      if (input.organizationName !== undefined)
+        organizationDisplayName = input.organizationName;
+      if (input.robotName !== undefined) robotDisplayName = input.robotName;
+      reply({});
+      return;
+    }
     if (url.pathname === "/__test/history-status") {
       historyStatus = Number(JSON.parse(body).status);
       reply({});
@@ -72,6 +100,13 @@ const server = createListener((req, res) => {
       directoryStatus = 200;
       chatStatus = 200;
       historyStatus = 200;
+      accountsStatus = 200;
+      accountDisplayName = undefined;
+      organizationDisplayName = undefined;
+      robotDisplayName = undefined;
+      platformsStatus = 200;
+      switchAccountStatus = 200;
+      platforms = [{ platformId: 17, name: "Word fixture" }];
       activeAccount = account;
       const input = JSON.parse(body);
       if (input.password === "invalid") {
@@ -85,12 +120,14 @@ const server = createListener((req, res) => {
             {
               accountId: "account",
               organizationId: "org",
-              accountName: "Word 测试组织",
+              organizationName: "Word 测试组织",
+              accountName: "测试账户",
             },
             {
               accountId: "other",
               organizationId: "other-org",
-              accountName: "另一个组织",
+              organizationName: "另一个组织",
+              accountName: "其他账户",
             },
           ],
         });
@@ -101,7 +138,13 @@ const server = createListener((req, res) => {
       const input = JSON.parse(body);
       activeAccount = {
         ...account,
+        ...(accountDisplayName === undefined
+          ? {}
+          : { displayName: accountDisplayName }),
         accountId: input.accountId,
+        organizationName:
+          organizationDisplayName ??
+          (input.accountId === "account" ? "Word 测试组织" : "另一个组织"),
         organizationId: input.accountId === "account" ? "org" : "other-org",
       };
       reply({ token: "manager-browser", account: activeAccount });
@@ -121,17 +164,23 @@ const server = createListener((req, res) => {
       return;
     }
     if (url.pathname === "/api/v1/accounts/my") {
+      if (accountsStatus !== 200) {
+        reply({}, accountsStatus);
+        return;
+      }
       reply({
         accounts: [
           {
             accountId: "account",
             organizationId: "org",
-            accountName: "Word 测试组织",
+            organizationName: organizationDisplayName ?? "Word 测试组织",
+            accountName: "测试账户",
           },
           {
             accountId: "other",
             organizationId: "other-org",
-            accountName: "另一个组织",
+            organizationName: "另一个组织",
+            accountName: "其他账户",
           },
         ],
       });
@@ -146,6 +195,10 @@ const server = createListener((req, res) => {
       return;
     }
     if (url.pathname === "/api/v1/auth/switch-account") {
+      if (switchAccountStatus !== 200) {
+        reply({}, switchAccountStatus);
+        return;
+      }
       const input = JSON.parse(body);
       activeAccount = {
         ...account,
@@ -166,23 +219,16 @@ const server = createListener((req, res) => {
         code: 200,
         data: {
           items: [
-            page === 1
-              ? {
-                  id: "legacy",
-                  robotId: "robot-a",
-                  robotAccountId: "account-a",
-                }
-              : {
-                  id: "alias",
-                  robotId: "robot-b",
-                  robotAccountId: "account-b",
-                },
-          ].map((r) => ({
-            ...r,
-            name: r.id,
-            status: "running",
-            templateType: "tfrserver",
-          })),
+            { id: "legacy", robotId: "robot-a", robotAccountId: "account-a" },
+            { id: "alias", robotId: "robot-b", robotAccountId: "account-b" },
+          ]
+            .slice((page - 1) * pageSize, page * pageSize)
+            .map((r) => ({
+              ...r,
+              name: r.id === "legacy" ? (robotDisplayName ?? r.id) : r.id,
+              status: "running",
+              templateType: "tfrserver",
+            })),
           page,
           pageSize,
           total: 2,
@@ -229,10 +275,14 @@ const server = createListener((req, res) => {
         return;
       }
       if (req.method === "GET" && url.pathname.endsWith("/platforms")) {
+        if (platformsStatus !== 200) {
+          reply({}, platformsStatus);
+          return;
+        }
         reply({
           code: 200,
           message: "Success",
-          data: [{ platformId: 17, name: "Word fixture" }],
+          data: platforms,
         });
         return;
       }
@@ -245,7 +295,11 @@ const server = createListener((req, res) => {
         const title = modern ? input.title : url.searchParams.get("title");
         if (
           !title ||
-          (modern && (input.platformId !== 17 || url.search !== ""))
+          (modern &&
+            (!platforms.some(
+              (platform) => platform.platformId === input.platformId,
+            ) ||
+              url.search !== ""))
         ) {
           reply({}, 422);
           return;

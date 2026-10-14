@@ -95,6 +95,86 @@ describe("TFRobot authentication real HTTP contracts", () => {
   const reply = (response: ServerResponse, data: unknown) =>
     response.end(JSON.stringify(envelope(data)));
 
+  it("preserves organization and account names through real HTTP selection, list, switch and verified me", async () => {
+    const option = (id: string) => ({
+      ...identity(id),
+      accountName: `Account ${id}`,
+      organizationName: `Organization ${id}`,
+    });
+    let current = "account-a";
+    const test = await fixture((request, response, body) => {
+      if (request.url === "/auth/login-by-password")
+        reply(response, {
+          tempToken: "fixture-temp",
+          accounts: [option("account-a"), option("account-b")],
+        });
+      else if (request.url === "/api/v1/accounts/my")
+        reply(response, { accounts: [option(current)] });
+      else if (request.url === "/api/v1/auth/me")
+        reply(response, option(current));
+      else {
+        current = (body as { accountId: string }).accountId;
+        reply(response, { ...credential(current), ...option(current) });
+      }
+    });
+    const result = await test.client.login(loginInput);
+    expect(result).toMatchObject({
+      kind: "account-selection-required",
+      accounts: [
+        {
+          displayName: "Account account-a",
+          organizationName: "Organization account-a",
+        },
+        {
+          displayName: "Account account-b",
+          organizationName: "Organization account-b",
+        },
+      ],
+    });
+    await test.client.selectAccount("account-a");
+    expect(test.client.getSnapshot().account).toMatchObject({
+      displayName: "Account account-a",
+      organizationName: "Organization account-a",
+    });
+    expect(await test.client.listAccounts()).toMatchObject([
+      { organizationName: "Organization account-a" },
+    ]);
+    await test.client.switchAccount("account-b");
+    expect(test.client.getSnapshot().account).toMatchObject({
+      accountId: "account-b",
+      displayName: "Account account-b",
+      organizationName: "Organization account-b",
+    });
+  });
+
+  it.each([undefined, "", "   ", null, 42])(
+    "handles missing or invalid organization presentation names %s without inventing a name",
+    async (name) => {
+      const test = await fixture((_request, response) => {
+        reply(response, {
+          ...credential(),
+          accountName: "Account name",
+          ...(name === undefined ? {} : { organizationName: name }),
+        });
+      });
+      if (name === 42) {
+        await expect(test.client.login(loginInput)).rejects.toMatchObject({
+          authError: { code: "invalid_response" },
+        });
+        expect(test.client.getSnapshot().account).toBeUndefined();
+      } else {
+        await test.client.login(loginInput);
+        expect(test.client.getSnapshot().account).toMatchObject({
+          displayName: "Account name",
+          organizationId: "org-account-a",
+        });
+        expect(
+          test.client.getSnapshot().account?.organizationName,
+        ).toBeUndefined();
+      }
+    },
+  );
+
   it.each(["13800138008", "fixture@example.test"])(
     "maps single-account login %s without credential projection",
     async (identifier) => {
