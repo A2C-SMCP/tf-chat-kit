@@ -18,6 +18,8 @@ export interface AccountOption {
   readonly userId?: string;
   readonly accountId: string;
   readonly organizationId?: string;
+  /** Organization presentation name, independent of the account display name. */
+  readonly organizationName?: string;
   readonly displayName?: string;
 }
 

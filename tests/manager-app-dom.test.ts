@@ -120,3 +120,77 @@ it("development StrictMode releases every UI subscription and preserves host cli
     await auth.dispose();
   }
 });
+
+it("labels a missing robot name as a directory ID and shows the distinct robot ID", async () => {
+  const account = {
+    accountId: "account",
+    userId: "user",
+    organizationId: "org",
+  };
+  const auth = createAuthClient({
+    environment: "staging",
+    transport: {
+      login: async () => ({ kind: "authenticated", account }),
+      selectAccount: async () => ({ kind: "authenticated", account }),
+      getCurrentAccount: async () => account,
+      listAccounts: async () => [account],
+      switchAccount: async () => account,
+      getSession: async () => ({ kind: "bearer", token: "fixture-only" }),
+      logout: async () => {},
+    },
+  });
+  await auth.login({ identifier: "fixture", password: "fixture" });
+  const manager = createManagerClient({
+    auth,
+    baseUrl: "https://fixture.invalid",
+    routing: {
+      allowedOrigins: ["https://fixture.invalid"],
+      http: { kind: "routed-server" },
+    },
+    fetch: async () =>
+      new Response(
+        JSON.stringify({
+          code: 200,
+          data: {
+            items: [
+              {
+                id: "directory-x",
+                robotId: "robot-x",
+                robotAccountId: "robot-account",
+                status: "running",
+                templateType: "tfrserver",
+              },
+            ],
+            page: 1,
+            pageSize: 20,
+            total: 1,
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+  });
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => {
+      root.render(
+        createElement(ManagerChatApp, {
+          auth,
+          manager,
+          chat: {
+            messageCreatorProvider: () => ({ uid: "user", name: "Fixture" }),
+          },
+        }),
+      );
+      await manager.refresh();
+    });
+    const choice = container.querySelector(".tf-choice");
+    expect(choice?.textContent).toContain("目录 ID: directory-x");
+    expect(choice?.textContent).toContain("机器人 ID: robot-x");
+  } finally {
+    act(() => root.unmount());
+    await manager.dispose();
+    await auth.dispose();
+  }
+});

@@ -94,6 +94,7 @@ export function ManagerChatApp(props: ManagerChatAppProps) {
     chat: ManagerChatAppProps["chat"];
     platformId: number | undefined;
     controller: ManagerChatController<ManagerRobot>;
+    picker: ManagerChatController<ManagerRobot>;
   }>();
   const report = useRef(props.onDisposeError);
   report.current = props.onDisposeError;
@@ -103,6 +104,12 @@ export function ManagerChatApp(props: ManagerChatAppProps) {
       chat: props.chat,
       onDisposeError: (error) => report.current?.(error),
     });
+    // Candidate catalog loading never releases the active chat client.
+    const picker = createManagerChatController({
+      manager: props.manager,
+      chat: { ...props.chat, platformId: undefined },
+      onDisposeError: (error) => report.current?.(error),
+    });
     setEntry({
       id: ++sequence.current,
       auth: props.auth,
@@ -110,9 +117,12 @@ export function ManagerChatApp(props: ManagerChatAppProps) {
       chat: props.chat,
       platformId: props.platformId,
       controller,
+      picker,
     });
     return () => {
-      void controller.dispose().catch((error) => report.current?.(error));
+      void Promise.all([controller.dispose(), picker.dispose()]).catch(
+        (error) => report.current?.(error),
+      );
     };
   }, [props.manager, props.chat, props.auth, props.platformId]);
   const active =
@@ -164,6 +174,7 @@ export function ManagerChatApp(props: ManagerChatAppProps) {
               {...props}
               platformId={props.platformId ?? props.chat.platformId}
               controller={active}
+              picker={entry!.picker}
             />
           ) : (
             <Spin />
@@ -178,12 +189,17 @@ function ManagerAppBinding({
   auth,
   manager,
   controller,
+  picker,
   locale = "zh-CN",
   platformId,
+  chat: chatConfig,
   restoring,
   brand,
   getPopupContainer,
-}: ManagerChatAppProps & { controller: ManagerChatController<ManagerRobot> }) {
+}: ManagerChatAppProps & {
+  controller: ManagerChatController<ManagerRobot>;
+  picker: ManagerChatController<ManagerRobot>;
+}) {
   const copy = managerUiCopy[locale];
   const authState = useAuthSelector((s) => s);
   const scope = managerIdentityScope(authState);
@@ -194,6 +210,7 @@ function ManagerAppBinding({
   );
   const accessDenied = directory.error?.code === "authorization";
   const connection = useManagerChat(controller);
+  const candidate = useManagerChat(picker);
   const clientKey = useRef({ client: connection.client, id: 0 });
   if (clientKey.current.client !== connection.client)
     clientKey.current = {
@@ -214,6 +231,8 @@ function ManagerAppBinding({
   const [failed, setFailed] = useState(false);
   const [chatAccessDenied, setChatAccessDenied] = useState(false);
   const [confirm, setConfirm] = useState<() => void>();
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const selectionReturn = useRef<"settings" | "chat" | "robot">("settings");
   const [restoredDraft, setRestoredDraft] = useState<ChatCompactDraft>();
   const generation = useRef(0);
   const lastScope = useRef(scope);
@@ -221,8 +240,8 @@ function ManagerAppBinding({
   const alive = useRef(true);
   const root = useRef<HTMLDivElement>(null);
   const navigationTrigger = useRef<HTMLElement>();
-  const openScreen = (next: typeof screen) => {
-    const active = root.current?.ownerDocument.activeElement;
+  const openScreen = (next: typeof screen, trigger?: HTMLElement) => {
+    const active = trigger ?? root.current?.ownerDocument.activeElement;
     if (
       screen === "chat" &&
       active instanceof HTMLElement &&
@@ -287,6 +306,8 @@ function ManagerAppBinding({
     setFailed(false);
     setChatAccessDenied(false);
     setConfirm(undefined);
+    void picker.select(undefined);
+    setPickedPlatform(undefined);
     setAccounts([]);
     setPickedAccount(undefined);
     setQuery("");
@@ -326,7 +347,15 @@ function ManagerAppBinding({
     }
     wasExpired.current = false;
     void manager.refresh({ deadlineAt: deadline() }).catch(() => {});
-  }, [scope, authState.status, robot, chosenPlatform, controller, manager]);
+  }, [
+    scope,
+    authState.status,
+    robot,
+    chosenPlatform,
+    controller,
+    manager,
+    picker,
+  ]);
   useEffect(() => {
     if (scope && directory.status === "idle")
       void manager.refresh({ deadlineAt: deadline() }).catch(() => {});
@@ -368,9 +397,10 @@ function ManagerAppBinding({
     if (
       identity &&
       (activity.current.running || activity.current.draft.text.trim())
-    )
+    ) {
+      setConfirmLogout(false);
       setConfirm(() => action);
-    else action();
+    } else action();
   };
   const clearChat = () => {
     generation.current++;
@@ -388,8 +418,10 @@ function ManagerAppBinding({
       clearChat();
       void run(() => auth.logout());
     };
-    if (alwaysConfirm) setConfirm(() => action);
-    else navigate(action, true);
+    if (alwaysConfirm) {
+      setConfirmLogout(true);
+      setConfirm(() => action);
+    } else navigate(action, true);
   };
   const onAccessDenied = useCallback(() => {
     generation.current++;
@@ -404,25 +436,99 @@ function ManagerAppBinding({
     setScreen("robot");
     void controller.select(undefined);
   }, [controller]);
-  const chooseRobot = (value: ManagerRobot) =>
+  const commitSelection = (value: ManagerRobot, id: number | undefined) => {
+    if (
+      robot?.id === value.id &&
+      connection.status === "ready" &&
+      connection.platformId === id
+    ) {
+      setScreen("chat");
+      void picker.select(undefined);
+      return;
+    }
     navigate(() => {
       clearChat();
       setChatAccessDenied(false);
       setRobot(value);
+      setChosenPlatform(id);
       setScreen("chat");
-      setChosenPlatform(platformId);
-      void controller.select(value, { platformId });
+      void picker.select(undefined);
+      void controller.select(value, { platformId: id });
     }, true);
-  const back = () => (
+  };
+  const chooseRobot = (value: ManagerRobot) => {
+    if (robot?.id === value.id && connection.status === "ready") {
+      setScreen("chat");
+      return;
+    }
+    if (
+      chatConfig.conversationContract === "json-v2" &&
+      platformId === undefined
+    ) {
+      setPickedRobot(value);
+      setPickedPlatform(undefined);
+      setScreen("platform");
+      void picker.select(value);
+    } else commitSelection(value, platformId);
+  };
+  const openRobot = (trigger?: HTMLElement) => {
+    selectionReturn.current = screen === "settings" ? "settings" : "chat";
+    setPickedRobot(robot);
+    setFailed(false);
+    openScreen("robot", trigger);
+  };
+  const openPlatform = (trigger?: HTMLElement) => {
+    if (!robot || platformId !== undefined) return;
+    selectionReturn.current = screen === "settings" ? "settings" : "chat";
+    setPickedRobot(robot);
+    setPickedPlatform(
+      typeof connection.platformId === "number"
+        ? connection.platformId
+        : undefined,
+    );
+    openScreen("platform", trigger);
+    void picker.select(robot);
+  };
+  const openAccounts = (trigger?: HTMLElement) => {
+    selectionReturn.current = screen === "settings" ? "settings" : "chat";
+    const rev = generation.current;
+    void run(async () => {
+      const result = await auth.listAccounts();
+      if (rev !== generation.current || !alive.current) return;
+      setAccounts(result);
+      setPickedAccount(authState.account?.accountId);
+      openScreen("accounts", trigger);
+    });
+  };
+  const back = (target?: "settings" | "chat" | "robot") => (
     <Button
       className="tf-back"
       type="text"
-      onClick={() =>
-        setScreen(connection.status === "ready" ? "chat" : "robot")
-      }
+      onClick={() => {
+        void picker.select(undefined);
+        setFailed(false);
+        setScreen(target ?? (connection.status === "ready" ? "chat" : "robot"));
+      }}
     >
-      ← {copy.back}
+      ←{" "}
+      {target === "settings"
+        ? copy.backSettings
+        : target === "chat"
+          ? copy.backChat
+          : copy.back}
     </Button>
+  );
+  const steps = (active: number) => (
+    <ol className="tf-steps" aria-label={copy.setup}>
+      {[copy.accountStep, copy.robotStep, copy.platformStep].map(
+        (label, index) => (
+          <li key={label} aria-current={index === active ? "step" : undefined}>
+            <span>{index + 1}</span>
+            {label}
+          </li>
+        ),
+      )}
+    </ol>
   );
   const title = (heading: string, description?: string) => (
     <>
@@ -436,9 +542,11 @@ function ManagerAppBinding({
         <span className="tf-symbol">✧</span>
         {brand ?? copy.brand}
       </div>
-      {auth.environment === "staging" ? (
-        <span className="tf-badge">{copy.test}</span>
-      ) : null}
+      <span
+        className={`tf-badge ${auth.environment === "staging" ? "tf-test" : ""}`}
+      >
+        {auth.environment === "staging" ? copy.test : copy.production}
+      </span>
     </div>
   );
   const feedback = chatAccessDenied ? (
@@ -446,10 +554,66 @@ function ManagerAppBinding({
   ) : failed ? (
     <Alert role="alert" type="error" message={copy.failed} />
   ) : null;
-  const accountName =
-    authState.account?.displayName ??
-    authState.account?.organizationId ??
-    authState.account?.accountId;
+  // displayName belongs to an account choice, not necessarily an organization or user.
+  const accountLabel = (value: AccountOption | undefined) =>
+    value?.organizationName?.trim() ||
+    (value?.organizationId
+      ? `${copy.organizationId}: ${value.organizationId}`
+      : value?.accountId
+        ? `${copy.accountLabel}: ${value.accountId}`
+        : copy.notSelected);
+  const accountDetails = (value: AccountOption) =>
+    `${value.displayName?.trim() ? `${copy.accountName}: ${value.displayName} · ` : ""}${value.organizationId ? `${copy.organizationId}: ${value.organizationId} · ` : ""}${copy.accountLabel}: ${value.accountId}`;
+  const accountName = accountLabel(authState.account);
+  const robotName = (value: ManagerRobot | undefined) => {
+    if (!value) return copy.notSelected;
+    const name = value.name.trim();
+    return name && name !== value.id
+      ? name
+      : `${copy.directoryId}: ${value.employeeId ?? value.id}`;
+  };
+  const robotDetails = (value: ManagerRobot) =>
+    value.robotId
+      ? `${copy.robotId}: ${value.robotId}`
+      : `${copy.directoryId}: ${value.employeeId ?? value.id}`;
+  const activePlatformId =
+    connection.status === "ready" ? connection.platformId : undefined;
+  const activePlatform = connection.platforms?.find(
+    (p) => p.platformId === activePlatformId,
+  );
+  const platformName =
+    activePlatform?.name?.trim() ||
+    (activePlatformId === undefined
+      ? copy.notSelected
+      : `${copy.platformId}: ${activePlatformId}`);
+  const contextRow = (
+    label: string,
+    value: string,
+    detail: string | undefined,
+    action?: () => void,
+    actionLabel?: string,
+    note?: string,
+  ) => (
+    <div className="tf-context-row">
+      <div className="tf-context-copy">
+        <span className="tf-context-label">{label}</span>
+        <strong>{value}</strong>
+        {detail && <small>{detail}</small>}
+        {note && <small>{note}</small>}
+      </div>
+      {action && (
+        <Button
+          className="tf-change"
+          aria-label={actionLabel}
+          disabled={busy}
+          loading={actionLabel === copy.organization && busy}
+          onClick={action}
+        >
+          {copy.choose}
+        </Button>
+      )}
+    </div>
+  );
   const accountView = (
     options: readonly AccountOption[],
     switching: boolean,
@@ -457,8 +621,13 @@ function ManagerAppBinding({
     <>
       {top}
       <div className="tf-body">
-        {switching && back()}
+        {switching ? back(selectionReturn.current) : steps(0)}
         {title(copy.account, copy.accountHint)}
+        {authState.user && (
+          <p className="tf-identity-hint">
+            {copy.userId}: {authState.user.userId}
+          </p>
+        )}
         {feedback}
         <div className="tf-list">
           {options.map((a) => (
@@ -472,14 +641,13 @@ function ManagerAppBinding({
             >
               <span className="tf-symbol">▦</span>
               <span className="tf-choice-copy">
-                <strong>
-                  {a.displayName ?? a.organizationId ?? a.accountId}
-                </strong>
-                <small>
-                  {copy.accountLabel}: {a.accountId}
-                </small>
+                <strong>{accountLabel(a)}</strong>
+                <small>{accountDetails(a)}</small>
               </span>
-              <span className="tf-check">
+              {switching && authState.account?.accountId === a.accountId && (
+                <span className="tf-current">{copy.current}</span>
+              )}
+              <span className="tf-check" aria-hidden="true">
                 {pickedAccount === a.accountId ? "✓" : "○"}
               </span>
             </button>
@@ -496,6 +664,10 @@ function ManagerAppBinding({
           onClick={() => {
             if (!pickedAccount) return;
             const id = pickedAccount;
+            if (switching && id === authState.account?.accountId) {
+              setScreen(selectionReturn.current);
+              return;
+            }
             navigate(() => {
               if (switching) clearChat();
               void run(async () => {
@@ -577,7 +749,7 @@ function ManagerAppBinding({
               : copy.loginHint,
           )}
           <LoginPanel
-            showSessionError={false}
+            showSessionError={authState.status === "error"}
             labels={{
               login: copy.login,
               identifier: copy.identifier,
@@ -606,50 +778,68 @@ function ManagerAppBinding({
       connection.status === "ready" &&
       connection.client &&
       robot;
-    const platformNeeded =
-      connection.status === "platform-selection-required" ||
-      screen === "platform";
+    const platformNeeded = screen === "platform";
     const header = (
-      <>
+      <div className="tf-chat-context">
         <div className="tf-top">
           <Button
-            type="text"
-            style={{
-              maxWidth: "85%",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-            onClick={() => openScreen("settings")}
+            className="tf-header-context"
+            aria-label={`${copy.organization}: ${accountName}`}
+            title={accountName}
+            loading={busy}
+            onClick={(event) => openAccounts(event.currentTarget)}
           >
-            {accountName} ⌄
+            <span className="tf-context-label">{copy.currentOrganization}</span>
+            <strong>{accountName} ⌄</strong>
           </Button>
+          <span
+            className={`tf-badge ${auth.environment === "staging" ? "tf-test" : ""}`}
+          >
+            {auth.environment === "staging" ? copy.test : copy.production}
+          </span>
           <Button
             type="text"
             aria-label={copy.settings}
-            onClick={() => openScreen("settings")}
+            onClick={(event) => openScreen("settings", event.currentTarget)}
           >
             ☰
           </Button>
         </div>
         <div className="tf-toolbar">
-          <span className="tf-symbol">✧</span>
+          <span className="tf-symbol" aria-hidden="true">
+            ✧
+          </span>
           <Button
+            className="tf-header-context"
             type="text"
-            style={{ height: "auto", textAlign: "left", minWidth: 0 }}
-            onClick={() => openScreen("robot")}
+            aria-label={`${copy.switchRobot}: ${robotName(robot)}`}
+            onClick={(event) => openRobot(event.currentTarget)}
           >
-            <strong>{robot?.name} ⌄</strong>
-            <small>
-              {connection.platformId === undefined
-                ? ""
-                : (connection.platforms?.find(
-                    (p) => p.platformId === connection.platformId,
-                  )?.name ??
-                  `${locale === "zh-CN" ? "平台" : "Platform"} ${connection.platformId}`)}
-            </small>
+            <strong>{robotName(robot)} ⌄</strong>
           </Button>
         </div>
-      </>
+        <div className="tf-platform-context">
+          <span>
+            {copy.currentPlatform}: <strong>{platformName}</strong>
+          </span>
+          {platformId === undefined &&
+          chatConfig.conversationContract === "json-v2" ? (
+            <Button
+              size="small"
+              aria-label={copy.switchPlatform}
+              onClick={(event) => openPlatform(event.currentTarget)}
+            >
+              {copy.choose}
+            </Button>
+          ) : (
+            <small>
+              {platformId !== undefined
+                ? copy.fixedPlatform
+                : copy.platformUnavailable}
+            </small>
+          )}
+        </div>
+      </div>
     );
     const chat = connected ? (
       <ChatProvider client={connection.client!}>
@@ -672,81 +862,125 @@ function ManagerAppBinding({
         <>
           {top}
           <div className="tf-body">
-            {back()}
-            {title(screen === "help" ? copy.help : copy.settings)}
+            {back(screen === "help" ? "settings" : undefined)}
+            {title(
+              screen === "help" ? copy.help : copy.settings,
+              screen === "settings" ? copy.settingsHint : undefined,
+            )}
             {feedback}
             {screen === "help" ? (
               <p className="tf-description">{copy.helpBody}</p>
             ) : (
               <>
-                <p>{accountName}</p>
-                <Button
-                  className="tf-menu"
-                  type="text"
-                  onClick={() => {
-                    const rev = generation.current;
-                    void run(async () => {
-                      const result = await auth.listAccounts();
-                      if (rev !== generation.current || !alive.current) return;
-                      setAccounts(result);
-                      setPickedAccount(undefined);
-                      setScreen("accounts");
-                    });
-                  }}
+                <section
+                  className="tf-settings-group"
+                  aria-label={copy.identity}
                 >
-                  {copy.organization}
-                </Button>
-                <Button
-                  className="tf-menu"
-                  type="text"
-                  onClick={() => openScreen("robot")}
+                  <h2>{copy.identity}</h2>
+                  <div className="tf-context-card">
+                    {contextRow(
+                      copy.userId,
+                      authState.account!.userId,
+                      undefined,
+                    )}
+                  </div>
+                </section>
+                <section
+                  className="tf-settings-group"
+                  aria-label={copy.currentOrganization}
                 >
-                  {copy.switchRobot}
-                </Button>
-                {robot && platformId === undefined && (
+                  <h2>{copy.currentOrganization}</h2>
+                  <div className="tf-context-card">
+                    {contextRow(
+                      authState.account?.organizationName?.trim()
+                        ? copy.currentOrganization
+                        : authState.account?.organizationId
+                          ? copy.organizationId
+                          : copy.accountLabel,
+                      accountName,
+                      accountDetails(authState.account!),
+                      openAccounts,
+                      copy.organization,
+                      authState.account?.organizationId
+                        ? undefined
+                        : copy.noOrganization,
+                    )}
+                  </div>
+                </section>
+                <section
+                  className="tf-settings-group"
+                  aria-label={copy.currentWorkspace}
+                >
+                  <h2>{copy.currentWorkspace}</h2>
+                  <div className="tf-context-card">
+                    {contextRow(
+                      copy.currentRobot,
+                      robotName(robot),
+                      robot ? robotDetails(robot) : undefined,
+                      openRobot,
+                      copy.switchRobot,
+                      robot && connection.status !== "ready"
+                        ? copy.connecting
+                        : undefined,
+                    )}
+                    {contextRow(
+                      copy.currentPlatform,
+                      platformName,
+                      activePlatform?.name
+                        ? `${copy.platformId}: ${activePlatformId}`
+                        : undefined,
+                      robot &&
+                        platformId === undefined &&
+                        chatConfig.conversationContract === "json-v2"
+                        ? openPlatform
+                        : undefined,
+                      copy.switchPlatform,
+                      platformId !== undefined
+                        ? `${copy.fixedPlatform} · ${copy.platformId}: ${platformId}`
+                        : chatConfig.conversationContract !== "json-v2"
+                          ? copy.platformUnavailable
+                          : undefined,
+                    )}
+                  </div>
+                </section>
+                <section className="tf-settings-group" aria-label={copy.more}>
+                  <h2>{copy.more}</h2>
                   <Button
                     className="tf-menu"
                     type="text"
-                    onClick={() =>
-                      navigate(() => {
-                        clearChat();
-                        setRobot(robot);
-                        setScreen("chat");
-                        void controller.select(robot);
-                      }, true)
-                    }
+                    onClick={() => setScreen("help")}
                   >
-                    {copy.switchPlatform}
+                    {copy.help}
                   </Button>
-                )}
-                <Button
-                  className="tf-menu"
-                  type="text"
-                  onClick={() => setScreen("help")}
-                >
-                  {copy.help}
-                </Button>
-                <Button
-                  className="tf-menu"
-                  danger
-                  type="text"
-                  onClick={() => logout(true)}
-                >
-                  {copy.logout}
-                </Button>
+                  <Button
+                    className="tf-menu"
+                    danger
+                    type="text"
+                    onClick={(event) => {
+                      // WebKit pointer clicks do not focus buttons. Keep Escape inside this app while the dialog opens.
+                      event.currentTarget.focus({ preventScroll: true });
+                      logout(true);
+                    }}
+                  >
+                    {copy.logout}
+                  </Button>
+                </section>
               </>
             )}
           </div>
         </>
       );
     else if (screen === "accounts") panel = accountView(accounts, true);
-    else if (screen === "robot" || !robot)
+    else if (screen === "robot" || (!robot && !platformNeeded))
       panel = (
         <>
           {top}
           <div className="tf-body">
-            {connected && back()}
-            {title(copy.robot, `${accountName ?? ""} · ${copy.robotHint}`)}
+            {connected ? back(selectionReturn.current) : steps(1)}
+            {title(copy.robot, copy.robotHint)}
+            <p className="tf-identity-hint">
+              {copy.currentOrganization}: {accountName}
+            </p>
             {feedback}
             <Input
               aria-label={copy.search}
@@ -793,8 +1027,10 @@ function ManagerAppBinding({
                   >
                     <span className="tf-symbol">✧</span>
                     <span className="tf-choice-copy">
-                      <strong>{r.name}</strong>
+                      <strong>{robotName(r)}</strong>
                       <small>
+                        {robotDetails(r)}
+                        <br />
                         {r.eligibility === "ready"
                           ? copy.ready
                           : r.eligibility === "not_running"
@@ -804,7 +1040,10 @@ function ManagerAppBinding({
                               : copy.incomplete}
                       </small>
                     </span>
-                    <span className="tf-check">
+                    {robot?.id === r.id && connected && (
+                      <span className="tf-current">{copy.current}</span>
+                    )}
+                    <span className="tf-check" aria-hidden="true">
                       {pickedRobot?.id === r.id ? "✓" : "○"}
                     </span>
                   </button>
@@ -832,7 +1071,10 @@ function ManagerAppBinding({
                 {copy.loadMore}
               </Button>
             ) : null}
-            <Button type="link" onClick={() => openScreen("settings")}>
+            <Button
+              type="link"
+              onClick={(event) => openScreen("settings", event.currentTarget)}
+            >
               {copy.settings}
             </Button>
           </div>
@@ -857,18 +1099,49 @@ function ManagerAppBinding({
         <>
           {top}
           <div className="tf-body">
-            <Button
-              type="text"
-              onClick={() => {
-                void controller.select(undefined);
-                setScreen("robot");
-              }}
-            >
-              ← {copy.back}
-            </Button>
+            {connected ? (
+              back(selectionReturn.current)
+            ) : (
+              <>
+                {back("robot")}
+                {steps(2)}
+              </>
+            )}
             {title(copy.platform, copy.platformHint)}
+            <p className="tf-identity-hint">
+              {copy.currentOrganization}: {accountName}
+              <br />
+              {copy.selectedRobot}: {robotName(pickedRobot)}
+            </p>
+            {connected && <p className="tf-description">{copy.switchHint}</p>}
+            {candidate.status === "connecting" && (
+              <div role="status">
+                <Spin />
+                <p>{copy.loadingPlatforms}</p>
+              </div>
+            )}
+            {candidate.status === "error" && (
+              <Alert
+                role="alert"
+                type="error"
+                message={
+                  candidate.error?.code === "authorization"
+                    ? copy.forbidden
+                    : copy.selectionFailed
+                }
+                action={
+                  <Button
+                    onClick={() => {
+                      if (pickedRobot) void picker.select(pickedRobot);
+                    }}
+                  >
+                    {copy.retry}
+                  </Button>
+                }
+              />
+            )}
             <div className="tf-list">
-              {connection.platforms?.map((p) => (
+              {candidate.platforms?.map((p) => (
                 <button
                   type="button"
                   className="tf-choice"
@@ -877,26 +1150,43 @@ function ManagerAppBinding({
                   onClick={() => setPickedPlatform(p.platformId)}
                 >
                   <span className="tf-choice-copy">
-                    <strong>{p.name}</strong>
+                    <strong>
+                      {p.name.trim() || `${copy.platformId}: ${p.platformId}`}
+                    </strong>
+                    <small>
+                      {copy.platformId}: {p.platformId}
+                    </small>
                   </span>
-                  <span className="tf-check">
+                  {connected &&
+                    robot?.id === pickedRobot?.id &&
+                    activePlatformId === p.platformId && (
+                      <span className="tf-current">{copy.current}</span>
+                    )}
+                  <span className="tf-check" aria-hidden="true">
                     {pickedPlatform === p.platformId ? "✓" : "○"}
                   </span>
                 </button>
               ))}
             </div>
-            {!connection.platforms?.length && <p>{copy.noPlatforms}</p>}
+            {candidate.status === "platform-selection-required" &&
+              !candidate.platforms?.length && (
+                <p className="tf-empty">{copy.noPlatforms}</p>
+              )}
           </div>
           <div className="tf-footer">
             <Button
               type="primary"
               block
-              disabled={pickedPlatform === undefined}
+              disabled={
+                candidate.status !== "platform-selection-required" ||
+                pickedPlatform === undefined ||
+                !candidate.platforms?.some(
+                  (p) => p.platformId === pickedPlatform,
+                )
+              }
               onClick={() => {
-                if (!robot || pickedPlatform === undefined) return;
-                setChosenPlatform(pickedPlatform);
-                setScreen("chat");
-                void controller.select(robot, { platformId: pickedPlatform });
+                if (pickedRobot && pickedPlatform !== undefined)
+                  commitSelection(pickedRobot, pickedPlatform);
               }}
             >
               {copy.start}
@@ -980,7 +1270,7 @@ function ManagerAppBinding({
       <Modal
         getContainer={getPopupContainer ?? false}
         open={!!confirm}
-        title={copy.confirmTitle}
+        title={confirmLogout ? copy.logoutTitle : copy.confirmTitle}
         onCancel={() => setConfirm(undefined)}
         onOk={() => {
           const action = confirm;
@@ -995,7 +1285,7 @@ function ManagerAppBinding({
           wrapper: { position: "absolute" },
         }}
       >
-        {copy.confirmBody}
+        {confirmLogout ? copy.logoutBody : copy.confirmBody}
       </Modal>
     </div>
   );
