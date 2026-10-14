@@ -1,5 +1,11 @@
 # @turingfocus/chat-gateway-tfrobot
 
+## 0.10.0-next.1
+
+### Patch Changes
+
+- @turingfocus/chat-protocol@0.10.0-next.1
+
 ## 0.10.0-next.0
 
 ### Minor Changes

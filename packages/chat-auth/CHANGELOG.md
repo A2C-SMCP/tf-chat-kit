@@ -1,5 +1,11 @@
 # @turingfocus/chat-auth
 
+## 0.12.0-next.0
+
+### Minor Changes
+
+- b4741c9: Add an optional complete Manager chat interface with Chinese/English copy, compact conversation navigation, explicit identity/robot/platform selection and instance-scoped lifecycle handling.
+
 ## 0.11.0
 
 ### Minor Changes
