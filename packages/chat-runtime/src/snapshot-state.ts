@@ -403,7 +403,11 @@ export const applySnapshotUpdate = (
         : updateSnapshotState(state, { conversation });
     }
     case "timeline.upsert": {
-      const timeline = upsertTimelineItem(state.timeline, update.item);
+      const timeline = upsertTimelineItem(
+        state.timeline,
+        update.item,
+        update.authorOnly,
+      );
       return timeline === state.timeline
         ? state
         : updateSnapshotState(state, { timeline });

@@ -35,6 +35,9 @@ export const defaultChatUiLabels: ChatUiLabels = Object.freeze({
   cacheStorageFailed:
     "Local cache could not be saved or restored. Server loading is still available.",
   resource: defaultChatResourceLabels,
+  unconfirmedMessages: "Unconfirmed messages",
+  unconfirmedDescription:
+    "These messages have no confirmed link to a history record. They are kept for review and will not be resent automatically.",
   attach: "Attach",
   askUserCancel: "Cancel",
   askUserChatAboutThis: "Chat about this",

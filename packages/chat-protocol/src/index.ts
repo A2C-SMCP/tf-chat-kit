@@ -62,6 +62,7 @@ export type {
   MediaMessageContent,
   Message,
   MessageAuthor,
+  MessageProvenance,
   MessageContent,
   MessageContentPart,
   MessageResource,

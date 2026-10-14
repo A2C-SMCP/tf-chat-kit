@@ -15,6 +15,139 @@ const message = (overrides: Partial<MessageDto> = {}): MessageDto => ({
 });
 
 describe("current-server provisional user message identities", () => {
+  it("adopts fresh author display from a history cache DTO linked to a known persisted fact", () => {
+    const mapper = new TFRobotMessageIdentities();
+    const known = mapper.map(
+      message({ msgId: 366, creator: { uid: "user-1", name: "Old" } }),
+      "history",
+    );
+    const fresh = mapper.map(
+      message({ creator: { uid: "user-1", name: "New" } }),
+      "history",
+    );
+    expect(fresh.id).toBe(known.id);
+    expect(fresh.author?.displayName).toBe("New");
+  });
+
+  it.each([
+    [
+      { uid: "admin", name: "Admin" },
+      { uid: "user-1", name: "User" },
+    ],
+    [
+      { uid: "user-1", name: "User", tenant: "A" },
+      { uid: "user-1", name: "User", tenant: "B" },
+    ],
+  ])(
+    "does not use stale identity facts after a known database ID is corrected: %j",
+    (liveCreator, confirmedCreator) => {
+      const mapper = new TFRobotMessageIdentities();
+      const first = mapper.map(message({ msgId: 366, creator: liveCreator }));
+      const corrected = mapper.map(
+        message({ msgId: 366, creator: confirmedCreator }),
+        "history",
+      );
+      expect(corrected.id).toBe(first.id);
+      const late = mapper.map(message({ creator: liveCreator }));
+      expect(late.id).not.toBe(corrected.id);
+      expect(late.provenance?.kind).toBe("provisional");
+    },
+  );
+
+  it("keeps a history-first cross-UID late echo as a separate unconfirmed projection", () => {
+    const mapper = new TFRobotMessageIdentities();
+    const history = mapper.map(message({ msgId: 366 }), "history");
+    const late = mapper.map(
+      message({ creator: { uid: "admin", name: "Admin" } }),
+    );
+    expect(late.id).not.toBe(history.id);
+    expect(late.author?.id).toBe("admin");
+    expect(late.provenance).toMatchObject({
+      kind: "provisional",
+      reviewRequired: true,
+    });
+    const newer = mapper.map(
+      message({
+        creator: { uid: "admin", name: "Admin" },
+        createTimestamp: 1791538963310,
+      }),
+    );
+    expect(newer.id).not.toBe(late.id);
+    expect(
+      newer.provenance?.kind === "provisional"
+        ? newer.provenance.reviewRequired
+        : undefined,
+    ).not.toBe(true);
+  });
+
+  it("does not reuse a timestamp-derived provisional display ID across independent Gateway instances", () => {
+    const old = new TFRobotMessageIdentities().map(
+      message({ creator: { uid: "admin", name: "Admin" } }),
+    );
+    const latest = new TFRobotMessageIdentities().map(
+      message({ creator: { uid: "user-1", name: "User" } }),
+    );
+    expect(latest.id).not.toBe(old.id);
+  });
+
+  it.each([false, true])(
+    "ignores mutable author display in either delivery order: %s",
+    (historyFirst) => {
+      const mapper = new TFRobotMessageIdentities();
+      const live = message({
+        creator: { uid: "user-1", name: "Old", avatar: null },
+      });
+      const history = message({
+        msgId: 366,
+        creator: {
+          uid: "user-1",
+          name: "Updated",
+          avatar: "https://example.invalid/avatar",
+        },
+      });
+      const first = mapper.map(
+        historyFirst ? history : live,
+        historyFirst ? "history" : "live",
+      );
+      const second = mapper.map(
+        historyFirst ? live : history,
+        historyFirst ? "live" : "history",
+      );
+      expect(second.id).toBe(first.id);
+      expect(second.author).toMatchObject({
+        id: "user-1",
+        displayName: "Updated",
+        avatarUrl: "https://example.invalid/avatar",
+      });
+      expect(second.provenance).toEqual({
+        kind: "persisted",
+        id: "366",
+        source: historyFirst ? "live" : "history",
+      });
+    },
+  );
+
+  it("keeps confirmed authors from the newer HTTP read across stale responses and late echoes", () => {
+    const mapper = new TFRobotMessageIdentities();
+    const older = mapper.beginHistoryRead();
+    const newer = mapper.beginHistoryRead();
+    mapper.map(
+      message({ msgId: 366, creator: { uid: "user-1", name: "New" } }),
+      "history",
+      newer,
+    );
+    for (let index = 0; index < 300; index += 1)
+      mapper.map(message({ msgId: 1000 + index, createTimestamp: index }));
+    expect(
+      mapper.map(
+        message({ msgId: 366, creator: { uid: "user-1", name: "Old" } }),
+        "history",
+        older,
+      ).author?.displayName,
+    ).toBe("New");
+    expect(mapper.map(message({ msgId: 366 })).author?.displayName).toBe("New");
+  });
+
   it.each([false, true])(
     "correlates additive Server processing fields in either order: %s",
     (persistedFirst) => {

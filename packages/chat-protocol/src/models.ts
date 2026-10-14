@@ -108,11 +108,30 @@ export interface MessageAuthor {
   readonly avatarUrl?: string | undefined;
 }
 
+/**
+ * Message persistence provenance, independent of the display ID. Absent is unknown.
+ * Cache records retain display clues only: cache source does not confirm author
+ * information or grant recovery assurance. Live/history source is Gateway-owned.
+ */
+export type MessageProvenance =
+  | {
+      readonly kind: "provisional";
+      readonly source?: "cache" | "history" | "live" | undefined;
+      /** Unmatched display projection retained for review, never a recovery proof. */
+      readonly reviewRequired?: boolean | undefined;
+    }
+  | {
+      readonly kind: "persisted";
+      readonly id: string;
+      readonly source: "cache" | "history" | "live";
+    };
+
 export interface Message {
   readonly kind: "message";
   readonly id: TimelineItemId;
   readonly conversationId: ConversationId;
   readonly role: MessageRole;
+  readonly provenance?: MessageProvenance | undefined;
   readonly content: MessageContent;
   /** Server-owned Unix epoch milliseconds used for stable ordering. */
   readonly createdAt: number;
@@ -441,6 +460,8 @@ export type ChatUpdate =
       readonly kind: "timeline.upsert";
       readonly conversationId: ConversationId;
       readonly item: TimelineItem;
+      /** Update only an existing message's author/provenance, preserving realtime content. */
+      readonly authorOnly?: boolean | undefined;
     }
   /**
    * Idempotently upserts one transition without requiring Gateway state.

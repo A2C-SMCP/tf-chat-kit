@@ -183,6 +183,20 @@ export const messageParser: z.ZodType<Message> = z.object({
   updatedAt: timestampParser.optional(),
   sequence: sequenceParser.optional(),
   author: messageAuthorParser.optional(),
+  provenance: z
+    .discriminatedUnion("kind", [
+      z.object({
+        kind: z.literal("provisional"),
+        source: z.enum(["cache", "history", "live"]).optional(),
+        reviewRequired: z.boolean().optional(),
+      }),
+      z.object({
+        kind: z.literal("persisted"),
+        id: idParser,
+        source: z.enum(["cache", "history", "live"]),
+      }),
+    ])
+    .optional(),
   reasoning: z.string().optional(),
   raw: rawParser.optional(),
 });
@@ -799,6 +813,7 @@ export const chatUpdateParser: z.ZodType<ChatUpdate> = z
       kind: z.literal("timeline.upsert"),
       conversationId: idParser,
       item: timelineItemParser,
+      authorOnly: z.boolean().optional(),
     }),
     z.object({
       kind: z.literal("event.transition.upsert"),
@@ -852,6 +867,17 @@ export const chatUpdateParser: z.ZodType<ChatUpdate> = z
     }),
   ])
   .superRefine((update, context) => {
+    if (
+      update.kind === "timeline.upsert" &&
+      update.authorOnly === true &&
+      update.item.kind !== "message"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["authorOnly"],
+        message: "author-only updates require a message",
+      });
+    }
     if (
       update.kind === "timeline.upsert" &&
       update.item.conversationId !== update.conversationId

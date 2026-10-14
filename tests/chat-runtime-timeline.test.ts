@@ -4,6 +4,7 @@ import type { Message } from "../packages/chat-protocol/src/index.js";
 import {
   createTimelineState,
   mergeHistoryTimeline,
+  rebaseTimelineState,
   upsertTimelineItem,
 } from "../packages/chat-runtime/src/timeline.js";
 
@@ -21,6 +22,133 @@ const message = (
 });
 
 describe("Runtime timeline index", () => {
+  it("keeps one display identity per durable fact across paging and subsequent updates", () => {
+    const cached: Message = {
+      ...message("old-instance-alias", 10, "Cached content"),
+      provenance: { kind: "persisted", id: "366", source: "cache" },
+    };
+    const fresh: Message = {
+      ...message("366", 10, "Fresh content"),
+      provenance: { kind: "persisted", id: "366", source: "history" },
+      author: { id: "u", displayName: "Fresh author" },
+    };
+    const current = createTimelineState([cached]);
+    const rebased = rebaseTimelineState(
+      current,
+      createTimelineState([fresh]),
+      current,
+    );
+    expect(rebased.items).toHaveLength(1);
+    expect(rebased.items[0]).toMatchObject({
+      id: cached.id,
+      content: fresh.content,
+      author: fresh.author,
+    });
+    const realtime = {
+      ...fresh,
+      provenance: { ...fresh.provenance!, source: "live" as const },
+      content: { kind: "text" as const, text: "New live content" },
+    };
+    const updated = upsertTimelineItem(rebased, realtime);
+    expect(updated.items).toHaveLength(1);
+    expect(updated.items[0]).toMatchObject({
+      id: cached.id,
+      content: realtime.content,
+      author: fresh.author,
+    });
+    const olderFact: Message = {
+      ...fresh,
+      id: "another-alias",
+      provenance: { kind: "persisted", id: "367", source: "history" },
+    };
+    expect(
+      mergeHistoryTimeline(updated, [fresh, olderFact]).items,
+    ).toHaveLength(2);
+  });
+
+  it("never inserts content through an author-only recovery update", () => {
+    const update: Message = {
+      ...message("same", 20, "Older REST content"),
+      author: { id: "u", displayName: "Updated" },
+      provenance: { kind: "persisted", id: "42", source: "history" },
+    };
+    const empty = createTimelineState([]);
+    expect(upsertTimelineItem(empty, update, true)).toBe(empty);
+    const live = { ...message("same", 10, "Newest realtime content") };
+    expect(
+      upsertTimelineItem(createTimelineState([live]), update, true).items,
+    ).toMatchObject([
+      {
+        content: live.content,
+        createdAt: live.createdAt,
+        author: update.author,
+        provenance: update.provenance,
+      },
+    ]);
+  });
+
+  it("adopts history-confirmed author through handoff and older pages without losing concurrent content", () => {
+    const live: Message = {
+      ...message("same", 10, "Concurrent text"),
+      role: "user",
+      provenance: { kind: "provisional" },
+      author: { id: "u", displayName: "Old" },
+    };
+    const history: Message = {
+      ...live,
+      content: { kind: "text", text: "History text" },
+      provenance: { kind: "persisted", id: "db", source: "history" },
+      author: {
+        id: "u",
+        displayName: "Updated",
+        avatarUrl: "https://example.invalid/avatar",
+      },
+    };
+    const current = createTimelineState([live]);
+    for (const result of [
+      mergeHistoryTimeline(current, [history], true),
+      rebaseTimelineState(
+        createTimelineState([]),
+        createTimelineState([history]),
+        current,
+      ),
+    ])
+      expect(result.items).toMatchObject([
+        {
+          author: history.author,
+          content: live.content,
+          provenance: history.provenance,
+        },
+      ]);
+    const confirmed = createTimelineState([history]);
+    expect(upsertTimelineItem(confirmed, live).items).toMatchObject([
+      { author: history.author, content: live.content },
+    ]);
+    const newer = { ...history, author: { id: "u", displayName: "Newest" } };
+    expect(mergeHistoryTimeline(confirmed, [newer], true).items).toMatchObject([
+      { author: newer.author },
+    ]);
+    expect(
+      mergeHistoryTimeline(createTimelineState([newer]), [history]).items,
+    ).toMatchObject([{ author: newer.author }]);
+  });
+
+  it("keeps a newer concurrent history author when an older reload completes late", () => {
+    const baselineItem: Message = {
+      ...message("same", 10),
+      role: "user",
+      provenance: { kind: "persisted", id: "42", source: "history" },
+      author: { id: "u", displayName: "Old" },
+    };
+    const baseline = createTimelineState([baselineItem]);
+    const current = createTimelineState([
+      { ...baselineItem, author: { id: "u", displayName: "New" } },
+    ]);
+    expect(
+      rebaseTimelineState(baseline, baseline, current).items,
+    ).toMatchObject([{ author: { displayName: "New" } }]);
+  });
+
   it("keeps divergent states independent across index compaction", () => {
     const base = createTimelineState(
       Array.from({ length: 100 }, (_, index) =>
