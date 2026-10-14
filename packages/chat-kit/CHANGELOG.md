@@ -1,5 +1,22 @@
 # @turingfocus/chat-kit
 
+## 0.10.0-next.1
+
+### Minor Changes
+
+- b4741c9: Add an optional complete Manager chat interface with Chinese/English copy, compact conversation navigation, explicit identity/robot/platform selection and instance-scoped lifecycle handling.
+
+### Patch Changes
+
+- 52a7803: Resolve packed workspace dependencies from the target package version so the auth facade installs the independently released chat-auth API it requires. Verify actual registry dependency resolution without overrides in Manager consumers.
+- Updated dependencies [b4741c9]
+  - @turingfocus/chat-ui-antd@0.10.0-next.1
+  - @turingfocus/chat-auth@0.12.0-next.0
+  - @turingfocus/chat-protocol@0.10.0-next.1
+  - @turingfocus/chat-runtime@0.10.0-next.1
+  - @turingfocus/chat-gateway-tfrobot@0.10.0-next.1
+  - @turingfocus/chat-react@0.10.0-next.1
+
 ## 0.10.0-next.0
 
 ### Minor Changes

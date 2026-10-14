@@ -1,5 +1,16 @@
 # @turingfocus/chat-ui-antd
 
+## 0.10.0-next.1
+
+### Minor Changes
+
+- b4741c9: Add an optional complete Manager chat interface with Chinese/English copy, compact conversation navigation, explicit identity/robot/platform selection and instance-scoped lifecycle handling.
+
+### Patch Changes
+
+- @turingfocus/chat-protocol@0.10.0-next.1
+- @turingfocus/chat-react@0.10.0-next.1
+
 ## 0.10.0-next.0
 
 ### Patch Changes

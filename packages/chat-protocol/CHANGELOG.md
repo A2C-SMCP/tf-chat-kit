@@ -1,5 +1,7 @@
 # @turingfocus/chat-protocol
 
+## 0.10.0-next.1
+
 ## 0.10.0-next.0
 
 ## 0.9.0
