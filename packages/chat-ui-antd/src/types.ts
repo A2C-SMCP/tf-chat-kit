@@ -170,6 +170,9 @@ export interface ChatUiLabels {
   readonly sending: ReactNode;
   readonly textSendingUnavailable: string;
   readonly timelineLabel: string;
+  /** Optional labels for retained messages that have no confirmed history link. */
+  readonly unconfirmedMessages?: string | undefined;
+  readonly unconfirmedDescription?: string | undefined;
   readonly newConversation: ReactNode;
   readonly historyConversations: ReactNode;
   readonly noHistoryConversations: ReactNode;

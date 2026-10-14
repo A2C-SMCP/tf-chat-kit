@@ -3047,7 +3047,9 @@ describe("TFRobotChatGateway current-server profile", () => {
           update.item.kind === "message" &&
           update.item.id === "message-1",
       ),
-    ).toHaveLength(0);
+    ).toMatchObject([
+      { item: { provenance: { kind: "persisted", source: "history" } } },
+    ]);
     expect(
       updates.filter(
         (update) =>
@@ -3123,9 +3125,15 @@ describe("TFRobotChatGateway current-server profile", () => {
         update.item.kind === "message" &&
         update.item.id === "message-1",
     );
-    expect(messageUpdates).toHaveLength(1);
+    expect(messageUpdates).toHaveLength(2);
     expect(messageUpdates[0]).toMatchObject({
       item: { content: { kind: "text", text: "Newer realtime content" } },
+    });
+    // This patch carries only historical author/provenance. Runtime must keep
+    // the realtime body; the full HTTP/Socket integration checks that result.
+    expect(messageUpdates[1]).toMatchObject({
+      authorOnly: true,
+      item: { provenance: { kind: "persisted", source: "history" } },
     });
     gateway.dispose({ deadlineAt: deadline() });
   });
@@ -3190,7 +3198,10 @@ describe("TFRobotChatGateway current-server profile", () => {
           update.kind === "timeline.upsert" &&
           update.item.id === "message-buffered-after-reconnect",
       ),
-    ).toHaveLength(1);
+    ).toMatchObject([
+      { item: { provenance: { kind: "persisted", source: "live" } } },
+      { item: { provenance: { kind: "persisted", source: "history" } } },
+    ]);
     expect(
       updates.filter(
         (update) =>

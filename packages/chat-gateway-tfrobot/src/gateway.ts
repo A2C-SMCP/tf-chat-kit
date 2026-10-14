@@ -356,6 +356,7 @@ export class TFRobotChatGateway implements ChatGateway {
     const disposed = this.#disposedResult<ReturnType<typeof mapSnapshot>>();
     if (disposed !== undefined) return disposed;
     const readRevision = this.#mutationRevision;
+    const historyRevision = this.#messageIdentities?.beginHistoryRead();
     if (!this.#conversations.has(input.conversationId)) {
       await this.listConversations({
         deadlineAt: input.deadlineAt,
@@ -418,7 +419,9 @@ export class TFRobotChatGateway implements ChatGateway {
         conversation,
         history.value,
         status.value,
-        (dto) => this.#messageIdentities?.map(dto) ?? mapMessage(dto),
+        (dto) =>
+          this.#messageIdentities?.map(dto, "history", historyRevision) ??
+          mapMessage(dto),
       );
       this.#socket.rememberSnapshot(snapshot);
     } catch {
@@ -676,6 +679,7 @@ export class TFRobotChatGateway implements ChatGateway {
   async #loadCurrentServerRestSnapshot(
     input: CurrentServerRestInput,
   ): Promise<GatewayResult<CurrentServerRestSnapshot>> {
+    const historyRevision = this.#messageIdentities?.beginHistoryRead();
     const status = await this.#http.request({
       method: "GET",
       path: conversationPath(input.conversationId, "status"),
@@ -724,7 +728,11 @@ export class TFRobotChatGateway implements ChatGateway {
             mapMessageUpdate(
               dto,
               (message) =>
-                this.#messageIdentities?.map(message) ?? mapMessage(message),
+                this.#messageIdentities?.map(
+                  message,
+                  "history",
+                  historyRevision,
+                ) ?? mapMessage(message),
             ),
           ),
           ...(history.value.events ?? []).map(mapEventUpdate),
@@ -758,10 +766,15 @@ export class TFRobotChatGateway implements ChatGateway {
 
       for (const update of pageUpdates) {
         const identity = recoveryIdentityOfUpdate(update);
-        if (identity !== undefined && input.checkpoint.has(identity)) {
+        if (identity !== undefined && input.checkpoint.has(identity))
           checkpointReached = true;
-          break;
-        }
+        // A checkpoint bounds pagination, not mutable message authors. Read all
+        // messages in the fetched page; preserve the existing event replay fence.
+        if (
+          checkpointReached &&
+          (update.kind !== "timeline.upsert" || update.item.kind !== "message")
+        )
+          continue;
         if (identity !== undefined && seenRecoveryIdentities.has(identity)) {
           continue;
         }

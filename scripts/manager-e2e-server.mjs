@@ -24,6 +24,9 @@ let organizationDisplayName;
 let robotDisplayName;
 let platformsStatus = 200;
 let switchAccountStatus = 200;
+let authorMismatch = false;
+/** @type {Map<number, import("../packages/chat-gateway-tfrobot/src/dto.js").MessageDto[]>} */
+const messageHistory = new Map();
 let platforms = [{ platformId: 17, name: "Word fixture" }];
 let nextConversation = 43;
 /** @type {Map<number, {conversationId: number; title: string; updateTimestamp: number}>} */
@@ -78,6 +81,8 @@ const server = createListener((req, res) => {
       if (input.organizationName !== undefined)
         organizationDisplayName = input.organizationName;
       if (input.robotName !== undefined) robotDisplayName = input.robotName;
+      if (input.authorMismatch !== undefined)
+        authorMismatch = input.authorMismatch;
       reply({});
       return;
     }
@@ -106,6 +111,7 @@ const server = createListener((req, res) => {
       robotDisplayName = undefined;
       platformsStatus = 200;
       switchAccountStatus = 200;
+      authorMismatch = false;
       platforms = [{ platformId: 17, name: "Word fixture" }];
       activeAccount = account;
       const input = JSON.parse(body);
@@ -333,20 +339,46 @@ const server = createListener((req, res) => {
           message: "Success",
           data: { taskId: `run-${conversationId}` },
         });
+        const timestamp = Date.now();
+        const saved = messageHistory.get(conversationId) ?? [];
+        const sequence = saved.length;
+        const assistant = {
+          msgId: authorMismatch
+            ? `assistant-${conversationId}-${sequence}`
+            : `assistant-${conversationId}`,
+          content: "Direct browser reply",
+          conversationId,
+          createTimestamp: timestamp + 1,
+          role: "assistant",
+          msgType: "text",
+          additionalKwargs: {},
+          attachments: null,
+          creator: { uid: "robot", name: "Fixture", avatar: null },
+        };
+        if (authorMismatch) {
+          const user = {
+            ...assistant,
+            msgId: `user-${conversationId}-${sequence}`,
+            role: "user",
+            content: message.content,
+            createTimestamp: timestamp,
+            creator: { uid: "manager-user", name: "Word user", avatar: null },
+          };
+          saved.push(user, assistant);
+          messageHistory.set(conversationId, saved);
+          for (const io of sockets)
+            io.of("/chat")
+              .to(String(conversationId))
+              .emit("chat_message", {
+                ...user,
+                msgId: null,
+                creator: { uid: "admin", name: "Admin", avatar: null },
+              });
+        }
         for (const io of sockets)
           io.of("/chat")
             .to(String(conversationId))
-            .emit("chat_message", {
-              msgId: `assistant-${conversationId}`,
-              content: "Direct browser reply",
-              conversationId,
-              createTimestamp: Date.now(),
-              role: "assistant",
-              msgType: "text",
-              additionalKwargs: {},
-              attachments: null,
-              creator: { uid: "robot", name: "Fixture", avatar: null },
-            });
+            .emit("chat_message", assistant);
         return;
       }
       if (req.method === "PATCH" && createdConversations.has(conversationId)) {
@@ -364,6 +396,7 @@ const server = createListener((req, res) => {
           reply({}, 404);
           return;
         }
+        messageHistory.delete(conversationId);
         reply({
           code: 200,
           message: "Success",
@@ -396,9 +429,15 @@ const server = createListener((req, res) => {
                       creator: { uid: "robot", name: "Fixture", avatar: null },
                     },
                   ]
-                : [],
+                : url.searchParams.has("cursor")
+                  ? []
+                  : (messageHistory.get(conversationId) ?? []),
             events: [],
-            cursor: null,
+            cursor:
+              messageHistory.has(conversationId) &&
+              !url.searchParams.has("cursor")
+                ? "nonempty-oldest-message"
+                : null,
           }
         : url.pathname.endsWith("/status")
           ? { working: false, taskId: null }

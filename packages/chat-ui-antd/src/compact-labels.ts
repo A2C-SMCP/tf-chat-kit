@@ -2,6 +2,9 @@ import type { ChatUiLabelOverrides } from "./types.js";
 
 /** Copy for the opt-in composed interface; legacy defaults stay unchanged. */
 export const compactChatZhCN: ChatUiLabelOverrides = {
+  unconfirmedMessages: "待核对消息",
+  unconfirmedDescription:
+    "这些消息尚未确认对应的历史记录，已保留供核对，不会自动重发。",
   formatChatError: (error) => {
     if (error.code === "authentication") return "登录已过期，请重新登录。";
     if (error.code === "authorization")

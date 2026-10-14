@@ -64,7 +64,12 @@ import {
   type SnapshotStateListener,
   type SnapshotSubscription,
 } from "./snapshot-store.js";
-import { createTimelineState, mergeHistoryTimeline } from "./timeline.js";
+import {
+  createTimelineState,
+  getTimelineRecoveryKeys,
+  mergeHistoryTimeline,
+  retainProvisionalTimeline,
+} from "./timeline.js";
 import {
   ConversationCache,
   mergeCachedHistory,
@@ -230,6 +235,15 @@ export class ChatClient {
   #pendingLoadConversationOverride: Conversation | undefined;
   #pendingLoadRequestId: number | undefined;
   #pendingHandoff: PendingHandoff | undefined;
+  readonly #pendingSends = new Map<string, number>();
+  #provisionalRecovery:
+    | {
+        readonly conversationId: string;
+        readonly generation: number;
+        readonly baseline: SnapshotState["timeline"];
+        readonly seen: Set<string>;
+      }
+    | undefined;
 
   constructor(options: ChatClientOptions) {
     this.#gateway = options.gateway;
@@ -437,6 +451,12 @@ export class ChatClient {
       recoveryAssurance: lifecycle?.recovery?.assurance,
     };
     let result: GatewayResult<T>;
+    const sending = operation === "sendText" || operation === "sendMessage";
+    if (sending)
+      this.#pendingSends.set(
+        conversationId,
+        (this.#pendingSends.get(conversationId) ?? 0) + 1,
+      );
     try {
       result = await action();
     } catch {
@@ -448,6 +468,12 @@ export class ChatClient {
           retryable: false,
         },
       };
+    } finally {
+      if (sending) {
+        const remaining = (this.#pendingSends.get(conversationId) ?? 1) - 1;
+        if (remaining > 0) this.#pendingSends.set(conversationId, remaining);
+        else this.#pendingSends.delete(conversationId);
+      }
     }
     if (result.ok) {
       if (operation === "loadConversation" || operation === "subscribe") {
@@ -1285,6 +1311,7 @@ export class ChatClient {
 
     const previousSubscription = this.#gatewaySubscription;
     const generation = ++this.#generation;
+    this.#provisionalRecovery = undefined;
     this.#historyRequestId += 1;
     this.#gatewaySubscription =
       loaded.value.capabilities.liveUpdates && subscribed.ok
@@ -1299,11 +1326,25 @@ export class ChatClient {
     const loadedWithHistory = mergeCachedHistory(
       loaded.value,
       cached?.snapshot,
+      (this.#pendingSends.get(input.conversationId) ?? 0) === 0 &&
+        loaded.value.run === null,
     );
+    const retained =
+      baseline?.snapshot.conversation.id === input.conversationId
+        ? {
+            ...loadedWithHistory,
+            timeline: retainProvisionalTimeline(
+              loadedWithHistory.timeline,
+              baseline.timeline.items,
+              (this.#pendingSends.get(input.conversationId) ?? 0) === 0 &&
+                loaded.value.run === null,
+            ),
+          }
+        : loadedWithHistory;
     const loadedState = createSnapshotState(
       conversationOverride === undefined
-        ? loadedWithHistory
-        : { ...loadedWithHistory, conversation: conversationOverride },
+        ? retained
+        : { ...retained, conversation: conversationOverride },
     );
     const currentState = this.#snapshotStore.state;
     const handoff = this.#pendingHandoff;
@@ -1621,6 +1662,8 @@ export class ChatClient {
     this.#cacheListeners.clear();
     this.#cacheRequestId += 1;
     this.#disposed = true;
+    this.#provisionalRecovery = undefined;
+    this.#pendingSends.clear();
     this.#diagnostics.dispose();
     this.#conversationEpoch += 1;
     this.#generation += 1;
@@ -1669,12 +1712,24 @@ export class ChatClient {
     const cached = this.#cache?.peek(input.conversationId);
     if (cached === undefined || cached.snapshot.timeline.length === 0)
       return { ok: true, value: snapshot };
-    const keys = new Set(cached.snapshot.timeline.map(getTimelineItemKey));
+    // Null-ID projections cannot prove a durable overlap and must not force
+    // pagination to chase an ID that the Server has never persisted.
+    const keys = new Set(
+      cached.snapshot.timeline
+        .filter(
+          (item) =>
+            item.kind !== "message" || item.provenance?.kind !== "provisional",
+        )
+        .flatMap(getTimelineRecoveryKeys),
+    );
+    if (keys.size === 0) return { ok: true, value: snapshot };
     const cursors = new Set<string>();
     let current = snapshot;
     while (
       current.pageInfo.hasPreviousPage &&
-      !current.timeline.some((item) => keys.has(getTimelineItemKey(item)))
+      !current.timeline.some((item) =>
+        getTimelineRecoveryKeys(item).some((key) => keys.has(key)),
+      )
     ) {
       const cursor = current.pageInfo.previousCursor;
       if (this.#disposed || requestId !== this.#loadRequestId)
@@ -1793,6 +1848,7 @@ export class ChatClient {
     const timeline = mergeHistoryTimeline(
       state.timeline,
       loaded.value.timeline,
+      true,
     );
     const pageInfo = cloneImmutable(loaded.value.pageInfo);
     if (
@@ -2014,7 +2070,71 @@ export class ChatClient {
         record === undefined ? update.conversationId : record.conversationId,
       );
     }
-    const state = this.#snapshotStore.latestState()!;
+    let state = this.#snapshotStore.latestState()!;
+    const recovery = this.#provisionalRecovery;
+    if (
+      recovery !== undefined &&
+      (recovery.generation !== generation ||
+        recovery.conversationId !== state.snapshot.conversation.id)
+    )
+      this.#provisionalRecovery = undefined;
+    if (
+      update.kind === "lifecycle.changed" &&
+      (update.lifecycle.status === "reconnecting" ||
+        update.lifecycle.status === "recovering") &&
+      this.#provisionalRecovery === undefined
+    ) {
+      this.#provisionalRecovery = {
+        conversationId: state.snapshot.conversation.id,
+        generation,
+        baseline: state.timeline,
+        seen: new Set(),
+      };
+    }
+    const activeRecovery = this.#provisionalRecovery;
+    if (
+      activeRecovery !== undefined &&
+      update.kind === "timeline.upsert" &&
+      update.item.kind === "message" &&
+      update.item.provenance?.source === "history"
+    )
+      activeRecovery.seen.add(getTimelineItemKey(update.item));
+    if (
+      activeRecovery !== undefined &&
+      update.kind === "lifecycle.changed" &&
+      update.lifecycle.status !== "reconnecting" &&
+      update.lifecycle.status !== "recovering"
+    ) {
+      if (
+        update.lifecycle.status === "degraded" &&
+        update.lifecycle.recovery?.source === "rest-rebase" &&
+        update.lifecycle.recovery.assurance === "best-effort"
+      ) {
+        const current = new Map(
+          state.timeline.items.map((item) => [getTimelineItemKey(item), item]),
+        );
+        const unchanged = activeRecovery.baseline.items.filter(
+          (item) =>
+            item.kind === "message" &&
+            item.provenance?.kind === "provisional" &&
+            !activeRecovery.seen.has(getTimelineItemKey(item)) &&
+            deepEqual(item, current.get(getTimelineItemKey(item))),
+        );
+        const keys = new Set(unchanged.map(getTimelineItemKey));
+        const timeline = createTimelineState(
+          retainProvisionalTimeline(
+            state.timeline.items.filter(
+              (item) => !keys.has(getTimelineItemKey(item)),
+            ),
+            unchanged,
+            (this.#pendingSends.get(state.snapshot.conversation.id) ?? 0) ===
+              0 && state.snapshot.run === null,
+          ),
+        );
+        state = updateSnapshotState(state, { timeline });
+      }
+      this.#provisionalRecovery = undefined;
+    }
     const prepared =
       update.kind === "error.reported"
         ? {
@@ -2032,14 +2152,44 @@ export class ChatClient {
               },
             },
           }
-        : this.#cache !== undefined &&
-            update.kind === "snapshot.replace" &&
-            update.snapshot.conversation.id === state.snapshot.conversation.id
+        : update.kind === "timeline.upsert" &&
+            update.item.kind === "message" &&
+            update.item.provenance?.kind === "provisional" &&
+            update.item.provenance.source !== "history" &&
+            update.item.provenance.reviewRequired === true &&
+            ((this.#pendingSends.get(state.snapshot.conversation.id) ?? 0) >
+              0 ||
+              state.snapshot.run !== null) &&
+            !state.timeline.items.some(
+              (item) =>
+                item.kind === "message" &&
+                item.id === update.item.id &&
+                item.provenance?.kind === "provisional" &&
+                item.provenance.reviewRequired === true,
+            )
           ? {
               ...update,
-              snapshot: mergeCachedHistory(update.snapshot, state.snapshot),
+              item: {
+                ...update.item,
+                provenance: {
+                  ...update.item.provenance,
+                  reviewRequired: false,
+                },
+              },
             }
-          : update;
+          : this.#cache !== undefined &&
+              update.kind === "snapshot.replace" &&
+              update.snapshot.conversation.id === state.snapshot.conversation.id
+            ? {
+                ...update,
+                snapshot: mergeCachedHistory(
+                  update.snapshot,
+                  state.snapshot,
+                  (this.#pendingSends.get(state.snapshot.conversation.id) ??
+                    0) === 0 && update.snapshot.run === null,
+                ),
+              }
+            : update;
     this.#snapshotStore.commit(
       this.#guardInteractionTransition(
         state,

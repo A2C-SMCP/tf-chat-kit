@@ -1121,6 +1121,11 @@ export class TFRobotSocketClient {
           (active.realtimeIdentityRevisions.get(identity) ?? 0) >
             realtimeRevision
         ) {
+          if (
+            update.kind === "timeline.upsert" &&
+            update.item.kind === "message"
+          )
+            next({ ...update, authorOnly: true });
           continue;
         }
         next(update);

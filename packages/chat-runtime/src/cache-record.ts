@@ -54,6 +54,11 @@ const persistedItem = (item: TimelineItem): TimelineItem => {
       ...base,
       kind: "message",
       role: item.role,
+      ...(item.provenance === undefined
+        ? {}
+        : {
+            provenance: { ...item.provenance, source: "cache" as const },
+          }),
       content:
         item.content.kind === "text"
           ? { kind: "text", text: cacheText(item.content.text) }

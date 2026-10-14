@@ -12,6 +12,7 @@ import type {
   Message,
 } from "../packages/chat-protocol/src/index.js";
 import { deadlineAt, flushMicrotasks } from "./support/chat-react.js";
+import { mergeCachedHistory } from "../packages/chat-runtime/src/conversation-cache.js";
 
 class AtomicStorage implements ConversationCacheStorage {
   readonly scopes = new Map<string, string>();
@@ -56,6 +57,300 @@ const message = (
 });
 
 describe("conversation cache", () => {
+  it("never treats a provisional overlap as historical coverage", () => {
+    const base = createMemoryChatGateway().fixtures.initialSnapshot;
+    const transient: Message = {
+      ...message("temporary", base.conversation.id, 5),
+      provenance: { kind: "provisional", source: "cache" },
+    };
+    const latest: ChatSnapshot = {
+      ...base,
+      timeline: [
+        { ...transient, createdAt: 10 },
+        {
+          ...message("42", base.conversation.id, 20),
+          provenance: { kind: "persisted", id: "42", source: "history" },
+        },
+      ],
+      pageInfo: { hasPreviousPage: true, previousCursor: "older" },
+    };
+    const merged = mergeCachedHistory(latest, {
+      ...base,
+      timeline: [transient],
+      pageInfo: { hasPreviousPage: false },
+    });
+    expect(merged.pageInfo).toEqual(latest.pageInfo);
+  });
+
+  it.each([
+    { cache: false, cursor: false },
+    { cache: false, cursor: true },
+    { cache: true, cursor: false },
+    { cache: true, cursor: true },
+  ])(
+    "retains unmatched cross-author provisional data for review across latest reads: %j",
+    async ({ cache, cursor }) => {
+      const memory = createMemoryChatGateway();
+      const base = memory.fixtures.initialSnapshot;
+      const id = base.conversation.id;
+      const live: Message = {
+        ...message("temporary", id, 10, "Same body"),
+        role: "user",
+        author: { id: "admin", displayName: "Admin" },
+        provenance: { kind: "provisional", source: "live" },
+      };
+      const history: Message = {
+        ...live,
+        id: "42",
+        author: { id: "user-1", displayName: "Actual user" },
+        provenance: { kind: "persisted", id: "42", source: "history" },
+      };
+      memory.controller.setSnapshot({
+        ...base,
+        timeline: [live],
+        run: null,
+        pageInfo: { hasPreviousPage: false },
+      });
+      const client = createChatClient({
+        gateway: memory.gateway,
+        ...(cache ? {} : { cache: false as const }),
+      });
+      try {
+        await client.loadConversation({ ...options(), conversationId: id });
+        memory.controller.setSnapshot({
+          ...base,
+          timeline: [history],
+          run: null,
+          pageInfo: cursor
+            ? { hasPreviousPage: true, previousCursor: "nonempty" }
+            : { hasPreviousPage: false },
+        });
+        expect(
+          (await client.loadConversation({ ...options(), conversationId: id }))
+            .ok,
+        ).toBe(true);
+        expect(client.getSnapshot()?.timeline).toHaveLength(2);
+        expect(
+          client.getSnapshot()?.timeline.find((item) => item.id === live.id),
+        ).toMatchObject({
+          author: live.author,
+          provenance: { kind: "provisional", reviewRequired: true },
+        });
+        memory.controller.emitUpdateToAll({
+          kind: "timeline.upsert",
+          conversationId: id,
+          item: live,
+        });
+        expect(
+          client.getSnapshot()?.timeline.find((item) => item.id === live.id),
+        ).toMatchObject({ provenance: { reviewRequired: true } });
+        const hold = memory.controller.holdNext("loadConversation");
+        const pending = client.loadConversation({
+          ...options(),
+          conversationId: id,
+        });
+        await hold.started;
+        const newer: Message = {
+          ...live,
+          id: "uncovered",
+          createdAt: 30,
+          content: { kind: "text", text: "New during read" },
+        };
+        memory.controller.emitUpdateToAll({
+          kind: "timeline.upsert",
+          conversationId: id,
+          item: newer,
+        });
+        hold.release();
+        expect((await pending).ok).toBe(true);
+        expect(
+          client.getSnapshot()?.timeline.find((item) => item.id === newer.id),
+        ).toMatchObject({
+          provenance: { kind: "provisional" },
+          content: newer.content,
+        });
+        const newItem = client
+          .getSnapshot()
+          ?.timeline.find((item) => item.id === newer.id);
+        expect(
+          newItem?.kind === "message"
+            ? newItem.provenance?.kind === "provisional" &&
+                newItem.provenance.reviewRequired
+            : undefined,
+        ).not.toBe(true);
+      } finally {
+        await client.dispose(options());
+      }
+    },
+  );
+
+  it("keeps messages whose send is pending in the main projection", async () => {
+    const memory = createMemoryChatGateway();
+    const base = memory.fixtures.initialSnapshot;
+    const id = base.conversation.id;
+    memory.controller.setSnapshot({ ...base, timeline: [], run: null });
+    const client = createChatClient({ gateway: memory.gateway });
+    try {
+      await client.loadConversation({ ...options(), conversationId: id });
+      const held = memory.controller.holdNext("sendText");
+      const sending = client.sendText({
+        ...options(),
+        conversationId: id,
+        text: "Sending once",
+      });
+      await held.started;
+      const pending: Message = {
+        ...message("not-persisted", id, 10),
+        role: "user",
+        provenance: { kind: "provisional", source: "live" },
+      };
+      memory.controller.emitUpdateToAll({
+        kind: "timeline.upsert",
+        conversationId: id,
+        item: pending,
+      });
+      expect(
+        (await client.loadConversation({ ...options(), conversationId: id }))
+          .ok,
+      ).toBe(true);
+      const item = client
+        .getSnapshot()
+        ?.timeline.find((item) => item.id === pending.id);
+      expect(item).toBeDefined();
+      expect(
+        item?.kind === "message"
+          ? item.provenance?.kind === "provisional" &&
+              item.provenance.reviewRequired
+          : undefined,
+      ).not.toBe(true);
+      held.release();
+      await sending;
+    } finally {
+      await client.dispose(options());
+    }
+  });
+
+  it("reviews only pre-reconnect provisional items absent from REST without hiding new realtime", async () => {
+    const memory = createMemoryChatGateway();
+    const base = memory.fixtures.initialSnapshot;
+    const id = base.conversation.id;
+    const live: Message = {
+      ...message("old-live", id, 10),
+      role: "user",
+      provenance: { kind: "provisional", source: "live" },
+    };
+    memory.controller.setSnapshot({ ...base, timeline: [live], run: null });
+    const client = createChatClient({ gateway: memory.gateway });
+    try {
+      await client.loadConversation({ ...options(), conversationId: id });
+      memory.controller.emitUpdateToAll({
+        kind: "lifecycle.changed",
+        conversationId: id,
+        lifecycle: { status: "reconnecting" },
+      });
+      const newer: Message = { ...live, id: "new-live", createdAt: 20 };
+      memory.controller.emitUpdateToAll({
+        kind: "timeline.upsert",
+        conversationId: id,
+        item: newer,
+      });
+      memory.controller.emitUpdateToAll({
+        kind: "lifecycle.changed",
+        conversationId: id,
+        lifecycle: { status: "recovering" },
+      });
+      memory.controller.emitUpdateToAll({
+        kind: "timeline.upsert",
+        conversationId: id,
+        item: {
+          ...live,
+          id: "42",
+          provenance: { kind: "persisted", id: "42", source: "history" },
+        },
+      });
+      memory.controller.emitUpdateToAll({
+        kind: "lifecycle.changed",
+        conversationId: id,
+        lifecycle: {
+          status: "degraded",
+          recovery: {
+            assurance: "best-effort",
+            complete: false,
+            source: "rest-rebase",
+          },
+        },
+      });
+      expect(client.getSnapshot()?.timeline).toHaveLength(3);
+      expect(
+        client.getSnapshot()?.timeline.find((item) => item.id === live.id),
+      ).toMatchObject({ provenance: { reviewRequired: true } });
+      const item = client
+        .getSnapshot()
+        ?.timeline.find((item) => item.id === newer.id);
+      expect(
+        item?.kind === "message"
+          ? item.provenance?.kind === "provisional" &&
+              item.provenance.reviewRequired
+          : undefined,
+      ).not.toBe(true);
+      expect(client.getSnapshot()?.lifecycle?.recovery?.complete).toBe(false);
+    } finally {
+      await client.dispose(options());
+    }
+  });
+
+  it("does not let a sanitized disk author overwrite freshly received author data", async () => {
+    const storage = new AtomicStorage();
+    const memory = createMemoryChatGateway();
+    const base = memory.fixtures.initialSnapshot;
+    const id = base.conversation.id;
+    const historical: Message = {
+      ...message("canonical", id, 10),
+      role: "user",
+      author: { id: "u", displayName: "History User" },
+      provenance: { kind: "persisted", id: "42", source: "history" },
+    };
+    memory.controller.setSnapshot({
+      ...base,
+      timeline: [historical],
+      run: null,
+      pageInfo: { hasPreviousPage: true, previousCursor: "nonempty" },
+    });
+    const first = createChatClient({
+      gateway: memory.gateway,
+      cache: { storage },
+    });
+    await first.loadConversation({ ...options(), conversationId: id });
+    await first.flushCache(options());
+    await first.dispose(options());
+    const nextMemory = createMemoryChatGateway();
+    const live: Message = {
+      ...historical,
+      author: { id: "u", displayName: "Live User" },
+      provenance: { kind: "persisted", id: "42", source: "live" },
+    };
+    nextMemory.controller.setSnapshot({
+      ...base,
+      timeline: [live],
+      run: null,
+      pageInfo: { hasPreviousPage: true, previousCursor: "nonempty" },
+    });
+    const next = createChatClient({
+      gateway: nextMemory.gateway,
+      cache: { storage },
+    });
+    try {
+      expect(
+        (await next.loadConversation({ ...options(), conversationId: id })).ok,
+      ).toBe(true);
+      expect(next.getSnapshot()?.timeline).toMatchObject([
+        { author: live.author },
+      ]);
+    } finally {
+      await next.dispose(options());
+    }
+  });
+
   it("keeps C selected when cached A synchronization and its realtime events arrive late", async () => {
     const memory = createMemoryChatGateway();
     const a = memory.fixtures.conversation.id;

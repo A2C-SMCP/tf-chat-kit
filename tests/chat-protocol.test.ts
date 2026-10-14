@@ -115,6 +115,33 @@ const snapshot: ChatSnapshot = {
 };
 
 describe("normalized protocol schemas", () => {
+  it("limits author-only recovery updates to conversation-scoped messages", () => {
+    const update = {
+      kind: "timeline.upsert",
+      conversationId: conversation.id,
+      authorOnly: true,
+      item: message,
+    };
+    expect(chatUpdateSchema.safeParse(update).success).toBe(true);
+    expect(
+      chatUpdateSchema.safeParse({
+        ...update,
+        item: { ...message, conversationId: "another-conversation" },
+      }).success,
+    ).toBe(false);
+    const event = unknownEventSchema.parse({
+      kind: "unknown-event",
+      id: "unknown-1",
+      conversationId: conversation.id,
+      originalType: "unknown",
+      summary: "Unknown event",
+      createdAt: message.createdAt,
+    });
+    expect(chatUpdateSchema.safeParse({ ...update, item: event }).success).toBe(
+      false,
+    );
+  });
+
   it("validates conversation-scoped Ask User requests, answers, and results", () => {
     const request = askUserInteractionRequestSchema.parse({
       kind: "ask-user",

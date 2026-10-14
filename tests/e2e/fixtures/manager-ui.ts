@@ -97,6 +97,65 @@ export function registerManagerUiTests() {
       },
     );
   };
+  test("cross-UID history restores one primary user bubble and retains the transient echo for explicit review", async ({
+    page,
+  }) => {
+    await mount(page, { platformId: 17 });
+    await login(page);
+    await configureUi(page, { authorMismatch: true });
+    const content = `UI long text:历史作者兼容-${test.info().project.name}`;
+    const primary = page.getByRole("log", { name: "对话消息", exact: true });
+    await page.locator("textarea:not([aria-hidden])").fill(content);
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(primary.getByText(content, { exact: true })).toHaveCount(1);
+    await expect(
+      primary.getByText("Direct browser reply", { exact: true }),
+    ).toBeVisible();
+    await expect(primary.getByText("Admin", { exact: false })).toBeVisible();
+    await page.getByRole("button", { name: "历史对话", exact: true }).click();
+    await page
+      .getByRole("list", { name: "历史对话", exact: true })
+      .getByRole("listitem")
+      .filter({ hasText: "Manager browser fixture" })
+      .getByRole("button")
+      .first()
+      .click();
+    await expect(
+      primary.getByText("Persisted private reply", { exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "历史对话", exact: true }).click();
+    await page
+      .getByRole("list", { name: "历史对话", exact: true })
+      .getByRole("listitem")
+      .filter({ hasText: content })
+      .getByRole("button")
+      .first()
+      .click();
+    await expect(primary.getByText(content, { exact: true })).toHaveCount(1);
+    await expect(
+      primary.getByText("Word user", { exact: false }),
+    ).toBeVisible();
+    await expect(primary.getByText("Admin", { exact: false })).toHaveCount(0);
+    const review = page.locator("details[data-chat-unconfirmed]");
+    await expect(review.locator("summary")).toHaveText("待核对消息 (1)");
+    await review.locator("summary").focus();
+    await page.keyboard.press("Enter");
+    await expect(review.getByText(content, { exact: true })).toBeVisible();
+    await expect(review.getByText("Admin", { exact: false })).toBeVisible();
+    await page.screenshot({
+      path: test.info().outputPath("issue-136-review-expanded.png"),
+    });
+    await review.locator("summary").click();
+    await expect(review.getByText(content, { exact: true })).not.toBeVisible();
+    await page
+      .locator("textarea:not([aria-hidden])")
+      .fill(`UI long text:恢复后继续-${test.info().project.name}`);
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(
+      primary.getByText("Direct browser reply", { exact: true }),
+    ).toHaveCount(2);
+  });
+
   test("context summaries and candidate platform navigation preserve the active chat until confirmation", async ({
     page,
   }) => {

@@ -1,8 +1,11 @@
+import { compareTimelineItems } from "@turingfocus/chat-protocol";
 import {
-  compareTimelineItems,
-  getTimelineItemKey,
-} from "@turingfocus/chat-protocol";
-import { createTimelineState, mergeHistoryTimeline } from "./timeline.js";
+  createTimelineState,
+  getTimelineRecoveryKey,
+  getTimelineRecoveryKeys,
+  mergeHistoryTimeline,
+  retainProvisionalTimeline,
+} from "./timeline.js";
 import type {
   ChatSnapshot,
   GatewayRequestOptions,
@@ -644,24 +647,43 @@ export class ConversationCache {
 export const mergeCachedHistory = (
   latest: ChatSnapshot,
   cached: ChatSnapshot | undefined,
+  reviewUnmatched = true,
 ): ChatSnapshot => {
-  if (cached === undefined || !latest.pageInfo.hasPreviousPage) return latest;
-  const cachedOldest = cached.timeline[0];
-  const latestOldest = latest.timeline[0];
-  const cachedKeys = new Set(cached.timeline.map(getTimelineItemKey));
-  const overlaps = latest.timeline.some((item) =>
-    cachedKeys.has(getTimelineItemKey(item)),
+  if (cached === undefined) return latest;
+  const withProvisional = retainProvisionalTimeline(
+    latest.timeline,
+    cached.timeline,
+    reviewUnmatched,
+  );
+  if (!latest.pageInfo.hasPreviousPage)
+    return withProvisional === latest.timeline
+      ? latest
+      : { ...latest, timeline: withProvisional };
+  const durable = (item: ChatSnapshot["timeline"][number]): boolean =>
+    item.kind !== "message" || item.provenance?.kind !== "provisional";
+  const cachedDurable = cached.timeline.filter(durable);
+  const latestDurable = latest.timeline.filter(durable);
+  const cachedOldest = cachedDurable[0];
+  const latestOldest = latestDurable[0];
+  const cachedKeys = new Set(cachedDurable.flatMap(getTimelineRecoveryKeys));
+  const overlaps = latestDurable.some((item) =>
+    getTimelineRecoveryKeys(item).some((key) => cachedKeys.has(key)),
   );
   return {
     ...latest,
     timeline: mergeHistoryTimeline(
-      createTimelineState(latest.timeline),
-      cached.timeline,
+      createTimelineState(withProvisional),
+      cached.timeline.filter(
+        (item) =>
+          item.kind !== "message" || item.provenance?.kind !== "provisional",
+      ),
     ).items,
     pageInfo:
       overlaps &&
       cachedOldest !== undefined &&
       latestOldest !== undefined &&
+      getTimelineRecoveryKey(cachedOldest) !==
+        getTimelineRecoveryKey(latestOldest) &&
       compareTimelineItems(cachedOldest, latestOldest) < 0
         ? cached.pageInfo
         : latest.pageInfo,

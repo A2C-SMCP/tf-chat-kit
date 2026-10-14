@@ -407,6 +407,26 @@ export const ChatConversationView = ({
     ],
   );
 
+  const timelines = useMemo(() => {
+    const items = snapshot?.timeline ?? [];
+    const review = items.filter(
+      (item) =>
+        item.kind === "message" &&
+        item.provenance?.kind === "provisional" &&
+        item.provenance.reviewRequired === true,
+    );
+    const keys = new Set(review.map((item) => item.id));
+    return {
+      review,
+      primary:
+        review.length === 0
+          ? items
+          : items.filter(
+              (item) => item.kind !== "message" || !keys.has(item.id),
+            ),
+    };
+  }, [snapshot?.timeline]);
+
   if (snapshot === null) {
     return (
       <ChatNotices
@@ -420,17 +440,64 @@ export const ChatConversationView = ({
 
   const conversationId = snapshot.conversationId;
   const timeline = (
-    <ChatTimeline
+    <div
       key={viewResetKey}
-      conversationId={conversationId}
-      formatTimestamp={formatTimestamp}
-      items={snapshot.timeline}
-      labels={labels}
-      onEventSelect={selectEvent}
-      onRendererError={onRendererError}
-      renderers={renderers}
-      selectedEventId={selectedEventId}
-    />
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+      }}
+    >
+      <ChatTimeline
+        conversationId={conversationId}
+        formatTimestamp={formatTimestamp}
+        items={timelines.primary}
+        labels={labels}
+        onEventSelect={selectEvent}
+        onRendererError={onRendererError}
+        renderers={renderers}
+        selectedEventId={selectedEventId}
+        style={{ flex: 1, height: "auto", minHeight: 0 }}
+      />
+      {timelines.review.length > 0 ? (
+        <details
+          data-chat-unconfirmed
+          style={{
+            flexShrink: 0,
+            maxHeight: "50%",
+            overflow: "auto",
+            borderTop: `1px solid ${token.colorBorderSecondary}`,
+            padding: token.paddingSM,
+          }}
+        >
+          <summary
+            style={{ cursor: "pointer", color: token.colorTextSecondary }}
+          >
+            {labels.unconfirmedMessages ?? "Unconfirmed messages"} (
+            {timelines.review.length})
+          </summary>
+          <p
+            style={{
+              color: token.colorTextSecondary,
+              fontSize: token.fontSizeSM,
+            }}
+          >
+            {labels.unconfirmedDescription}
+          </p>
+          <ChatTimeline
+            aria-label={labels.unconfirmedMessages ?? "Unconfirmed messages"}
+            conversationId={`${conversationId}:review`}
+            items={timelines.review}
+            labels={labels}
+            formatTimestamp={formatTimestamp}
+            renderers={renderers}
+            onRendererError={onRendererError}
+            style={{ height: 240, minHeight: 120 }}
+          />
+        </details>
+      ) : null}
+    </div>
   );
   const eventDetail = (
     <aside
