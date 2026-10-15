@@ -12,6 +12,7 @@
     "@turingfocus/chat-ui-antd": "0.9.0"
   },
   "changesets": [
+    "compact-chat-toolbar",
     "current-server-author-display",
     "default-manager-ui",
     "fix-independent-auth-package-range",
