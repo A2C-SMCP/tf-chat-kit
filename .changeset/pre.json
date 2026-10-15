@@ -16,6 +16,7 @@
     "default-manager-ui",
     "fix-independent-auth-package-range",
     "manager-context-ui",
+    "server-message-identity",
     "word-auth-facade-contract"
   ]
 }
