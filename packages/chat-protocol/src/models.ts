@@ -131,6 +131,8 @@ export interface Message {
   readonly id: TimelineItemId;
   readonly conversationId: ConversationId;
   readonly role: MessageRole;
+  /** Stable server identity within this conversation; does not prove persistence. */
+  readonly serverMessageId?: string | undefined;
   readonly provenance?: MessageProvenance | undefined;
   readonly content: MessageContent;
   /** Server-owned Unix epoch milliseconds used for stable ordering. */
@@ -437,10 +439,22 @@ export interface ChatSnapshot {
   readonly capabilities: Capabilities;
   readonly pageInfo: TimelinePageInfo;
   readonly pendingInteraction?: AskUserInteractionRequest | undefined;
+  /** Runtime-owned, instance-local sends. Never persisted or automatically replayed. */
+  readonly outgoingMessages?: readonly OutgoingMessage[] | undefined;
   readonly lifecycle?: ChatLifecycle | undefined;
   readonly activeErrors?: readonly ChatErrorOccurrence[] | undefined;
   /** @deprecated Prefer activeErrors; retained as the latest-error projection. */
   readonly error?: ChatError | undefined;
+}
+
+/** A local send observation, separate from the server-authored timeline. */
+export interface OutgoingMessage {
+  readonly id: string;
+  readonly conversationId: ConversationId;
+  readonly text: string;
+  readonly attachmentCount: number;
+  readonly status: "sending" | "accepted" | "failed" | "unknown";
+  readonly serverMessageId?: string | undefined;
 }
 
 export interface AgentEventTransitionUpdate {

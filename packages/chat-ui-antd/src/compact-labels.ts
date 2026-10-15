@@ -3,6 +3,13 @@ import type { ChatUiLabelOverrides } from "./types.js";
 /** Copy for the opt-in composed interface; legacy defaults stay unchanged. */
 export const compactChatZhCN: ChatUiLabelOverrides = {
   unconfirmedMessages: "待核对消息",
+  outgoingMessages: "发送记录",
+  outgoingSending: "正在发送",
+  outgoingAccepted: "已接收，等待同步",
+  outgoingFailed: "发送失败",
+  outgoingUnknown: "发送结果未确认，请核对会话后再决定是否重发。",
+  outgoingAttachments: "附件",
+  dismissOutgoing: "关闭发送记录",
   unconfirmedDescription:
     "这些消息尚未确认对应的历史记录，已保留供核对，不会自动重发。",
   formatChatError: (error) => {

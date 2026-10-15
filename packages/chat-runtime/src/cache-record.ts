@@ -54,6 +54,9 @@ const persistedItem = (item: TimelineItem): TimelineItem => {
       ...base,
       kind: "message",
       role: item.role,
+      ...(item.serverMessageId === undefined
+        ? {}
+        : { serverMessageId: item.serverMessageId }),
       ...(item.provenance === undefined
         ? {}
         : {

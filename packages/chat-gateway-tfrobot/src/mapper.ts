@@ -101,6 +101,7 @@ const CONVERSATION_KEYS = new Set([
   "updateTimestamp",
 ]);
 const MESSAGE_KEYS = new Set([
+  "elementId",
   "additionalKwargs",
   "attachments",
   "content",
@@ -382,6 +383,9 @@ export const mapMessage = (dto: MessageDto): Message => {
         : asId(dto.msgId),
     conversationId: asId(dto.conversationId),
     role: mapRole(dto.role),
+    ...(mapRole(dto.role) === "user" && typeof dto.elementId === "string"
+      ? { serverMessageId: dto.elementId }
+      : {}),
     content: mapMessageContent(dto),
     createdAt: dto.createTimestamp,
     ...(dto.sequence === undefined ? {} : { sequence: dto.sequence }),
