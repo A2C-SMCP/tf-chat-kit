@@ -1,4 +1,14 @@
-import { Alert, Button, Input, Modal, Space, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Dropdown,
+  Input,
+  Modal,
+  Space,
+  Tooltip,
+  Typography,
+  type GetRef,
+} from "antd";
 import {
   useCallback,
   useEffect,
@@ -21,15 +31,23 @@ import { ChatConversationList } from "./conversation-list.js";
 import { ChatDiagnostics } from "./chat-diagnostics.js";
 import { compactChatZhCN } from "./compact-labels.js";
 import { resolveChatUiLabels } from "./labels.js";
+import { HistoryIcon, MoreIcon, PlusIcon } from "./navigation-icons.js";
 
 export interface ChatCompactDraft {
   readonly conversationId?: string | undefined;
   readonly text: string;
 }
+/** Host actions share the compact overflow menu without coupling UI to a host. */
+export interface ChatCompactAction {
+  readonly label: string;
+  readonly disabled?: boolean | undefined;
+  readonly onSelect: (trigger: HTMLElement) => void;
+}
 export interface ChatCompactWorkspaceProps {
   readonly locale?: "zh-CN" | "en-US" | undefined;
   readonly getDeadlineAt: () => number;
   readonly header?: ReactNode;
+  readonly moreActions?: readonly ChatCompactAction[] | undefined;
   readonly onActivityChange?:
     | ((activity: {
         readonly running: boolean;
@@ -42,11 +60,33 @@ export interface ChatCompactWorkspaceProps {
   readonly onRequestAuthentication?: (() => void) | undefined;
 }
 
+function CompactMenuContent({
+  open,
+  children,
+}: {
+  readonly open: boolean;
+  readonly children: ReactNode;
+}) {
+  const content = useRef<HTMLDivElement>(null);
+  // Focus only while open. Dropdown's delayed autofocus can otherwise steal
+  // focus back into the hidden menu after a quick Escape.
+  useEffect(() => {
+    if (open)
+      content.current
+        ?.querySelector<HTMLElement>(
+          '[role="menuitem"]:not([aria-disabled="true"])',
+        )
+        ?.focus({ preventScroll: true });
+  }, [open]);
+  return <div ref={content}>{children}</div>;
+}
+
 /** Single-column, opt-in UI. Conversation state and commands remain in Runtime. */
 export function ChatCompactWorkspace({
   locale = "zh-CN",
   getDeadlineAt,
   header,
+  moreActions = [],
   onActivityChange,
   restoredDraft,
   onRequestAuthentication,
@@ -87,6 +127,8 @@ export function ChatCompactWorkspace({
   const busyRef = useRef(false);
   const generation = useRef(0);
   const root = useRef<HTMLDivElement>(null);
+  const moreTrigger = useRef<GetRef<typeof Button>>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
   const restoreDone = useRef(false);
   const creatingId = useRef<string>();
   const [pendingNavigation, setPendingNavigation] = useState<() => void>();
@@ -272,6 +314,13 @@ export function ChatCompactWorkspace({
     <div
       ref={root}
       onKeyDownCapture={(event) => {
+        if (event.key === "Escape" && moreOpen) {
+          event.preventDefault();
+          event.stopPropagation();
+          setMoreOpen(false);
+          moreTrigger.current?.focus({ preventScroll: true });
+          return;
+        }
         if (
           event.key !== "Escape" ||
           busy ||
@@ -297,59 +346,124 @@ export function ChatCompactWorkspace({
     >
       {header}
       <div
+        data-chat-compact-toolbar="true"
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 4,
-          padding: "8px 12px",
+          gap: 2,
+          padding: "4px 12px",
           borderBottom: "1px solid #e3e9e5",
           flexShrink: 0,
         }}
       >
         <Typography.Text
-          ellipsis
-          style={{ flex: 1, minWidth: 0, fontSize: 12 }}
+          ellipsis={{
+            tooltip: {
+              title: fresh
+                ? labels.newConversation
+                : snapshot?.conversation.title,
+              getPopupContainer: getPopupContainer ?? (() => root.current!),
+            },
+          }}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            fontSize: 12,
+            fontWeight: 500,
+            color: "#647366",
+          }}
         >
           {fresh ? labels.newConversation : snapshot?.conversation.title}
         </Typography.Text>
-        <Button
-          size="small"
-          type="text"
-          disabled={busy}
-          onClick={(event) =>
-            openPage(
-              page === "history" ? "chat" : "history",
-              event.currentTarget,
-            )
-          }
+        <Tooltip
+          title={labels.historyConversations}
+          getPopupContainer={getPopupContainer ?? (() => root.current!)}
         >
-          {labels.historyConversations}
-        </Button>
-        <Button
-          size="small"
-          type="text"
-          disabled={busy}
-          onClick={() =>
-            navigate(() => {
-              setFresh(true);
-              setError(undefined);
-              creatingId.current = undefined;
-              setPage("chat");
-            })
-          }
+          <Button
+            size="small"
+            type="text"
+            aria-label={String(labels.historyConversations)}
+            aria-pressed={page === "history"}
+            icon={<HistoryIcon size={14} />}
+            style={{ width: 28, height: 28, flexShrink: 0, borderRadius: 6 }}
+            disabled={busy}
+            onClick={(event) =>
+              openPage(
+                page === "history" ? "chat" : "history",
+                event.currentTarget,
+              )
+            }
+          ></Button>
+        </Tooltip>
+        <Tooltip
+          title={labels.newConversation}
+          getPopupContainer={getPopupContainer ?? (() => root.current!)}
         >
-          {labels.newConversation}
-        </Button>
-        <Button
-          size="small"
-          type="text"
-          aria-label={zh ? "帮助与诊断" : "Help and diagnostics"}
-          onClick={(event) =>
-            openPage(page === "help" ? "chat" : "help", event.currentTarget)
-          }
+          <Button
+            size="small"
+            type="text"
+            aria-label={String(labels.newConversation)}
+            icon={<PlusIcon size={14} />}
+            style={{ width: 28, height: 28, flexShrink: 0, borderRadius: 6 }}
+            disabled={busy}
+            onClick={() =>
+              navigate(() => {
+                setFresh(true);
+                setError(undefined);
+                creatingId.current = undefined;
+                setPage("chat");
+              })
+            }
+          ></Button>
+        </Tooltip>
+        <Dropdown
+          trigger={["click"]}
+          placement="bottomRight"
+          dropdownRender={(menu) => (
+            <CompactMenuContent open={moreOpen}>{menu}</CompactMenuContent>
+          )}
+          open={moreOpen}
+          onOpenChange={setMoreOpen}
+          getPopupContainer={getPopupContainer ?? (() => root.current!)}
+          menu={{
+            items: [
+              ...moreActions.map((action, index) => ({
+                key: `action:${index}`,
+                label: action.label,
+                disabled: action.disabled ?? false,
+              })),
+              ...(moreActions.length
+                ? [{ key: "separator", type: "divider" as const }]
+                : []),
+              {
+                key: "help",
+                label: zh ? "帮助与诊断" : "Help and diagnostics",
+              },
+            ],
+            onClick: ({ key }) => {
+              setMoreOpen(false);
+              const trigger = moreTrigger.current;
+              if (!trigger) return;
+              if (key === "help") openPage("help", trigger);
+              else {
+                const action = moreActions[Number(key.slice("action:".length))];
+                if (action && !action.disabled) action.onSelect(trigger);
+              }
+            },
+          }}
         >
-          ···
-        </Button>
+          <Button
+            ref={moreTrigger}
+            size="small"
+            type="text"
+            aria-label={zh ? "更多操作" : "More actions"}
+            aria-haspopup="menu"
+            aria-expanded={moreOpen}
+            icon={<MoreIcon size={14} />}
+            style={{ width: 28, height: 28, flexShrink: 0, borderRadius: 6 }}
+            disabled={busy}
+          ></Button>
+        </Dropdown>
       </div>
       {accessDenied ? (
         <Alert

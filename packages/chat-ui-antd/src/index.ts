@@ -80,5 +80,6 @@ export {
   ChatCompactWorkspace,
   type ChatCompactWorkspaceProps,
   type ChatCompactDraft,
+  type ChatCompactAction,
 } from "./chat-compact-workspace.js";
 export { compactChatZhCN } from "./compact-labels.js";

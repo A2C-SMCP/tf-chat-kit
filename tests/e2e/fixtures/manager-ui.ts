@@ -81,6 +81,123 @@ const login = async (page: Page, beforeSelect?: () => Promise<void>) => {
 };
 
 export function registerManagerUiTests() {
+  test("compact chat toolbar uses icons and an inline menu while context stays read-only", async ({
+    page,
+  }) => {
+    await mount(page);
+    await login(page);
+    await page.getByRole("button", { name: /Word fixture/ }).click();
+    await page.getByRole("button", { name: "开始对话" }).click();
+    const input = page.locator("textarea:not([aria-hidden])");
+    await input.fill("保留菜单走查草稿");
+    await expect(page.locator(".tf-top")).not.toContainText("当前工作组织");
+    const organization = page.getByRole("group", {
+      name: "当前工作组织: Word 测试组织",
+      exact: true,
+    });
+    await expect(organization).toBeVisible();
+    await organization.click();
+    await expect(input).toHaveValue("保留菜单走查草稿");
+    await expect(
+      page.getByRole("button", { name: /切换组织: Word 测试组织/ }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "选择工作组织" }),
+    ).toHaveCount(0);
+    await expect(organization).not.toContainText("⌄");
+    await expect(
+      page.getByLabel("当前机器人: 目录 ID: legacy", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: /切换机器人/ })).toHaveCount(
+      0,
+    );
+    await expect(
+      page.getByRole("button", { name: "切换平台", exact: true }),
+    ).toHaveCount(0);
+    for (const name of ["历史对话", "新建对话", "更多操作"]) {
+      const button = page.getByRole("button", { name, exact: true });
+      await expect(button.locator("svg")).toHaveCount(1);
+      await expect(button).toHaveText("");
+      expect(
+        await button.evaluate((el) => ({
+          width: el.getBoundingClientRect().width,
+          height: el.getBoundingClientRect().height,
+        })),
+      ).toEqual({ width: 28, height: 28 });
+      await expect(button.locator("svg")).toHaveAttribute("width", "14");
+    }
+    const more = page.getByRole("button", { name: "更多操作", exact: true });
+    for (const width of [320, 380, 480, 760]) {
+      await page.locator("#word-pane").evaluate((el, width) => {
+        (el as HTMLElement).style.width = `${width}px`;
+      }, width);
+      const context = await page.locator(".tf-toolbar").boundingBox();
+      expect(
+        (await page.locator(".tf-chat-context .tf-top").boundingBox())!.height,
+      ).toBeLessThanOrEqual(42);
+      const toolbar = await page
+        .locator("[data-chat-compact-toolbar]")
+        .boundingBox();
+      expect(context!.height + toolbar!.height).toBeLessThanOrEqual(76);
+      const platform = await page.locator(".tf-platform-context").boundingBox();
+      expect(platform!.y).toBeGreaterThanOrEqual(context!.y);
+      expect(platform!.y + platform!.height).toBeLessThanOrEqual(
+        context!.y + context!.height,
+      );
+      await more.click();
+      const menu = page.getByRole("menu");
+      await expect(menu).toBeVisible();
+      await expect(
+        page.getByRole("menuitem", { name: "切换机器人", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("menuitem", { name: "切换平台", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("menuitem", { name: "帮助与诊断", exact: true }),
+      ).toBeVisible();
+      await expect(input).toBeVisible();
+      await expect(input).toHaveValue("保留菜单走查草稿");
+      const bounds = await more.boundingBox();
+      const menuBounds = await menu.boundingBox();
+      expect(menuBounds!.y).toBeGreaterThanOrEqual(
+        bounds!.y + bounds!.height - 1,
+      );
+      expect(
+        await page
+          .locator("#word-pane")
+          .evaluate((el) => el.scrollWidth - el.clientWidth),
+      ).toBeLessThanOrEqual(1);
+      await page.screenshot({
+        path: test.info().outputPath(`compact-menu-${width}.png`),
+      });
+      await page.keyboard.press("Escape");
+      await expect(menu).not.toBeVisible();
+      await expect(more).toBeFocused();
+    }
+    await more.click();
+    await page
+      .getByRole("menuitem", { name: "帮助与诊断", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "帮助与诊断" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: /返回对话/ }).click();
+    await expect(more).toBeFocused();
+    await expect(input).toHaveValue("保留菜单走查草稿");
+    await page.evaluate(() =>
+      (
+        window as unknown as { uiTest: { render(input: unknown): void } }
+      ).uiTest.render({ platformId: 17 }),
+    );
+    await page.getByRole("button", { name: /legacy/ }).click();
+    await page.getByRole("button", { name: "使用这个机器人" }).click();
+    await expect(page.getByText("从一个想法开始。")).toBeVisible();
+    await more.click();
+    await expect(
+      page.getByRole("menuitem", { name: "切换平台", exact: true }),
+    ).toHaveAttribute("aria-disabled", "true");
+  });
   const configureUi = async (page: Page, options: Record<string, unknown>) => {
     await page.evaluate(
       async ({ origin, options }) => {
@@ -240,14 +357,16 @@ export function registerManagerUiTests() {
       .click();
     await expect(input).toHaveValue("保留的工作空间草稿");
     const platformTrigger = page.getByRole("button", {
-      name: "切换平台",
+      name: "更多操作",
       exact: true,
     });
     await platformTrigger.focus();
     await page.keyboard.press("Enter");
+    await page.getByRole("menuitem", { name: "切换平台", exact: true }).click();
     await page.getByRole("button", { name: /返回对话/ }).click();
     await expect(platformTrigger).toBeFocused();
     await platformTrigger.click();
+    await page.getByRole("menuitem", { name: "切换平台", exact: true }).click();
     await page.getByRole("button", { name: /备选平台/ }).click();
     await page.getByRole("button", { name: "开始对话" }).click();
     await page.getByRole("button", { name: "确认", exact: true }).click();
@@ -337,6 +456,9 @@ export function registerManagerUiTests() {
       configureUi(page, {
         organizationName: "超长工作组织名称".repeat(8),
         robotName: "超长机器人名称".repeat(8) + "legacy",
+        platforms: [
+          { platformId: 17, name: "超长平台名称".repeat(8) + "Word fixture" },
+        ],
       }),
     );
     await page.getByRole("button", { name: /Word fixture/ }).click();
@@ -353,34 +475,73 @@ export function registerManagerUiTests() {
     const input = page.locator("textarea:not([aria-hidden])");
     await expect(input).toBeInViewport();
     await noOverflow();
-    const orgTrigger = page.getByRole("button", { name: /切换组织: 超长/ });
+    for (const width of [320, 380, 480, 760]) {
+      await page.locator("#word-pane").evaluate((el, width) => {
+        (el as HTMLElement).style.width = `${width}px`;
+      }, width);
+      await noOverflow();
+      const context = await page.locator(".tf-toolbar").boundingBox();
+      expect(
+        (await page.locator(".tf-chat-context .tf-top").boundingBox())!.height,
+      ).toBeLessThanOrEqual(42);
+      const toolbar = await page
+        .locator("[data-chat-compact-toolbar]")
+        .boundingBox();
+      expect(context!.height + toolbar!.height).toBeLessThanOrEqual(76);
+      await expect(input).toBeInViewport();
+    }
+    await page.locator(".tf-robot-summary").hover();
+    await expect(
+      page.getByRole("tooltip").filter({ hasText: "超长机器人名称" }),
+    ).toContainText("超长机器人名称".repeat(8) + "legacy");
+    await page.locator(".tf-platform-context").hover();
+    await expect(
+      page.getByRole("tooltip").filter({ hasText: "超长平台名称" }),
+    ).toContainText("超长平台名称".repeat(8) + "Word fixture");
+    await page.locator(".tf-organization-summary").hover();
+    await expect(
+      page.getByRole("tooltip").filter({ hasText: "超长工作组织名称" }),
+    ).toContainText("超长工作组织名称".repeat(8));
+    const orgTrigger = page.getByRole("button", {
+      name: "账号与设置",
+      exact: true,
+    });
     await orgTrigger.focus();
     await page.keyboard.press("Enter");
+    await page.getByRole("button", { name: "切换组织", exact: true }).click();
     await noOverflow();
-    await page.getByRole("button", { name: /返回对话/ }).click();
+    await page
+      .getByRole("button", { name: "返回账号与设置", exact: false })
+      .click();
+    await page.getByRole("button", { name: /^← 返回$/ }).click();
     await expect(orgTrigger).toBeFocused();
-    const robotTrigger = page.getByRole("button", { name: /切换机器人: 超长/ });
+    const robotTrigger = page.getByRole("button", {
+      name: "更多操作",
+      exact: true,
+    });
     await robotTrigger.focus();
     await page.keyboard.press("Enter");
+    await page
+      .getByRole("menuitem", { name: "切换机器人", exact: true })
+      .click();
     await noOverflow();
     await expect(
       page.getByRole("button", { name: /超长机器人/ }),
     ).toBeVisible();
     await page.getByRole("button", { name: /返回对话/ }).click();
     await expect(robotTrigger).toBeFocused();
-    const platformTrigger = page.getByRole("button", {
-      name: "切换平台",
-      exact: true,
-    });
+    const platformTrigger = robotTrigger;
     await platformTrigger.focus();
     await page.keyboard.press("Enter");
+    await page.getByRole("menuitem", { name: "切换平台", exact: true }).click();
     await noOverflow();
     await expect(
       page.getByRole("button", { name: "开始对话" }),
     ).toBeInViewport();
     await page.getByRole("button", { name: /返回对话/ }).click();
     await expect(platformTrigger).toBeFocused();
-    await input.fill("UI long text:长名称下发送");
+    const message = "UI long text:" + "超长会话标题".repeat(12);
+    await input.fill(message);
     await expect(
       page.getByRole("button", { name: "发送", exact: true }),
     ).toBeInViewport();
@@ -388,6 +549,14 @@ export function registerManagerUiTests() {
     await expect(
       page.getByText("Direct browser reply", { exact: true }),
     ).toBeVisible();
+    await page.locator("#word-pane").evaluate((el) => {
+      (el as HTMLElement).style.width = "320px";
+    });
+    await noOverflow();
+    await page.locator("[data-chat-compact-toolbar] .ant-typography").hover();
+    await expect(
+      page.getByRole("tooltip").filter({ hasText: message.slice(0, 60) }),
+    ).toHaveText(message.slice(0, 60));
   });
 
   test("legacy unconfigured platform is described accurately", async ({
@@ -418,10 +587,10 @@ export function registerManagerUiTests() {
     await page.getByRole("button", { name: /平台 ID: 17/ }).click();
     await page.getByRole("button", { name: "开始对话" }).click();
     await expect(
-      page.getByRole("button", { name: /切换机器人: 目录 ID: legacy/ }),
+      page.getByLabel("当前机器人: 目录 ID: legacy", { exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: /切换组织: 组织 ID: org/ }),
+      page.getByRole("group", { name: /当前工作组织: 组织 ID: org/ }),
     ).toBeVisible();
     await page.getByRole("button", { name: "账号与设置", exact: true }).click();
     const workspace = page.getByRole("region", {
@@ -443,9 +612,12 @@ export function registerManagerUiTests() {
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(e.message));
     const writes: string[] = [];
+    const createBodies: unknown[] = [];
     page.on("request", (req) => {
-      if (req.method() === "POST" && /\/conversations$/.test(req.url()))
+      if (req.method() === "POST" && /\/conversations$/.test(req.url())) {
         writes.push(req.url());
+        createBodies.push(req.postDataJSON());
+      }
     });
     await mount(page);
     await login(page);
@@ -460,6 +632,9 @@ export function registerManagerUiTests() {
       path: test.info().outputPath("default-ui-welcome.png"),
     });
     expect(writes).toHaveLength(0);
+    await expect(page.getByRole("textbox", { name: "对话名称" })).toHaveCount(
+      0,
+    );
     for (const width of [320, 380, 480, 760]) {
       await page.locator("#word-pane").evaluate((el, width) => {
         (el as HTMLElement).style.width = `${width}px`;
@@ -495,6 +670,9 @@ export function registerManagerUiTests() {
       path: test.info().outputPath("default-ui-chat.png"),
     });
     expect(writes).toHaveLength(1);
+    expect(createBodies).toEqual([
+      { title: "Browser round trip", platformId: 17 },
+    ]);
     await page.locator("textarea:not([aria-hidden])").fill("仅此会话的草稿");
     await page.getByRole("button", { name: "历史对话", exact: true }).click();
     await expect(
@@ -652,7 +830,10 @@ export function registerManagerUiTests() {
     await page.getByRole("button", { name: /legacy/ }).click();
     await page.getByRole("button", { name: "使用这个机器人" }).click();
     await expect(page.locator("textarea:not([aria-hidden])")).toHaveValue("");
-    await page.getByRole("button", { name: /legacy/ }).click();
+    await page.getByRole("button", { name: "更多操作", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "切换机器人", exact: true })
+      .click();
     await page.evaluate(async (origin) => {
       await fetch(`${origin}/__test/directory-status`, {
         method: "POST",
