@@ -23,9 +23,50 @@ const durableMessageKey = (item: TimelineItem): string | undefined =>
     ? `durable-message:${JSON.stringify([item.conversationId, item.provenance.id])}`
     : undefined;
 
+const serverMessageKey = (item: TimelineItem): string | undefined =>
+  item.kind === "message" && item.serverMessageId !== undefined
+    ? `server-message:${JSON.stringify([item.conversationId, item.serverMessageId])}`
+    : undefined;
+
+const identityKeys = (item: TimelineItem): readonly string[] =>
+  [
+    serverMessageKey(item),
+    durableMessageKey(item),
+    getTimelineItemKey(item),
+  ].filter((key): key is string => key !== undefined);
+
+/** Internal conflict marker so untrusted display caches can be discarded precisely. */
+export class TimelineIdentityConflictError extends Error {
+  constructor() {
+    super("Conflicting server message identity");
+  }
+}
+
+const checkMessageIdentity = (
+  item: TimelineItem,
+  other: TimelineItem | undefined,
+): void => {
+  if (item.kind !== "message" || other?.kind !== "message") return;
+  if (
+    (item.serverMessageId !== undefined &&
+      other.serverMessageId !== undefined &&
+      item.serverMessageId !== other.serverMessageId) ||
+    ((item.serverMessageId !== undefined ||
+      other.serverMessageId !== undefined) &&
+      item.provenance?.kind === "persisted" &&
+      other.provenance?.kind === "persisted" &&
+      item.provenance.id !== other.provenance.id)
+  )
+    throw new TimelineIdentityConflictError();
+};
+
 /** A known database fact can span display IDs; this grants no recovery assurance. */
 export const getTimelineRecoveryKey = (item: TimelineItem): string =>
-  durableMessageKey(item) ?? getTimelineItemKey(item);
+  (item.kind === "message" && item.provenance?.kind === "persisted"
+    ? serverMessageKey(item)
+    : undefined) ??
+  durableMessageKey(item) ??
+  getTimelineItemKey(item);
 
 /** Preserve legacy Gateway display-key overlap without accepting provisional coverage. */
 export const getTimelineRecoveryKeys = (
@@ -33,25 +74,24 @@ export const getTimelineRecoveryKeys = (
 ): readonly string[] => {
   if (item.kind === "message" && item.provenance?.kind === "provisional")
     return [];
-  const durableKey = durableMessageKey(item);
-  return durableKey === undefined
-    ? [getTimelineItemKey(item)]
-    : [getTimelineItemKey(item), durableKey];
+  return identityKeys(item);
 };
 
 const alignDurableDisplayIds = (
   candidates: readonly TimelineItem[],
   reference: readonly TimelineItem[],
 ): readonly TimelineItem[] => {
-  const ids = new Map<string, string>();
-  for (const item of reference) {
-    const key = durableMessageKey(item);
-    if (key !== undefined) ids.set(key, item.id);
-  }
+  const aliases = new Map<string, TimelineItem>();
+  for (const item of reference)
+    for (const key of identityKeys(item)) aliases.set(key, item);
   return candidates.map((item) => {
-    const key = durableMessageKey(item);
-    const id = key === undefined ? undefined : ids.get(key);
-    return id === undefined || id === item.id ? item : { ...item, id };
+    const matched = identityKeys(item)
+      .map((key) => aliases.get(key))
+      .find((match) => match !== undefined);
+    checkMessageIdentity(item, matched);
+    return matched === undefined || matched.id === item.id
+      ? item
+      : { ...item, id: matched.id };
   });
 };
 
@@ -61,6 +101,14 @@ const withConfirmedAuthor = (
   other: TimelineItem | undefined,
   preferOtherHistory = false,
 ): TimelineItem => {
+  checkMessageIdentity(preferred, other);
+  if (
+    preferred.kind === "message" &&
+    other?.kind === "message" &&
+    preferred.serverMessageId === undefined &&
+    other.serverMessageId !== undefined
+  )
+    preferred = { ...preferred, serverMessageId: other.serverMessageId };
   if (
     preferred.kind !== "message" ||
     other?.kind !== "message" ||
@@ -77,9 +125,7 @@ const withConfirmedAuthor = (
 const buildIndex = (items: readonly TimelineItem[]): TimelineItemIndex => {
   const base = new Map<string, TimelineItem>();
   for (const item of items) {
-    base.set(getTimelineItemKey(item), item);
-    const durableKey = durableMessageKey(item);
-    if (durableKey !== undefined) base.set(durableKey, item);
+    for (const key of identityKeys(item)) base.set(key, item);
   }
   return { base, overlay: new Map() };
 };
@@ -97,8 +143,7 @@ const advanceIndex = (
 ): TimelineItemIndex => {
   const overlay = new Map(index.overlay);
   overlay.set(key, item);
-  const durableKey = durableMessageKey(item);
-  if (durableKey !== undefined) overlay.set(durableKey, item);
+  for (const alias of identityKeys(item)) overlay.set(alias, item);
   return overlay.size < MAX_INDEX_OVERLAY_SIZE
     ? { base: index.base, overlay }
     : buildIndex(items);
@@ -111,7 +156,35 @@ const createFromImmutableItems = (
   candidates: readonly TimelineItem[],
 ): TimelineState => {
   const byKey = new Map<string, TimelineItem>();
-  for (const item of candidates) byKey.set(getTimelineItemKey(item), item);
+  const aliases = new Map<string, TimelineItem>();
+  for (const item of candidates) {
+    const matches = [
+      ...new Set(
+        identityKeys(item)
+          .map((key) => aliases.get(key))
+          .filter((match): match is TimelineItem => match !== undefined),
+      ),
+    ];
+    for (const match of matches) checkMessageIdentity(item, match);
+    const existing = matches[0];
+    const projection =
+      existing === undefined
+        ? item
+        : matches.reduce(
+            (preferred, match) => withConfirmedAuthor(preferred, match),
+            { ...item, id: existing.id },
+          );
+    const candidate = Object.isFrozen(projection)
+      ? projection
+      : cloneImmutable(projection);
+    for (const match of matches) byKey.delete(getTimelineItemKey(match));
+    byKey.set(getTimelineItemKey(candidate), candidate);
+    for (const key of [
+      ...matches.flatMap(identityKeys),
+      ...identityKeys(candidate),
+    ])
+      aliases.set(key, candidate);
+  }
   const items = freezeItems([...byKey.values()].sort(compareTimelineItems));
   return { items, index: buildIndex(items) };
 };
@@ -160,12 +233,22 @@ export const upsertTimelineItem = (
   candidate: TimelineItem,
   authorOnly = false,
 ): TimelineState => {
-  const durableKey = durableMessageKey(candidate);
-  const current =
-    findIndexedItem(state.index, getTimelineItemKey(candidate)) ??
-    (durableKey === undefined
-      ? undefined
-      : findIndexedItem(state.index, durableKey));
+  const matches = [
+    ...new Set(
+      identityKeys(candidate)
+        .map((key) => findIndexedItem(state.index, key))
+        .filter((item): item is TimelineItem => item !== undefined),
+    ),
+  ];
+  for (const match of matches) checkMessageIdentity(candidate, match);
+  const current = matches[0];
+  if (
+    candidate.kind === "message" &&
+    current?.kind === "message" &&
+    candidate.serverMessageId === undefined &&
+    current.serverMessageId !== undefined
+  )
+    candidate = { ...candidate, serverMessageId: current.serverMessageId };
   if (current !== undefined && candidate.id !== current.id)
     candidate = { ...candidate, id: current.id };
   const key = getTimelineItemKey(candidate);
@@ -178,6 +261,7 @@ export const upsertTimelineItem = (
     authorOnly && current?.kind === "message" && candidate.kind === "message"
       ? {
           ...current,
+          serverMessageId: candidate.serverMessageId ?? current.serverMessageId,
           author: candidate.author,
           provenance: candidate.provenance,
         }
@@ -200,9 +284,23 @@ export const upsertTimelineItem = (
       retainedCandidate.provenance?.kind === "persisted" &&
       retainedCandidate.provenance.source === "history"
       ? retainedCandidate
-      : withConfirmedAuthor(retainedCandidate, current),
+      : matches.reduce(
+          (preferred, match) => withConfirmedAuthor(preferred, match),
+          retainedCandidate,
+        ),
   );
 
+  if (matches.length > 1) {
+    // A newly received database alias can bridge a pre-upgrade cache entry and
+    // an already observed server identity. Remove both projections atomically.
+    const matchedKeys = new Set(matches.map(getTimelineItemKey));
+    return createFromImmutableItems([
+      ...state.items.filter(
+        (entry) => !matchedKeys.has(getTimelineItemKey(entry)),
+      ),
+      item,
+    ]);
+  }
   if (current !== undefined) {
     if (deepEqual(current, item)) return state;
     const currentIndex = findCurrentIndex(state.items, current);
@@ -257,7 +355,28 @@ export const mergeHistoryTimeline = (
     );
   }
 
-  const merged = createFromImmutableItems([...byKey.values()]);
+  let merged = createFromImmutableItems([...byKey.values()]);
+  if (preferHistoryAuthor) {
+    // A newly confirmed fact can bridge several old display keys. Select its
+    // author across the whole alias group, rather than Map insertion order.
+    const authors = new Map<string, TimelineItem>();
+    for (const item of history) {
+      if (
+        item.kind === "message" &&
+        item.provenance?.kind === "persisted" &&
+        item.provenance.source === "history"
+      )
+        for (const key of identityKeys(item)) authors.set(key, item);
+    }
+    merged = createFromImmutableItems(
+      merged.items.map((item) => {
+        const author = identityKeys(item)
+          .map((key) => authors.get(key))
+          .find((value) => value !== undefined);
+        return withConfirmedAuthor(item, author, true);
+      }),
+    );
+  }
   return deepEqual(merged.items, current.items) ? current : merged;
 };
 
@@ -322,18 +441,19 @@ export const retainProvisionalTimeline = (
   previous: readonly TimelineItem[],
   reviewUnmatched = true,
 ): readonly TimelineItem[] => {
-  const keys = new Set(latest.map(getTimelineItemKey));
+  const keys = new Set(latest.flatMap(identityKeys));
   const unmatched = previous
     .filter(
       (item) =>
         item.kind === "message" &&
         item.provenance?.kind === "provisional" &&
-        !keys.has(getTimelineItemKey(item)),
+        !identityKeys(item).some((key) => keys.has(key)),
     )
     .map((item) =>
       item.kind === "message" &&
       item.provenance?.kind === "provisional" &&
-      reviewUnmatched
+      reviewUnmatched &&
+      item.serverMessageId === undefined
         ? { ...item, provenance: { ...item.provenance, reviewRequired: true } }
         : item,
     );

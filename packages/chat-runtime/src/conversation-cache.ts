@@ -1,6 +1,7 @@
 import { compareTimelineItems } from "@turingfocus/chat-protocol";
 import {
   createTimelineState,
+  TimelineIdentityConflictError,
   getTimelineRecoveryKey,
   getTimelineRecoveryKeys,
   mergeHistoryTimeline,
@@ -210,6 +211,24 @@ export class ConversationCache {
     return entry;
   }
 
+  mergeHistory(
+    latest: ChatSnapshot,
+    cached: ChatSnapshot | undefined,
+    reviewUnmatched = true,
+  ): ChatSnapshot {
+    try {
+      return mergeCachedHistory(latest, cached, reviewUnmatched);
+    } catch (error) {
+      if (!(error instanceof TimelineIdentityConflictError)) throw error;
+      // Network facts win; do not let display-only state block synchronization.
+      this.#notify({
+        kind: "invalid-record",
+        conversationId: latest.conversation.id,
+      });
+      return latest;
+    }
+  }
+
   async restore(
     id: string,
     options: GatewayRequestOptions,
@@ -316,6 +335,12 @@ export class ConversationCache {
     savedAt = this.now(),
   ): void {
     if (this.#closed) return;
+    // Local command observations are not conversation cache data, even in memory.
+    if (snapshot.outgoingMessages !== undefined) {
+      const retained = { ...snapshot };
+      delete retained.outgoingMessages;
+      snapshot = retained;
+    }
     const id = snapshot.conversation.id;
     const previous = this.#entries.get(id);
     if (previous?.snapshot === snapshot && previous.draft === draft) return;

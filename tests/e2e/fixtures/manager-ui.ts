@@ -273,6 +273,98 @@ export function registerManagerUiTests() {
     ).toHaveCount(2);
   });
 
+  test("elementId receipts leave sending records, merge cross-author history and preserve identical sends", async ({
+    page,
+  }) => {
+    await mount(page, { platformId: 17 });
+    await login(page);
+    await configureUi(page, {
+      authorMismatch: true,
+      serverMessageIds: true,
+      holdMessageEcho: true,
+    });
+    const content = `UI long text:消息身份-${test.info().project.name}`;
+    const primary = page.getByRole("log", { name: "对话消息", exact: true });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/messages", async (route) => {
+      if (route.request().method() === "POST") await gate;
+      await route.continue();
+    });
+    await page.locator("textarea:not([aria-hidden])").fill(content);
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    const outgoing = page.locator("[data-chat-outgoing]");
+    await expect(
+      outgoing.locator('[data-send-status="sending"]'),
+    ).toContainText(content);
+    await expect(primary.getByText(content, { exact: true })).toHaveCount(0);
+    release();
+    await expect(
+      outgoing.locator('[data-send-status="accepted"]'),
+    ).toContainText("已接收，等待同步");
+    await expect(primary.getByText(content, { exact: true })).toHaveCount(0);
+    await page.evaluate(async (origin) => {
+      await fetch(`${origin}/__test/release-message-echo`, { method: "POST" });
+    }, process.env["TF_CHAT_MANAGER_ORIGIN"] ?? "https://localhost:4312");
+    await expect(primary.getByText(content, { exact: true })).toHaveCount(1);
+    await expect(outgoing).toHaveCount(0);
+    await configureUi(page, { holdMessageEcho: false });
+    await page.locator("textarea:not([aria-hidden])").fill(content);
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(primary.getByText(content, { exact: true })).toHaveCount(2);
+    await page.getByRole("button", { name: "历史对话", exact: true }).click();
+    await page
+      .getByRole("list", { name: "历史对话", exact: true })
+      .getByRole("listitem")
+      .filter({ hasText: "Manager browser fixture" })
+      .getByRole("button")
+      .first()
+      .click();
+    await expect(
+      primary.getByText("Persisted private reply", { exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "历史对话", exact: true }).click();
+    await page
+      .getByRole("list", { name: "历史对话", exact: true })
+      .getByRole("listitem")
+      .filter({ hasText: content })
+      .getByRole("button")
+      .first()
+      .click();
+    await expect(primary.getByText(content, { exact: true })).toHaveCount(2);
+    await expect(primary.getByText("Admin", { exact: false })).toHaveCount(0);
+    await expect(page.locator("details[data-chat-unconfirmed]")).toHaveCount(0);
+    const continued = `${content}-继续发送`;
+    await page.locator("textarea:not([aria-hidden])").fill(continued);
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(primary.getByText(continued, { exact: true })).toHaveCount(1);
+    await expect(
+      primary.getByText("Direct browser reply", { exact: true }),
+    ).toHaveCount(3);
+    await page.screenshot({
+      path: test.info().outputPath("issue-141-identity.png"),
+    });
+    let failedPosts = 0;
+    await page.route("**/messages", async (route) => {
+      if (route.request().method() === "POST") {
+        failedPosts++;
+        await route.abort("failed");
+      } else await route.continue();
+    });
+    await page
+      .locator("textarea:not([aria-hidden])")
+      .fill(`${content}-网络失败`);
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(
+      outgoing.locator('[data-send-status="unknown"]'),
+    ).toContainText("发送结果未确认");
+    await outgoing.getByRole("button", { name: "关闭发送记录" }).click();
+    await expect(outgoing).toHaveCount(0);
+    expect(failedPosts).toBe(1);
+  });
+
   test("context summaries and candidate platform navigation preserve the active chat until confirmation", async ({
     page,
   }) => {

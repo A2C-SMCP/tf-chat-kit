@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { readFileSync } from "node:fs";
@@ -25,6 +26,10 @@ let robotDisplayName;
 let platformsStatus = 200;
 let switchAccountStatus = 200;
 let authorMismatch = false;
+let serverMessageIds = false;
+let holdMessageEcho = false;
+/** @type {Array<() => void>} */
+const heldMessageEchoes = [];
 /** @type {Map<number, import("../packages/chat-gateway-tfrobot/src/dto.js").MessageDto[]>} */
 const messageHistory = new Map();
 let platforms = [{ platformId: 17, name: "Word fixture" }];
@@ -83,6 +88,15 @@ const server = createListener((req, res) => {
       if (input.robotName !== undefined) robotDisplayName = input.robotName;
       if (input.authorMismatch !== undefined)
         authorMismatch = input.authorMismatch;
+      if (input.serverMessageIds !== undefined)
+        serverMessageIds = input.serverMessageIds;
+      if (input.holdMessageEcho !== undefined)
+        holdMessageEcho = input.holdMessageEcho;
+      reply({});
+      return;
+    }
+    if (url.pathname === "/__test/release-message-echo") {
+      for (const emit of heldMessageEchoes.splice(0)) emit();
       reply({});
       return;
     }
@@ -112,6 +126,9 @@ const server = createListener((req, res) => {
       platformsStatus = 200;
       switchAccountStatus = 200;
       authorMismatch = false;
+      serverMessageIds = false;
+      holdMessageEcho = false;
+      heldMessageEchoes.length = 0;
       platforms = [{ platformId: 17, name: "Word fixture" }];
       activeAccount = account;
       const input = JSON.parse(body);
@@ -334,10 +351,14 @@ const server = createListener((req, res) => {
           reply({}, 422);
           return;
         }
+        const elementId = serverMessageIds ? randomUUID() : undefined;
         reply({
           code: 200,
           message: "Success",
-          data: { taskId: `run-${conversationId}` },
+          data: {
+            taskId: `run-${conversationId}`,
+            ...(elementId === undefined ? {} : { elementId }),
+          },
         });
         const timestamp = Date.now();
         const saved = messageHistory.get(conversationId) ?? [];
@@ -355,9 +376,12 @@ const server = createListener((req, res) => {
           attachments: null,
           creator: { uid: "robot", name: "Fixture", avatar: null },
         };
-        if (authorMismatch) {
+        /** @type {Array<import("../packages/chat-gateway-tfrobot/src/dto.js").MessageDto>} */
+        const echoes = [];
+        if (authorMismatch || serverMessageIds) {
           const user = {
             ...assistant,
+            ...(elementId === undefined ? {} : { elementId }),
             msgId: `user-${conversationId}-${sequence}`,
             role: "user",
             content: message.content,
@@ -366,19 +390,22 @@ const server = createListener((req, res) => {
           };
           saved.push(user, assistant);
           messageHistory.set(conversationId, saved);
-          for (const io of sockets)
-            io.of("/chat")
-              .to(String(conversationId))
-              .emit("chat_message", {
-                ...user,
-                msgId: null,
-                creator: { uid: "admin", name: "Admin", avatar: null },
-              });
+          echoes.push({
+            ...user,
+            msgId: null,
+            creator: { uid: "admin", name: "Admin", avatar: null },
+          });
         }
-        for (const io of sockets)
-          io.of("/chat")
-            .to(String(conversationId))
-            .emit("chat_message", assistant);
+        echoes.push(assistant);
+        const emit = () => {
+          for (const message of echoes)
+            for (const io of sockets)
+              io.of("/chat")
+                .to(String(conversationId))
+                .emit("chat_message", message);
+        };
+        if (holdMessageEcho) heldMessageEchoes.push(emit);
+        else emit();
         return;
       }
       if (req.method === "PATCH" && createdConversations.has(conversationId)) {

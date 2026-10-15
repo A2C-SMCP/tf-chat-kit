@@ -162,6 +162,8 @@ export interface SendTextInput extends GatewayRequestOptions {
 export interface SendTextSuccess {
   /** ID of the run started by the accepted message. */
   readonly runId: RunId;
+  /** Server accepted this identity; neither persistence nor completion is implied. */
+  readonly serverMessageId?: string | undefined;
 }
 
 /** A resource already uploaded by a host or transport adapter. */
@@ -372,6 +374,7 @@ const sendTextInputParser: z.ZodType<SendTextInput> = z.object({
 
 const sendTextSuccessParser: z.ZodType<SendTextSuccess> = z.object({
   runId: z.string().min(1),
+  serverMessageId: z.string().min(1).optional(),
 });
 
 const uploadedAttachmentParser: z.ZodType<UploadedAttachment> = z.object({

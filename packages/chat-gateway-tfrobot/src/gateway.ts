@@ -106,10 +106,9 @@ export class TFRobotChatGateway implements ChatGateway {
     }
     this.#options = options;
     this.#http = new TFRobotHttpClient(options);
-    this.#messageIdentities =
-      options.serverProfile?.kind === "current-server"
-        ? new TFRobotMessageIdentities()
-        : undefined;
+    this.#messageIdentities = new TFRobotMessageIdentities(
+      options.serverProfile?.kind === "current-server",
+    );
     this.#now = options.now ?? Date.now;
     this.#socket = new TFRobotSocketClient(
       options,
@@ -490,6 +489,9 @@ export class TFRobotChatGateway implements ChatGateway {
       ? {
           ok: true,
           value: {
+            ...(result.value.elementId == null
+              ? {}
+              : { serverMessageId: result.value.elementId }),
             runId:
               getTransportTaskId(result.value) ??
               syntheticRunId(input.conversationId),
@@ -543,6 +545,9 @@ export class TFRobotChatGateway implements ChatGateway {
       ? {
           ok: true,
           value: {
+            ...(result.value.elementId == null
+              ? {}
+              : { serverMessageId: result.value.elementId }),
             runId:
               getTransportTaskId(result.value) ??
               syntheticRunId(input.conversationId),
