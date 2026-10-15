@@ -15,6 +15,7 @@ import {
 } from "./conversation-list.js";
 import { resolveChatUiLabels } from "./labels.js";
 import { ChatStateView } from "./chat-state-view.js";
+import { HistoryIcon, PlusIcon } from "./navigation-icons.js";
 import type {
   ChatCompactNavigationConfig,
   ChatContentState,
@@ -52,34 +53,6 @@ export interface ChatUiShellProps {
   readonly sidebarWidth?: CSSProperties["width"] | undefined;
   readonly styles?: ChatUiSlotStyles | undefined;
 }
-
-const PlusIcon = () => (
-  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" width="16">
-    <path
-      d="M8 2.5v11M2.5 8h11"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeWidth="1.5"
-    />
-  </svg>
-);
-
-const HistoryIcon = () => (
-  <svg aria-hidden="true" height="16" viewBox="0 0 16 16" width="16">
-    <path
-      d="M5.25 4h7.5M5.25 8h7.5M5.25 12h7.5"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeWidth="1.4"
-    />
-    <path
-      d="M2.5 3.25a.75.75 0 1 1 0 1.5.75.75 0 0 1 0-1.5Zm0 4a.75.75 0 1 1 0 1.5.75.75 0 0 1 0-1.5Zm0 4a.75.75 0 1 1 0 1.5.75.75 0 0 1 0-1.5Z"
-      fill="currentColor"
-    />
-  </svg>
-);
 
 const mapConversationItems = (
   labels: ChatUiLabels,

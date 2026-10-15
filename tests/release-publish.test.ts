@@ -551,20 +551,21 @@ describe("protected npm publication", () => {
     expect(progress.error).toBe("simulated npm failure");
   });
 
-  it("waits for a successfully published version and dist-tag to become visible", async () => {
+  it("waits beyond two minutes for Registry processing without publishing twice", async () => {
     const fixture = await createFixture();
     const manifest = validateReleaseManifestForPublish(fixture.manifest);
     const registry = new Map<string, Record<string, unknown>>();
     const firstPackage = manifest.packages[0]!;
     let firstPackagePublished = false;
-    let firstPackageReconciliationReads = 0;
-    const waitImpl = vi.fn().mockResolvedValue(undefined);
+    let waitedMs = 0;
+    const waitImpl = vi.fn(async (milliseconds: number) => {
+      waitedMs += milliseconds;
+    });
     const baseFetch = registryFetch(registry, []);
     const fetchImpl = (async (input, init) => {
       const name = decodeURIComponent(new URL(String(input)).pathname.slice(1));
       if (name === firstPackage.name && firstPackagePublished) {
-        firstPackageReconciliationReads += 1;
-        if (firstPackageReconciliationReads === 3) {
+        if (waitedMs >= 180_000) {
           registry.set(firstPackage.name, {
             versions: {
               [releaseVersion]: {
@@ -578,39 +579,37 @@ describe("protected npm publication", () => {
       return baseFetch(input, init);
     }) as typeof fetch;
 
+    const publishImpl = vi.fn((_npmCli: string, args: string[]) => {
+      const tarball = path.basename(args[1] ?? "");
+      const releasePackage = manifest.packages.find(
+        (entry) => entry.tarball === tarball,
+      );
+      if (!releasePackage) throw new Error("unexpected tarball");
+      if (releasePackage.name === firstPackage.name) {
+        firstPackagePublished = true;
+        return;
+      }
+      registry.set(releasePackage.name, {
+        versions: {
+          [releaseVersion]: { dist: { integrity: releasePackage.integrity } },
+        },
+        "dist-tags": { next: releaseVersion },
+      });
+    });
     const states = await publishRelease({
       ...fixture,
       manifest,
       authMode: "oidc",
       env: {},
       fetchImpl,
-      publishImpl: (_npmCli, args) => {
-        const tarball = path.basename(args[1] ?? "");
-        const releasePackage = manifest.packages.find(
-          (entry) => entry.tarball === tarball,
-        );
-        if (!releasePackage) throw new Error("unexpected tarball");
-        if (releasePackage.name === firstPackage.name) {
-          firstPackagePublished = true;
-          return;
-        }
-        registry.set(releasePackage.name, {
-          versions: {
-            [releaseVersion]: {
-              dist: { integrity: releasePackage.integrity },
-            },
-          },
-          "dist-tags": { next: releaseVersion },
-        });
-      },
-      reconciliationDelaysMs: [0, 1, 2, 4],
+      publishImpl,
       waitImpl,
     });
 
     expect(states[firstPackage.name]).toBe("published");
-    expect(firstPackageReconciliationReads).toBe(3);
-    expect(waitImpl).toHaveBeenNthCalledWith(1, 1);
-    expect(waitImpl).toHaveBeenNthCalledWith(2, 2);
+    expect(waitedMs).toBeGreaterThanOrEqual(180_000);
+    expect(waitedMs).toBeLessThanOrEqual(300_000);
+    expect(publishImpl).toHaveBeenCalledTimes(manifest.packages.length);
   });
 
   it("fails closed when an existing version has different integrity", async () => {

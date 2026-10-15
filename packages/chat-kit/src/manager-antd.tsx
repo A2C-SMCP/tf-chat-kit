@@ -5,6 +5,7 @@ import {
   Input,
   Modal,
   Spin,
+  Tooltip,
   type ThemeConfig,
 } from "antd";
 import * as zhCNModule from "antd/es/locale/zh_CN.js";
@@ -782,16 +783,15 @@ function ManagerAppBinding({
     const header = (
       <div className="tf-chat-context">
         <div className="tf-top">
-          <Button
-            className="tf-header-context"
-            aria-label={`${copy.organization}: ${accountName}`}
-            title={accountName}
-            loading={busy}
-            onClick={(event) => openAccounts(event.currentTarget)}
-          >
-            <span className="tf-context-label">{copy.currentOrganization}</span>
-            <strong>{accountName} ⌄</strong>
-          </Button>
+          <Tooltip title={accountName}>
+            <div
+              className="tf-organization-summary"
+              role="group"
+              aria-label={`${copy.currentOrganization}: ${accountName}`}
+            >
+              <strong>{accountName}</strong>
+            </div>
+          </Tooltip>
           <span
             className={`tf-badge ${auth.environment === "staging" ? "tf-test" : ""}`}
           >
@@ -805,39 +805,42 @@ function ManagerAppBinding({
             ☰
           </Button>
         </div>
-        <div className="tf-toolbar">
+        <div
+          className="tf-toolbar"
+          role="group"
+          aria-label={copy.currentWorkspace}
+        >
           <span className="tf-symbol" aria-hidden="true">
             ✧
           </span>
-          <Button
-            className="tf-header-context"
-            type="text"
-            aria-label={`${copy.switchRobot}: ${robotName(robot)}`}
-            onClick={(event) => openRobot(event.currentTarget)}
-          >
-            <strong>{robotName(robot)} ⌄</strong>
-          </Button>
-        </div>
-        <div className="tf-platform-context">
-          <span>
-            {copy.currentPlatform}: <strong>{platformName}</strong>
-          </span>
-          {platformId === undefined &&
-          chatConfig.conversationContract === "json-v2" ? (
-            <Button
-              size="small"
-              aria-label={copy.switchPlatform}
-              onClick={(event) => openPlatform(event.currentTarget)}
+          <Tooltip title={robotName(robot)}>
+            <div
+              className="tf-robot-summary"
+              role="group"
+              aria-label={`${copy.currentRobot}: ${robotName(robot)}`}
             >
-              {copy.choose}
-            </Button>
-          ) : (
-            <small>
-              {platformId !== undefined
-                ? copy.fixedPlatform
-                : copy.platformUnavailable}
-            </small>
-          )}
+              <strong>{robotName(robot)}</strong>
+            </div>
+          </Tooltip>
+          <Tooltip
+            title={`${copy.currentPlatform}: ${platformName}${platformId !== undefined ? ` · ${copy.fixedPlatform}` : chatConfig.conversationContract !== "json-v2" ? ` · ${copy.platformUnavailable}` : ""}`}
+          >
+            <div
+              className="tf-platform-context"
+              role="group"
+              aria-label={`${copy.currentPlatform}: ${platformName}`}
+            >
+              <span>{platformName}</span>
+              {platformId !== undefined ||
+              chatConfig.conversationContract !== "json-v2" ? (
+                <small>
+                  {platformId !== undefined
+                    ? copy.fixedPlatform
+                    : copy.platformUnavailable}
+                </small>
+              ) : null}
+            </div>
+          </Tooltip>
         </div>
       </div>
     );
@@ -846,6 +849,17 @@ function ManagerAppBinding({
         <ChatCompactWorkspace
           key={clientKey.current.id}
           header={header}
+          moreActions={[
+            { label: copy.switchRobot, disabled: busy, onSelect: openRobot },
+            {
+              label: copy.switchPlatform,
+              disabled:
+                busy ||
+                platformId !== undefined ||
+                chatConfig.conversationContract !== "json-v2",
+              onSelect: openPlatform,
+            },
+          ]}
           locale={locale}
           getDeadlineAt={deadline}
           onActivityChange={onActivityChange}
