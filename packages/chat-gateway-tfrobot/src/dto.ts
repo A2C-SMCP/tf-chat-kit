@@ -102,6 +102,7 @@ export const messageCreatorDtoSchema = z.looseObject({
 });
 
 export const messageDtoSchema = z.looseObject({
+  elementId: z.string().min(1).regex(/^\S+$/u).nullable().optional(),
   additionalKwargs: z.unknown().optional(),
   attachments: z.unknown().optional(),
   content: z.unknown(),
@@ -149,6 +150,7 @@ export const statusDtoSchema = z
 
 export const sendTextDtoSchema = z
   .looseObject({
+    elementId: z.string().min(1).regex(/^\S+$/u).nullable().optional(),
     taskId: identifierSchema.optional(),
     task_id: identifierSchema.optional(),
   })

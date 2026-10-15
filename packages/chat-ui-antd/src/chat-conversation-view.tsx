@@ -1,3 +1,4 @@
+import { ChatOutgoingMessages } from "./chat-outgoing-messages.js";
 import { ChatNotices, type ChatNoticeTiming } from "./chat-notices.js";
 import { ChatErrorNotice } from "./chat-diagnostics.js";
 import { Modal, Segmented, Typography, theme } from "antd";
@@ -110,6 +111,7 @@ interface ChatConversationViewSnapshot {
   readonly pendingInteraction: ChatSnapshot["pendingInteraction"];
   readonly run: ChatSnapshot["run"];
   readonly timeline: ChatSnapshot["timeline"];
+  readonly outgoingMessages: ChatSnapshot["outgoingMessages"];
 }
 
 const selectChatConversationViewSnapshot = (
@@ -129,6 +131,7 @@ const selectChatConversationViewSnapshot = (
         pendingInteraction: snapshot.pendingInteraction,
         run: snapshot.run,
         timeline: snapshot.timeline,
+        outgoingMessages: snapshot.outgoingMessages,
       };
 
 const equalChatConversationViewSnapshot = (
@@ -145,7 +148,8 @@ const equalChatConversationViewSnapshot = (
     left.lifecycle === right.lifecycle &&
     left.pendingInteraction === right.pendingInteraction &&
     left.run === right.run &&
-    left.timeline === right.timeline);
+    left.timeline === right.timeline &&
+    left.outgoingMessages === right.outgoingMessages);
 
 export const ChatConversationView = ({
   presentation = "standard",
@@ -459,6 +463,11 @@ export const ChatConversationView = ({
         renderers={renderers}
         selectedEventId={selectedEventId}
         style={{ flex: 1, height: "auto", minHeight: 0 }}
+      />
+      <ChatOutgoingMessages
+        messages={snapshot.outgoingMessages}
+        labels={labels}
+        onDismiss={(id) => client.dismissOutgoingMessage(id)}
       />
       {timelines.review.length > 0 ? (
         <details

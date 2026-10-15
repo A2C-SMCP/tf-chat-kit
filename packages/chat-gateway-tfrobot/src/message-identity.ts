@@ -22,16 +22,25 @@ interface Identity {
 interface PersistedAlias {
   readonly canonicalId: string;
   readonly persistedId: string;
+  serverMessageId?: string | undefined;
   confirmedHistory?: {
     readonly author: Message["author"];
     readonly revision: number;
   };
 }
 
+interface ServerAlias {
+  readonly canonicalId: string;
+  readonly serverMessageId: string;
+  persistedId?: string | undefined;
+  confirmedHistory?: PersistedAlias["confirmedHistory"];
+}
+
 interface ConversationIdentities {
   // Small author/revision metadata shares the stable database alias lifecycle.
   // Do not retain the full DTO/content beyond the bounded signature window.
   readonly aliases: Map<string, PersistedAlias>;
+  readonly serverAliases: Map<string, ServerAlias>;
   readonly unpersistedAliases: Map<string, string>;
   readonly recent: Map<string, Identity>;
   readonly canonicalIds: Set<string>;
@@ -56,6 +65,7 @@ const messageSignatures = (dto: MessageDto, message: Message) => {
     // Retain identity and loose business extensions; name/avatar are mutable display.
     // Confirmed processing additions are compared separately below.
     msgId: undefined,
+    elementId: undefined,
     conversationId: message.conversationId,
     ...(dto.creator != null &&
     (typeof dto.creator.uid === "string" || typeof dto.creator.uid === "number")
@@ -98,6 +108,11 @@ const messageSignatures = (dto: MessageDto, message: Message) => {
 /** Current-server emits user messages before their database ID is assigned. */
 export class TFRobotMessageIdentities {
   readonly #conversations = new Map<string, ConversationIdentities>();
+  readonly #legacyReconciliation: boolean;
+
+  constructor(legacyReconciliation = true) {
+    this.#legacyReconciliation = legacyReconciliation;
+  }
   #historyReadRevision = 0;
   // A transient display key is not a globally stable message identity. Keep
   // independent Gateway instances from joining cached null-ID facts by time.
@@ -130,6 +145,7 @@ export class TFRobotMessageIdentities {
     if (state === undefined) {
       state = {
         aliases: new Map(),
+        serverAliases: new Map(),
         unpersistedAliases: new Map(),
         recent: new Map(),
         canonicalIds: new Set(),
@@ -138,6 +154,25 @@ export class TFRobotMessageIdentities {
       };
       this.#conversations.set(message.conversationId, state);
     }
+    const databaseAlias =
+      persistedId === undefined ? undefined : state.aliases.get(persistedId);
+    const serverMessageId =
+      message.role === "user"
+        ? (message.serverMessageId ?? databaseAlias?.serverMessageId)
+        : undefined;
+    if (serverMessageId !== undefined) {
+      return this.#mapServerMessage(
+        message,
+        serverMessageId,
+        persistedId,
+        state,
+        source,
+        historyRevision,
+      );
+    }
+    // Verified transports still accept explicit server identities, but must not
+    // acquire current-server's heuristic correlation when the field is absent.
+    if (!this.#legacyReconciliation) return mapMessage(dto);
     if (source === "history" && persistedId !== undefined)
       state.latestObservedHistoryAt = Math.max(
         state.latestObservedHistoryAt ?? message.createdAt,
@@ -287,6 +322,82 @@ export class TFRobotMessageIdentities {
       source,
       historyRevision,
     );
+  }
+
+  #mapServerMessage(
+    message: Message,
+    serverMessageId: string,
+    persistedId: string | undefined,
+    state: ConversationIdentities,
+    source: "history" | "live",
+    historyRevision: number,
+  ): Message {
+    const known = state.serverAliases.get(serverMessageId);
+    const databaseAlias =
+      persistedId === undefined ? undefined : state.aliases.get(persistedId);
+    if (
+      (known?.persistedId !== undefined &&
+        persistedId !== undefined &&
+        known.persistedId !== persistedId) ||
+      (databaseAlias?.serverMessageId !== undefined &&
+        databaseAlias.serverMessageId !== serverMessageId)
+    )
+      throw new Error("Conflicting TFRobot server message identity");
+
+    let canonicalId = known?.canonicalId ?? databaseAlias?.canonicalId;
+    if (canonicalId === undefined) {
+      const baseId = `server-message:${serverMessageId}`;
+      canonicalId = baseId;
+      while (state.canonicalIds.has(canonicalId))
+        canonicalId = `${baseId}:${++state.nextProvisionalId}`;
+    }
+    const alias: ServerAlias = known ?? {
+      canonicalId,
+      serverMessageId,
+      ...(databaseAlias?.confirmedHistory === undefined
+        ? {}
+        : { confirmedHistory: databaseAlias.confirmedHistory }),
+    };
+    if (
+      databaseAlias?.confirmedHistory !== undefined &&
+      databaseAlias.confirmedHistory.revision >
+        (alias.confirmedHistory?.revision ?? 0)
+    )
+      alias.confirmedHistory = databaseAlias.confirmedHistory;
+    if (persistedId !== undefined) alias.persistedId = persistedId;
+    if (
+      source === "history" &&
+      historyRevision >= (alias.confirmedHistory?.revision ?? 0)
+    ) {
+      alias.confirmedHistory = {
+        author: message.author,
+        revision: historyRevision,
+      };
+    }
+    state.canonicalIds.add(canonicalId);
+    state.serverAliases.set(serverMessageId, alias);
+    // Keep explicit database aliases for old-cache migration, never DTO signatures.
+    if (alias.persistedId !== undefined)
+      state.aliases.set(alias.persistedId, {
+        canonicalId,
+        persistedId: alias.persistedId,
+        serverMessageId,
+        ...(alias.confirmedHistory === undefined
+          ? {}
+          : { confirmedHistory: alias.confirmedHistory }),
+      });
+    return {
+      ...message,
+      id: canonicalId,
+      serverMessageId,
+      ...(alias.confirmedHistory === undefined
+        ? {}
+        : { author: alias.confirmedHistory.author }),
+      provenance:
+        alias.persistedId === undefined
+          ? { kind: "provisional", source }
+          : { kind: "persisted", id: alias.persistedId, source },
+    };
   }
 
   #confirmedMessage(

@@ -178,6 +178,7 @@ export const messageParser: z.ZodType<Message> = z.object({
   id: idParser,
   conversationId: idParser,
   role: z.enum(["assistant", "system", "tool", "unknown", "user"]),
+  serverMessageId: idParser.optional(),
   content: messageContentParser,
   createdAt: timestampParser,
   updatedAt: timestampParser.optional(),
@@ -715,11 +716,82 @@ export const chatSnapshotParser: z.ZodType<ChatSnapshot> = z
     capabilities: capabilitiesParser,
     pageInfo: timelinePageInfoParser,
     pendingInteraction: askUserInteractionRequestParser.optional(),
+    outgoingMessages: z
+      .array(
+        z.object({
+          id: idParser,
+          conversationId: idParser,
+          text: z.string(),
+          attachmentCount: z.number().int().nonnegative(),
+          status: z.enum(["sending", "accepted", "failed", "unknown"]),
+          serverMessageId: idParser.optional(),
+        }),
+      )
+      .optional(),
     lifecycle: chatLifecycleParser.optional(),
     activeErrors: z.array(chatErrorOccurrenceParser).optional(),
     error: chatErrorParser.optional(),
   })
   .superRefine((snapshot, context) => {
+    // Display, database and Server keys may bridge several projections of one fact.
+    const aliases = new Map<
+      string,
+      { keys: Set<string>; servers: Set<string>; databases: Set<string> }
+    >();
+    snapshot.timeline.forEach((item, index) => {
+      if (item.kind !== "message") return;
+      const keys = [
+        `display:${item.id}`,
+        ...(item.serverMessageId === undefined
+          ? []
+          : [`server:${item.serverMessageId}`]),
+        ...(item.provenance?.kind !== "persisted"
+          ? []
+          : [`database:${item.provenance.id}`]),
+      ];
+      const group = {
+        keys: new Set(keys),
+        servers: new Set<string>(),
+        databases: new Set<string>(),
+      };
+      if (item.serverMessageId !== undefined)
+        group.servers.add(item.serverMessageId);
+      if (item.provenance?.kind === "persisted")
+        group.databases.add(item.provenance.id);
+      for (const key of keys) {
+        const previous = aliases.get(key);
+        if (previous === undefined) continue;
+        for (const alias of previous.keys) group.keys.add(alias);
+        for (const server of previous.servers) group.servers.add(server);
+        for (const database of previous.databases)
+          group.databases.add(database);
+      }
+      if (
+        group.servers.size > 1 ||
+        (group.servers.size > 0 && group.databases.size > 1)
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["timeline", index, "serverMessageId"],
+          message: "message identity aliases must identify the same fact",
+        });
+      for (const key of group.keys) aliases.set(key, group);
+    });
+    const outgoingIds = new Set<string>();
+    snapshot.outgoingMessages?.forEach((message, index) => {
+      if (
+        message.conversationId !== snapshot.conversation.id ||
+        outgoingIds.has(message.id)
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["outgoingMessages", index],
+          message:
+            "outgoing messages must have unique IDs and belong to the snapshot conversation",
+        });
+      }
+      outgoingIds.add(message.id);
+    });
     snapshot.timeline.forEach((item, index) => {
       if (item.conversationId !== snapshot.conversation.id) {
         context.addIssue({

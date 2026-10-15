@@ -1,5 +1,25 @@
 # 在宿主 App 中接入 Chat Kit
 
+## 服务端消息身份与发送记录（#141）
+
+支持正式 `elementId` 的 Server 会由 Gateway 映射为 `Message.serverMessageId`；同一会话的
+实时、历史及缓存按该身份合并，不再依赖作者、正文或时间戳配对。`Message.id` 仍是显示键，
+`provenance.kind="persisted"` 仍表示数据库事实，拥有服务端身份不等于已经持久化。
+没有 `elementId` 的旧 Server 保留 current-server 兼容行为，verified 档位不启用旧启发式。
+
+`ChatSnapshot.outgoingMessages` 是 Runtime 的实例内发送观察，独立于正式 timeline。
+它包含本地记录 id、正文、附件数量及 `sending / accepted / failed / unknown` 状态；
+POST 返回身份后显示 accepted，接收匹配的实时或历史 Message 后消解该记录。
+缺少正式消息 DTO/服务器时间时不制造时间线消息。网络异常或超时显示 unknown，不自动重发。
+自定义 UI 通过已有 snapshot hooks 订阅；可调用 `client.dismissOutgoingMessage(id)` 关闭
+非 sending 记录，该操作不会取消 Server 命令或重新发送。默认 UI 提供相同操作。
+
+这些发送记录不进入内存/磁盘会话缓存；切换会话或释放实例后迟到回执不能复活旧记录。
+缓存恢复只提供显示信息，不能授权操作或提升 recovery 保证。
+
+本能力尚未发布。POST 立即生成正式消息所需的权威元数据，以及按消息关联的撤回/繁忙终态
+仍由 TFRS-599 协调；当前不解析助手提示文字或从历史缺失推断终态，不承诺真实 Word UAT 已通过。
+
 本文面向负责 Web、Office Add-in、Tauri 或其他宿主 App 的开发者，说明如何把 Chat Kit 接入现有应用。所有普通宿主安装同一个 `@turingfocus/chat-kit` 门面包，再按技术栈选择 Headless、React 或 Ant Design 入口。默认示例使用 **React 18 + Ant Design 5 + TFRobotServer Gateway**。
 
 接入完成后，宿主应当能够：

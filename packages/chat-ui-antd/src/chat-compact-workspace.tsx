@@ -1,3 +1,4 @@
+import { ChatOutgoingMessages } from "./chat-outgoing-messages.js";
 import { Alert, Button, Input, Modal, Space, Typography } from "antd";
 import {
   useCallback,
@@ -449,6 +450,15 @@ export function ChatCompactWorkspace({
                     : "Share a question or a passage. Let’s make it clearer together."}
                 </Typography.Text>
               </div>
+              <ChatOutgoingMessages
+                messages={
+                  creatingId.current === snapshot?.conversation.id
+                    ? snapshot?.outgoingMessages
+                    : undefined
+                }
+                labels={labels}
+                onDismiss={(id) => client.dismissOutgoingMessage(id)}
+              />
               <ChatComposer
                 labels={labels}
                 disabled={!workspace.ready || busy}

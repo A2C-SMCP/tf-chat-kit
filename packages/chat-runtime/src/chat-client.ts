@@ -17,6 +17,8 @@ import {
   listConversationsInputSchema,
   renameConversationInputSchema,
   sendMessageInputSchema,
+  sendTextInputSchema,
+  type OutgoingMessage,
   type AnswerInteractionInput,
   type AnswerInteractionSuccess,
   type ChatError,
@@ -72,7 +74,6 @@ import {
 } from "./timeline.js";
 import {
   ConversationCache,
-  mergeCachedHistory,
   type ConversationCacheOptions,
   type ConversationCacheState,
   type CacheEntry,
@@ -124,6 +125,20 @@ interface StructuredGatewayErrorMarker {
   readonly error: ChatError;
   readonly generation: number;
 }
+
+const outgoingFailureStatus = (error: ChatError): "failed" | "unknown" => {
+  const diagnostic = error.diagnostic;
+  if (diagnostic?.outcome === "not-started") return "failed";
+  const status = diagnostic?.httpStatus;
+  if (status !== undefined && status >= 400) return "failed";
+  if (status !== undefined && status >= 200 && status < 300) {
+    // An unreadable success receipt cannot prove the Server rejected the send.
+    return "unknown";
+  }
+  return ["network", "timeout", "unknown"].includes(error.code)
+    ? "unknown"
+    : "failed";
+};
 
 const runtimeFailure = <T>(
   code: ChatError["code"],
@@ -236,6 +251,8 @@ export class ChatClient {
   #pendingLoadRequestId: number | undefined;
   #pendingHandoff: PendingHandoff | undefined;
   readonly #pendingSends = new Map<string, number>();
+  readonly #outgoing = new Map<string, OutgoingMessage>();
+  #outgoingSequence = 0;
   #provisionalRecovery:
     | {
         readonly conversationId: string;
@@ -428,6 +445,120 @@ export class ChatClient {
     );
     return safe;
   }
+  /** Dismiss a local observation without retrying or cancelling the server command. */
+  dismissOutgoingMessage(id: string): void {
+    if (this.#disposed || this.#outgoing.get(id)?.status === "sending") return;
+    if (this.#outgoing.delete(id)) this.#publishOutgoing();
+  }
+
+  #publishOutgoing(): void {
+    const state = this.#snapshotStore.latestState();
+    if (state !== null && !this.#disposed) this.#commitSnapshot(state);
+  }
+
+  #commitSnapshot(next: SnapshotState): void {
+    const previous = this.#snapshotStore.latestState();
+    if (
+      previous !== null &&
+      previous.snapshot.conversation.id !== next.snapshot.conversation.id
+    )
+      this.#outgoing.clear();
+    if (
+      this.#outgoing.size === 0 &&
+      next.snapshot.outgoingMessages === undefined
+    ) {
+      this.#snapshotStore.commit(next);
+      return;
+    }
+    const receivedIds = new Set(
+      next.timeline.items.flatMap((item) =>
+        item.kind === "message" &&
+        item.role === "user" &&
+        item.serverMessageId !== undefined &&
+        item.provenance?.source !== "cache"
+          ? [item.serverMessageId]
+          : [],
+      ),
+    );
+    for (const [id, message] of this.#outgoing) {
+      if (
+        message.conversationId !== next.snapshot.conversation.id ||
+        (message.serverMessageId !== undefined &&
+          receivedIds.has(message.serverMessageId))
+      )
+        this.#outgoing.delete(id);
+    }
+    const messages = [...this.#outgoing.values()];
+    if (messages.length > 0) {
+      const current = previous?.snapshot.outgoingMessages;
+      next = updateSnapshotState(next, {
+        outgoingMessages: deepEqual(current, messages)
+          ? current
+          : cloneImmutable(messages),
+      });
+    } else if (next.snapshot.outgoingMessages !== undefined) {
+      const snapshot = { ...next.snapshot };
+      delete snapshot.outgoingMessages;
+      next = { ...next, snapshot: Object.freeze(snapshot) };
+    }
+    this.#snapshotStore.commit(next);
+  }
+
+  async #sendOutgoing(
+    operation: "sendText" | "sendMessage",
+    input: SendMessageInput,
+    action: () => Promise<GatewayResult<SendTextSuccess>>,
+  ): Promise<GatewayResult<SendTextSuccess>> {
+    const epoch = this.#conversationEpoch;
+    const id = `outgoing:${++this.#outgoingSequence}`;
+    const message: OutgoingMessage = {
+      id,
+      conversationId: input.conversationId,
+      text: input.text ?? "",
+      attachmentCount: input.attachments?.length ?? 0,
+      status: "sending",
+    };
+    this.#outgoing.set(id, message);
+    this.#publishOutgoing();
+    // Publication can synchronously trigger navigation or dispose in a host listener.
+    if (
+      this.#disposed ||
+      epoch !== this.#conversationEpoch ||
+      this.getSnapshot()?.conversation.id !== input.conversationId
+    )
+      return runtimeFailure(
+        "conflict",
+        "Send was superseded before dispatch",
+        input.conversationId,
+      );
+    const result = await this.#observeOperation(
+      operation,
+      input.conversationId,
+      action,
+    );
+    if (
+      !this.#disposed &&
+      epoch === this.#conversationEpoch &&
+      this.getSnapshot()?.conversation.id === input.conversationId &&
+      this.#outgoing.has(id)
+    ) {
+      if (result.ok && result.value.serverMessageId === undefined) {
+        // Legacy gateways keep the existing realtime/provisional display behavior.
+        this.#outgoing.delete(id);
+      } else {
+        this.#outgoing.set(id, {
+          ...message,
+          status: result.ok ? "accepted" : outgoingFailureStatus(result.error),
+          ...(result.ok
+            ? { serverMessageId: result.value.serverMessageId }
+            : {}),
+        });
+      }
+      this.#publishOutgoing();
+    }
+    return result;
+  }
+
   async #observeOperation<T>(
     operation: string,
     conversationId: string,
@@ -573,7 +704,7 @@ export class ChatClient {
     const snapshot = this.getSnapshot();
     if (!this.#cacheReadOnly || snapshot === null) return;
     // Clearing local content does not delete the server conversation or selection.
-    this.#snapshotStore.commit(
+    this.#commitSnapshot(
       createSnapshotState(
         cachedDisplaySnapshot({
           ...snapshot,
@@ -878,7 +1009,7 @@ export class ChatClient {
     }
     const current = this.#snapshotStore.latestState();
     if (current?.snapshot.conversation.id === result.value.id) {
-      this.#snapshotStore.commit(
+      this.#commitSnapshot(
         updateSnapshotState(current, {
           conversation: cloneImmutable(result.value),
         }),
@@ -980,6 +1111,7 @@ export class ChatClient {
       this.#interactionAnswersInFlight.clear();
       this.#retiredInteractionIdentities.clear();
       this.#supersededInteractionAnswers.clear();
+      this.#outgoing.clear();
       this.#snapshotStore.clear();
       await this.#runSubscriptionCleanup(
         () => subscription?.dispose(parsed.data),
@@ -1062,7 +1194,7 @@ export class ChatClient {
       this.#conversationEpoch += 1;
       this.#historyRequestId += 1;
       this.#cacheReadOnly = true;
-      this.#snapshotStore.commit(
+      this.#commitSnapshot(
         createSnapshotState(cachedDisplaySnapshot(entry.snapshot)),
       );
       void this.#runSubscriptionCleanup(
@@ -1209,7 +1341,10 @@ export class ChatClient {
       },
     );
     const baseline = this.#snapshotStore.state;
-    if (baseline?.snapshot.conversation.id === input.conversationId) {
+    if (
+      !this.#cacheReadOnly &&
+      baseline?.snapshot.conversation.id === input.conversationId
+    ) {
       this.#pendingHandoff = {
         baseline,
         conversationId: input.conversationId,
@@ -1309,26 +1444,21 @@ export class ChatClient {
       );
     }
 
-    const previousSubscription = this.#gatewaySubscription;
-    const generation = ++this.#generation;
-    this.#provisionalRecovery = undefined;
-    this.#historyRequestId += 1;
-    this.#gatewaySubscription =
-      loaded.value.capabilities.liveUpdates && subscribed.ok
-        ? subscribed.value
-        : undefined;
     const conversationOverride =
       this.#pendingLoadRequestId === requestId &&
       this.#pendingLoadConversationId === input.conversationId
         ? this.#pendingLoadConversationOverride
         : undefined;
     const cached = this.#cache?.peek(input.conversationId);
-    const loadedWithHistory = mergeCachedHistory(
-      loaded.value,
-      cached?.snapshot,
-      (this.#pendingSends.get(input.conversationId) ?? 0) === 0 &&
-        loaded.value.run === null,
-    );
+    const loadedWithHistory =
+      this.#cache === undefined
+        ? loaded.value
+        : this.#cache.mergeHistory(
+            loaded.value,
+            cached?.snapshot,
+            (this.#pendingSends.get(input.conversationId) ?? 0) === 0 &&
+              loaded.value.run === null,
+          );
     const retained =
       baseline?.snapshot.conversation.id === input.conversationId
         ? {
@@ -1361,9 +1491,27 @@ export class ChatClient {
     } else if (currentState !== null) {
       nextState = this.#guardInteractionTransition(currentState, nextState);
     }
+    if (this.#disposed || requestId !== this.#loadRequestId) {
+      this.#clearPendingLoad(requestId);
+      if (!subscriptionDiscarded)
+        await this.#discardGatewaySubscription(subscribed, input);
+      return runtimeFailure(
+        "conflict",
+        "Conversation load was superseded",
+        input.conversationId,
+      );
+    }
+    const previousSubscription = this.#gatewaySubscription;
+    const generation = ++this.#generation;
+    this.#provisionalRecovery = undefined;
+    this.#historyRequestId += 1;
+    this.#gatewaySubscription =
+      loaded.value.capabilities.liveUpdates && subscribed.ok
+        ? subscribed.value
+        : undefined;
     this.#clearPendingLoad(requestId);
     this.#cacheReadOnly = false;
-    this.#snapshotStore.commit(nextState);
+    this.#commitSnapshot(nextState);
     if (!this.#disposed) notificationQueue.activate(generation);
     const committedSnapshot =
       this.#snapshotStore.state?.snapshot ?? nextState.snapshot;
@@ -1377,6 +1525,14 @@ export class ChatClient {
   async sendText(
     input: SendTextInput,
   ): Promise<GatewayResult<SendTextSuccess>> {
+    const parsed = sendTextInputSchema.safeParse(input);
+    if (!parsed.success)
+      return runtimeFailure(
+        "validation",
+        "Message input is invalid",
+        input.conversationId,
+      );
+    input = parsed.data;
     const state = this.#activeState(input.conversationId);
     if (!state.ok) return state;
     if (!isGatewayOperationSupported(state.value.capabilities, "sendText")) {
@@ -1388,10 +1544,8 @@ export class ChatClient {
     }
 
     const generation = this.#generation;
-    const result = await this.#observeOperation(
-      "sendText",
-      input.conversationId,
-      () => this.#gateway.sendText(input),
+    const result = await this.#sendOutgoing("sendText", input, () =>
+      this.#gateway.sendText(input),
     );
     if (!result.ok)
       this.#reportError(result.error, generation, "command", true);
@@ -1450,10 +1604,8 @@ export class ChatClient {
     }
     const generation = this.#generation;
     const operation = (async (): Promise<GatewayResult<SendMessageSuccess>> => {
-      const result = await this.#observeOperation(
-        "sendMessage",
-        command.conversationId,
-        () => this.#gateway.sendMessage!(command),
+      const result = await this.#sendOutgoing("sendMessage", command, () =>
+        this.#gateway.sendMessage!(command),
       );
       if (!result.ok && !this.#disposed)
         this.#reportError(result.error, generation, "command", true);
@@ -1593,7 +1745,7 @@ export class ChatClient {
         latest !== null &&
         hasSameInteractionIdentity(latest.snapshot.pendingInteraction, pending)
       ) {
-        this.#snapshotStore.commit(
+        this.#commitSnapshot(
           this.#guardInteractionTransition(
             latest,
             updateSnapshotState(latest, { pendingInteraction: undefined }),
@@ -1664,6 +1816,7 @@ export class ChatClient {
     this.#disposed = true;
     this.#provisionalRecovery = undefined;
     this.#pendingSends.clear();
+    this.#outgoing.clear();
     this.#diagnostics.dispose();
     this.#conversationEpoch += 1;
     this.#generation += 1;
@@ -1855,9 +2008,7 @@ export class ChatClient {
       timeline !== state.timeline ||
       !deepEqual(pageInfo, state.snapshot.pageInfo)
     ) {
-      this.#snapshotStore.commit(
-        updateSnapshotState(state, { timeline, pageInfo }),
-      );
+      this.#commitSnapshot(updateSnapshotState(state, { timeline, pageInfo }));
     }
     const committed = this.#snapshotStore.state;
     if (
@@ -2182,7 +2333,7 @@ export class ChatClient {
               update.snapshot.conversation.id === state.snapshot.conversation.id
             ? {
                 ...update,
-                snapshot: mergeCachedHistory(
+                snapshot: this.#cache.mergeHistory(
                   update.snapshot,
                   state.snapshot,
                   (this.#pendingSends.get(state.snapshot.conversation.id) ??
@@ -2190,7 +2341,7 @@ export class ChatClient {
                 ),
               }
             : update;
-    this.#snapshotStore.commit(
+    this.#commitSnapshot(
       this.#guardInteractionTransition(
         state,
         applySnapshotUpdate(state, prepared),
@@ -2342,7 +2493,7 @@ export class ChatClient {
             occurrence.error.diagnostic?.operationId
         ),
     );
-    this.#snapshotStore.commit(
+    this.#commitSnapshot(
       updateSnapshotState(state, {
         activeErrors: Object.freeze([...retained, occurrence]),
         error: occurrence.error,

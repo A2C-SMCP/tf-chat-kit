@@ -63,6 +63,7 @@ export type {
   Message,
   MessageAuthor,
   MessageProvenance,
+  OutgoingMessage,
   MessageContent,
   MessageContentPart,
   MessageResource,
