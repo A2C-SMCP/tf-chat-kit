@@ -441,6 +441,7 @@ export function registerManagerUiTests() {
     await page.getByRole("button", { name: "开始对话" }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(page.getByRole("dialog")).toBeHidden();
     await page.getByRole("button", { name: "返回账号与设置" }).click();
     await expect(workspace).toContainText("Word fixture");
     await page
@@ -459,9 +460,19 @@ export function registerManagerUiTests() {
     await expect(platformTrigger).toBeFocused();
     await platformTrigger.click();
     await page.getByRole("menuitem", { name: "切换平台", exact: true }).click();
-    await page.getByRole("button", { name: /备选平台/ }).click();
+    const alternativePlatform = page.getByRole("button", { name: /备选平台/ });
+    await alternativePlatform.click();
+    await expect(alternativePlatform).toHaveAttribute("aria-pressed", "true");
     await page.getByRole("button", { name: "开始对话" }).click();
-    await page.getByRole("button", { name: "确认", exact: true }).click();
+    const confirmation = page.getByRole("dialog");
+    await expect(confirmation).toBeVisible();
+    await confirmation
+      .getByRole("button", { name: "确认", exact: true })
+      .click();
+    await expect(confirmation).toBeHidden();
+    await expect(
+      page.getByRole("group", { name: "当前平台: 备选平台", exact: true }),
+    ).toBeVisible();
     await expect(input).toHaveValue("");
     await expect(page.getByText("备选平台", { exact: true })).toBeVisible();
     await input.fill("UI long text:平台切换后发送");

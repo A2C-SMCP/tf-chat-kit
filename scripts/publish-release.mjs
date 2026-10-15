@@ -26,8 +26,16 @@ import {
 } from "./release-group-policy.mjs";
 
 export const BOOTSTRAP_FACADE_PACKAGE = "@turingfocus/chat-kit";
+// npm processing can outlast two minutes. Bound each package to five minutes
+// while retaining immediate failure on an immutable integrity conflict.
 export const REGISTRY_RECONCILIATION_DELAYS_MS = Object.freeze([
-  0, 1_000, 2_000, 4_000, 8_000, 15_000, 30_000, 30_000, 30_000,
+  0,
+  1_000,
+  2_000,
+  4_000,
+  8_000,
+  15_000,
+  ...Array.from({ length: 9 }, () => 30_000),
 ]);
 
 /** @typedef {"oidc" | "bootstrap-token" | "oidc-with-bootstrap-facade"} PublishAuthMode */
