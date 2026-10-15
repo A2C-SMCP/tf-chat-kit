@@ -1,5 +1,16 @@
 # @turingfocus/chat-ui-antd
 
+## 0.10.0-next.4
+
+### Minor Changes
+
+- 61976ab: Compact default chat controls into accessible icon buttons and a dropdown menu. Show the assistant and platform badge on one compact row, with the conversation title and 28px actions on the next; long names expose their complete text in tooltips. Keep assistant and platform summaries read-only and move their switch actions into the menu. The compact organization header is read-only, with organization switching available through account settings. Hosts can append actions through the optional compact workspace moreActions prop. Conversation creation still derives its required title from the first message without asking the user to enter a name.
+
+### Patch Changes
+
+- @turingfocus/chat-protocol@0.10.0-next.4
+- @turingfocus/chat-react@0.10.0-next.4
+
 ## 0.10.0-next.3
 
 ### Minor Changes
