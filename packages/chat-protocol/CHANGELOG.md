@@ -1,5 +1,18 @@
 # @turingfocus/chat-protocol
 
+## 0.10.0
+
+### Minor Changes
+
+- 1e43425: Display realtime and persisted conversation failures with safe business explanations and authoritative original text. Allow users to restore text into the composer with overwrite confirmation, without resending or treating conversation errors as current-run outcomes. Legacy transports without shared error identities retain separate realtime observations and history records.
+- 55b4248: Reconcile mutable author names and avatars independently from current-server user-message identity. Keep historical author updates across cache reads, pagination, concurrent loads and reconnects without overwriting newer message content. Add optional message provenance and author-only recovery updates. Preserve unassociated provisional messages and show them in an expandable review section in the default UI; never alias different user IDs or claim complete current-server recovery.
+- 55b4248: Correlate user messages by the Server's elementId across POST receipts, realtime,
+  history and cache, independently of author display and database persistence.
+  Expose instance-local outgoing send observations with accepted, failed and unknown
+  outcomes and render them outside the formal timeline. Preserve legacy Server
+  compatibility and never replay sends from cache. Full POST promotion metadata and
+  correlated business terminal states still require the Server contracts tracked in #141.
+
 ## 0.10.0-next.5
 
 ### Minor Changes
