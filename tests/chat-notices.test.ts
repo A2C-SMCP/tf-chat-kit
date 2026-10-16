@@ -15,6 +15,8 @@ import { createRoot } from "react-dom/client";
 import { beforeAll, expect, it, vi } from "vitest";
 import { ChatProvider } from "../packages/chat-react/src/index.js";
 import { ChatNotices } from "../packages/chat-ui-antd/src/chat-notices.js";
+import { compactChatZhCN } from "../packages/chat-ui-antd/src/compact-labels.js";
+import type { ChatUiLabelOverrides } from "../packages/chat-ui-antd/src/types.js";
 import { createLoadedClient, deadlineAt } from "./support/chat-react.js";
 import type { ChatLifecycle } from "../packages/chat-protocol/src/index.js";
 beforeAll(() => {
@@ -30,7 +32,7 @@ beforeAll(() => {
     configurable: true,
   });
 });
-async function fixture() {
+async function fixture(labels?: ChatUiLabelOverrides) {
   const { client, memory } = await createLoadedClient();
   const conversationId = memory.fixtures.conversation.id;
   const element = document.createElement("div");
@@ -44,6 +46,7 @@ async function fixture() {
         createElement(ChatNotices, {
           conversationId,
           getDeadlineAt: deadlineAt,
+          labels,
         }),
       ),
     ),
@@ -71,6 +74,56 @@ async function fixture() {
     },
   };
 }
+it.each([false, true])(
+  "hides the Chinese best-effort status after five seconds (reconnected: %s)",
+  async (reconnected) => {
+    const f = await fixture(compactChatZhCN);
+    vi.useFakeTimers();
+    const message = "连接已恢复，部分过程信息可能不完整。";
+    const lifecycle: ChatLifecycle = {
+      status: "degraded",
+      generation: 2,
+      reconnectAttempt: reconnected ? 1 : 0,
+      recovery: {
+        complete: false,
+        assurance: "best-effort",
+        source: "rest-rebase",
+      },
+    };
+    try {
+      if (reconnected)
+        await f.emit({
+          status: "reconnecting",
+          generation: 2,
+          reconnectAttempt: 1,
+        });
+      await f.emit(lifecycle);
+      expect(f.element.textContent).toContain(message);
+      await act(async () => vi.advanceTimersByTime(4000));
+      // A refreshed snapshot must not extend the notice's lifetime.
+      await f.emit({ ...lifecycle });
+      await act(async () => vi.advanceTimersByTime(999));
+      expect(f.element.textContent).toContain(message);
+      await act(async () => vi.advanceTimersByTime(1));
+      expect(f.element.textContent).not.toContain(message);
+      expect(f.client.getSnapshot()?.lifecycle?.status).toBe("degraded");
+      expect(f.element.querySelector("button")).not.toBeNull();
+
+      // A subsequent recovery gets its own five-second notice.
+      await f.emit({
+        status: "reconnecting",
+        generation: 3,
+        reconnectAttempt: 2,
+      });
+      await f.emit({ ...lifecycle, generation: 3, reconnectAttempt: 2 });
+      expect(f.element.textContent).toContain(message);
+      await act(async () => vi.advanceTimersByTime(5000));
+      expect(f.element.textContent).not.toContain(message);
+    } finally {
+      await f.close();
+    }
+  },
+);
 it("keeps initial connection quiet for 2 seconds and does not announce initial degraded", async () => {
   const f = await fixture();
   vi.useFakeTimers();
@@ -380,6 +433,7 @@ it("uses five seconds for best-effort recovery and does not announce a batched i
     expect(f.element.textContent).not.toContain(
       "Connection restored with limited recovery",
     );
+    expect(f.element.textContent).not.toContain("best-effort recovery");
   } finally {
     await f.close();
   }
