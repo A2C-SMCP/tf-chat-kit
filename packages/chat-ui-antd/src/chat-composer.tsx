@@ -1,3 +1,4 @@
+import { ConversationFailureContext } from "./conversation-failure-card.js";
 import {
   safeDiagnosticError,
   type ChatError,
@@ -10,6 +11,7 @@ import {
 import { Button, Input, Modal, Space, Typography, theme } from "antd";
 import {
   useCallback,
+  useContext,
   useId,
   useEffect,
   useRef,
@@ -118,6 +120,17 @@ export const ChatComposer = ({
   const uploadControllers = useRef(new Map<string, AbortController>());
   const fileInput = useRef<HTMLInputElement | null>(null);
   const textarea = useRef<HTMLTextAreaElement | null>(null);
+  const { focusRequest, onPendingUploadsChange } = useContext(
+    ConversationFailureContext,
+  );
+  useEffect(() => {
+    onPendingUploadsChange?.(uploading.length);
+  }, [onPendingUploadsChange, uploading.length]);
+  useEffect(() => () => onPendingUploadsChange?.(0), [onPendingUploadsChange]);
+  useEffect(() => {
+    if (focusRequest !== undefined && focusRequest > 0)
+      textarea.current?.focus();
+  }, [focusRequest]);
   const pendingTextEdit = useRef<
     Pick<ComposerTextEdit, "previousEnd" | "previousStart"> | undefined
   >();
@@ -232,6 +245,7 @@ export const ChatComposer = ({
       uploadControllers.current.get(id)?.abort();
       const controller = new AbortController();
       uploadControllers.current.set(id, controller);
+      onPendingUploadsChange?.(Math.max(1, uploadControllers.current.size));
       setUploading((current) => [
         ...current.filter((item) => item.id !== id),
         { file, id },
@@ -290,7 +304,8 @@ export const ChatComposer = ({
       const recordedFailure = result.ok
         ? undefined
         : (onUploadError?.(result.error) ?? safeDiagnosticError(result.error));
-      if (uploadGeneration.current !== generation) return;
+      if (controller.signal.aborted || uploadGeneration.current !== generation)
+        return;
       if (result.ok) {
         updateDraft({
           attachments: [...draftSnapshot.current.attachments, result.value],
@@ -304,7 +319,13 @@ export const ChatComposer = ({
         );
       }
     },
-    [attachmentUploader, getDeadlineAt, onUploadError, updateDraft],
+    [
+      attachmentUploader,
+      getDeadlineAt,
+      onUploadError,
+      onPendingUploadsChange,
+      updateDraft,
+    ],
   );
 
   const selectFiles = (event: ChangeEvent<HTMLInputElement>): void => {
@@ -583,6 +604,19 @@ export const ChatComposer = ({
                 {item.error === undefined
                   ? item.file.name
                   : `${labels.retryUpload} ${item.file.name}`}
+              </Button>
+              <Button
+                size="small"
+                aria-label={`${labels.removeAttachment} ${item.file.name}`}
+                onClick={() => {
+                  uploadControllers.current.get(item.id)?.abort();
+                  uploadControllers.current.delete(item.id);
+                  setUploading((current) =>
+                    current.filter((entry) => entry.id !== item.id),
+                  );
+                }}
+              >
+                ×
               </Button>
               {item.error
                 ? (renderUploadError?.(item.error) ?? (

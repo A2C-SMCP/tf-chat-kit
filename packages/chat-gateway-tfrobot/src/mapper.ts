@@ -40,6 +40,7 @@ import { mapToolPresentation, mapToolAttachments } from "./presentation.js";
 
 import { getTransportTaskId } from "./dto.js";
 import type {
+  ChatErrorRecordDto,
   ConversationDto,
   EventDto,
   HistoryDto,
@@ -899,6 +900,96 @@ export const mapRun = (conversationId: string, dto: StatusDto): Run | null => {
   };
 };
 
+/** No identity inference: realtime IDs are local observation IDs, history IDs are durable. */
+export const mapConversationFailure = (
+  dto: {
+    conversationId: string | number;
+    error: unknown;
+    code?: string | null | undefined;
+    createTimestamp?: number | undefined;
+  },
+  id: string,
+  now: number,
+  record?: ChatErrorRecordDto,
+): AgentEvent => {
+  const original = record?.message;
+  const originalText =
+    original?.role === "user" &&
+    original.msgType === "text" &&
+    String(original.conversationId) === String(dto.conversationId) &&
+    typeof original.content === "string" &&
+    original.content.trim().length > 0 &&
+    original.content.length <= 262_144
+      ? original.content
+      : undefined;
+  const safeOriginalText =
+    originalText === undefined
+      ? undefined
+      : sanitizeDiagnosticText(originalText);
+  const message = sanitizeDiagnosticText(
+    typeof dto.error === "string" ? dto.error : "TFRobot run failed",
+  ).slice(0, 65_536);
+  return agentEventSchema.parse({
+    kind: "agent-event",
+    id,
+    conversationId: String(dto.conversationId),
+    eventCategory: "generic",
+    eventType: "conversation.failure",
+    status: "failed",
+    createdAt: dto.createTimestamp ?? now,
+    summary: message.slice(0, 256),
+    transitions: [
+      {
+        id: "failure",
+        status: "failed",
+        occurredAt: dto.createTimestamp ?? now,
+        failure: {
+          message,
+          source: record === undefined ? "realtime" : "history",
+          ...(record === undefined ? {} : { recordId: String(record.id) }),
+          ...(dto.code == null || dto.code.length === 0
+            ? {}
+            : { businessCode: sanitizeDiagnosticText(dto.code).slice(0, 256) }),
+          ...(safeOriginalText === undefined ||
+          safeOriginalText.length > 262_144
+            ? {}
+            : {
+                originalMessage: {
+                  ...(original?.msgId == null
+                    ? {}
+                    : { id: String(original.msgId) }),
+                  text: safeOriginalText,
+                },
+              }),
+        },
+      },
+    ],
+  });
+};
+
+export const mapHistoricalFailure = (dto: ChatErrorRecordDto): AgentEvent =>
+  mapConversationFailure(
+    dto,
+    `conversation.failure:history:${dto.id}`,
+    dto.createTimestamp,
+    dto,
+  );
+
+export const mapFailureUpdate = (dto: ChatErrorRecordDto): ChatUpdate => {
+  const event = mapHistoricalFailure(dto);
+  return {
+    kind: "event.transition.upsert",
+    conversationId: event.conversationId,
+    event: {
+      id: event.id,
+      eventCategory: "generic",
+      eventType: event.eventType,
+      createdAt: event.createdAt,
+      transition: event.transitions[0]!,
+    },
+  };
+};
+
 export const mapSnapshot = (
   conversation: Conversation,
   history: HistoryDto,
@@ -908,6 +999,7 @@ export const mapSnapshot = (
   const timeline = [
     ...(history.messages ?? []).map(messageMapper),
     ...mergeEvents((history.events ?? []).map(mapEvent)),
+    ...(history.errors ?? []).map(mapHistoricalFailure),
   ].sort(compareTimelineItems);
   return chatSnapshotSchema.parse({
     conversation,

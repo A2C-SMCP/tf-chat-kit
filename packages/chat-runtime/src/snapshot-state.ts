@@ -472,6 +472,9 @@ const occurrenceOf = (
   }
   return cloneImmutable({
     id: update.errorId,
+    ...(update.timelineItemId === undefined
+      ? {}
+      : { timelineItemId: update.timelineItemId }),
     error: update.error,
     source: update.source,
     scope: update.scope,

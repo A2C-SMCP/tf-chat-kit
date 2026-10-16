@@ -214,6 +214,82 @@ export function registerManagerUiTests() {
       },
     );
   };
+  test("conversation failure cards show real reasons and safely restore original text in a narrow host", async ({
+    page,
+  }) => {
+    await mount(page, { platformId: 17 });
+    await login(page);
+    await configureUi(page, { conversationFailures: true });
+    await page.getByRole("button", { name: "历史对话", exact: true }).click();
+    await page
+      .getByRole("list", { name: "历史对话", exact: true })
+      .getByRole("listitem")
+      .filter({ hasText: "Manager browser fixture" })
+      .getByRole("button")
+      .first()
+      .click();
+    const card = page.locator("[data-chat-conversation-failure]");
+    await expect(card).toContainText("本轮生成失败");
+    await expect(card).toContainText("139132 超过最大限制 128000");
+    await expect(card).toContainText("历史错误记录");
+    const input = page.locator("textarea:not([aria-hidden])");
+    let sent = 0;
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        /\/messages(?:\?|$)/u.test(request.url())
+      )
+        sent++;
+    });
+    await card.getByRole("button", { name: "回填后编辑" }).click();
+    await expect(input).toHaveValue("我选中的文字加粗");
+    await expect(input).toBeFocused();
+    await input.fill("保留当前草稿");
+    await card.getByRole("button", { name: "回填后编辑" }).click();
+    await expect(
+      page.getByRole("dialog", { name: "替换当前草稿？" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(input).toHaveValue("保留当前草稿");
+    await expect(
+      page.getByRole("dialog", { name: "替换当前草稿？" }),
+    ).not.toBeVisible();
+    await card.getByRole("button", { name: "回填后编辑" }).click();
+    await page.getByRole("button", { name: "替换草稿", exact: true }).click();
+    await expect(
+      page.getByRole("dialog", { name: "替换当前草稿？" }),
+    ).not.toBeVisible();
+    await expect(input).toHaveValue("我选中的文字加粗");
+    await expect(input).toBeFocused();
+    for (const width of [320, 380, 480, 760]) {
+      await page.locator("#word-pane").evaluate((el, value) => {
+        (el as HTMLElement).style.width = `${value}px`;
+      }, width);
+      await expect(card).toBeVisible();
+      expect(
+        await page
+          .locator("#word-pane")
+          .evaluate((el) => el.scrollWidth - el.clientWidth),
+      ).toBeLessThanOrEqual(1);
+      await page.screenshot({
+        path: test.info().outputPath(`issue-149-failure-${width}.png`),
+      });
+    }
+    await page.evaluate(async (origin) => {
+      await fetch(`${origin}/__test/conversation-failure`, { method: "POST" });
+    }, process.env["TF_CHAT_MANAGER_ORIGIN"] ?? "https://localhost:4312");
+    const live = page
+      .locator("[data-chat-conversation-failure]")
+      .filter({ hasText: "实时运行失败" });
+    await expect(live).toContainText("实时错误，尚未确认已保存");
+    await expect(live.getByRole("button", { name: "回填后编辑" })).toHaveCount(
+      0,
+    );
+    await expect(
+      page.locator("[data-chat-notices] .ant-alert-error"),
+    ).toHaveCount(0);
+    expect(sent).toBe(0);
+  });
   test("cross-UID history restores one primary user bubble and retains the transient echo for explicit review", async ({
     page,
   }) => {

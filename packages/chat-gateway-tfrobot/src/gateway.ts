@@ -44,6 +44,7 @@ import {
   mapMessage,
   mapConversation,
   mapEventUpdate,
+  mapFailureUpdate,
   mapMessageUpdate,
   mapRun,
   mapSnapshot,
@@ -741,6 +742,7 @@ export class TFRobotChatGateway implements ChatGateway {
             ),
           ),
           ...(history.value.events ?? []).map(mapEventUpdate),
+          ...(history.value.errors ?? []).map(mapFailureUpdate),
         ];
         if (
           pageUpdates.some(
@@ -773,10 +775,16 @@ export class TFRobotChatGateway implements ChatGateway {
         const identity = recoveryIdentityOfUpdate(update);
         if (identity !== undefined && input.checkpoint.has(identity))
           checkpointReached = true;
-        // A checkpoint bounds pagination, not mutable message authors. Read all
-        // messages in the fetched page; preserve the existing event replay fence.
+        // Checkpoints bound pagination, not message authors or independent
+        // historical failures already returned in this page. Preserve the replay
+        // fence for ordinary events; errors are upserted by authoritative record ID.
+        const historicalFailure =
+          update.kind === "event.transition.upsert" &&
+          update.event.eventType === "conversation.failure" &&
+          update.event.transition.failure?.source === "history";
         if (
           checkpointReached &&
+          !historicalFailure &&
           (update.kind !== "timeline.upsert" || update.item.kind !== "message")
         )
           continue;

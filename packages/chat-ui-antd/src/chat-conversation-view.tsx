@@ -1,3 +1,4 @@
+import { ConversationFailureContext } from "./conversation-failure-card.js";
 import { ChatOutgoingMessages } from "./chat-outgoing-messages.js";
 import { ChatNotices, type ChatNoticeTiming } from "./chat-notices.js";
 import { ChatErrorNotice } from "./chat-diagnostics.js";
@@ -13,6 +14,8 @@ import {
 
 import {
   isChatLifecycleOperable,
+  getConversationFailure,
+  type TimelineItem,
   type ChatError,
   type ChatSnapshot,
 } from "@turingfocus/chat-protocol";
@@ -431,6 +434,108 @@ export const ChatConversationView = ({
     };
   }, [snapshot?.timeline]);
 
+  const restoreScope = useMemo(
+    () => ({ client, conversationId: snapshot?.conversationId }),
+    [client, snapshot?.conversationId],
+  );
+  const liveRestoreScope = useRef(restoreScope);
+  liveRestoreScope.current = restoreScope;
+  const [composerFocus, setComposerFocus] = useState<{
+    readonly scope: typeof restoreScope;
+    readonly revision: number;
+  }>();
+  const focusRequest =
+    composerFocus?.scope === restoreScope ? composerFocus.revision : undefined;
+  const restoredScope = useRef<typeof restoreScope>();
+  const [pendingRestore, setPendingRestore] = useState<{
+    readonly scope: typeof restoreScope;
+    readonly item: TimelineItem;
+    readonly draft: typeof composer.draft;
+  }>();
+  useEffect(() => {
+    liveRestoreScope.current = restoreScope;
+    setPendingRestore(undefined);
+    return () => {
+      liveRestoreScope.current = { client, conversationId: undefined };
+    };
+  }, [restoreScope, client]);
+  const pendingUploadsRef = useRef(0);
+  const [pendingUploads, setPendingUploads] = useState(0);
+  const onPendingUploadsChange = useCallback((count: number) => {
+    pendingUploadsRef.current = count;
+    setPendingUploads(count);
+  }, []);
+  const restoreDraft = useCallback(
+    (request: {
+      scope: typeof restoreScope;
+      item: TimelineItem;
+      draft: typeof composer.draft;
+    }) => {
+      const current = client.getSnapshot();
+      const failure = getConversationFailure(request.item);
+      if (
+        pendingUploadsRef.current > 0 ||
+        liveRestoreScope.current !== request.scope ||
+        current?.conversation.id !== request.scope.conversationId ||
+        !isChatLifecycleOperable(current?.lifecycle) ||
+        current?.capabilities.sendText !== true ||
+        client.getComposerDraft(current.conversation.id) !== request.draft ||
+        !current.timeline.some((entry) => entry === request.item) ||
+        failure?.originalMessage === undefined
+      )
+        return;
+      client.setComposerDraft({
+        conversationId: current.conversation.id,
+        text: failure.originalMessage.text,
+        longTexts: [],
+        attachments: [],
+      });
+      restoredScope.current = request.scope;
+      setComposerFocus((value) => ({
+        scope: request.scope,
+        revision: (value?.revision ?? 0) + 1,
+      }));
+    },
+    [client],
+  );
+  const onRestoreFailure = useCallback(
+    (item: TimelineItem) => {
+      const conversationId = restoreScope.conversationId;
+      if (conversationId === undefined) return;
+      const draft = client.getComposerDraft(conversationId);
+      const request = { scope: restoreScope, item, draft };
+      if (
+        draft.text.length > 0 ||
+        draft.longTexts.length > 0 ||
+        draft.attachments.length > 0
+      )
+        setPendingRestore(request);
+      else restoreDraft(request);
+    },
+    [client, restoreScope, restoreDraft],
+  );
+  const failureActions = useMemo(
+    () => ({
+      labels: labelOverrides,
+      onRestore:
+        lifecycleOperable && snapshot?.capabilities.sendText === true
+          ? onRestoreFailure
+          : undefined,
+      focusRequest,
+      restorationBlocked: pendingUploads > 0,
+      onPendingUploadsChange,
+    }),
+    [
+      labelOverrides,
+      lifecycleOperable,
+      snapshot?.capabilities.sendText,
+      onRestoreFailure,
+      focusRequest,
+      pendingUploads,
+      onPendingUploadsChange,
+    ],
+  );
+
   if (snapshot === null) {
     return (
       <ChatNotices
@@ -533,254 +638,283 @@ export const ChatConversationView = ({
   );
 
   return (
-    <section
-      className={className}
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        minHeight: 0,
-        ...style,
-      }}
-    >
-      <ChatNotices
-        key={`notices:${viewResetKey}`}
-        showDiagnostics={presentation === "standard"}
-        conversationId={conversationId}
-        timing={noticeTiming}
-        labels={labels}
-        getDeadlineAt={getDeadlineAt}
-        onRequestAuthentication={onRequestAuthentication}
-      />
-      {presentation === "standard" ? (
-        <ChatRunStatus
-          key={`${viewResetKey}:${snapshot.run?.id ?? "no-run"}`}
-          canInterrupt={lifecycleOperable && snapshot.capabilities.interrupt}
-          labels={labels}
-          onInterrupt={interrupt}
-          run={snapshot.run}
-          showInterruptButton={false}
-          showError={false}
-        />
-      ) : snapshot.run?.status === "running" ? (
-        <span role="status" style={{ padding: "4px 12px", fontSize: 12 }}>
-          {labels.sending}
-        </span>
-      ) : null}
-      {presentation === "standard" ? (
-        <div
-          style={{
-            alignItems: "center",
-            display: "flex",
-            gap: token.marginXS,
-            justifyContent: "flex-end",
-            padding: `${token.paddingXXS}px ${token.paddingSM}px`,
-          }}
-        >
-          <Typography.Text type="secondary">
-            {labels.eventDetailModeLabel}
-          </Typography.Text>
-          <Segmented
-            aria-label={labels.eventDetailModeLabel}
-            onChange={changeEventDetailMode}
-            options={eventDetailModeOptions}
-            size="small"
-            value={requestedEventDetailMode}
-          />
-        </div>
-      ) : null}
-      <div
-        data-chat-event-layout={resolvedEventDetailMode}
-        ref={layoutRef}
-        style={{ display: "flex", flex: 1, minHeight: 0, minWidth: 0 }}
-      >
-        <EventDetailSplitLayout
-          ariaLabel={
-            labels.eventDetailSplitHandleLabel ?? "Resize event detail panes"
-          }
-          detail={eventDetail}
-          onRatioChange={changeEventDetailSplitRatio}
-          ratio={resolvedEventDetailSplitRatio}
-          resizable={
-            controlledEventDetailSplitRatio === undefined ||
-            onEventDetailSplitRatioChange !== undefined
-          }
-          split={resolvedEventDetailMode === "split"}
-          timeline={timeline}
-        />
-      </div>
-      {visibleCommandFailures
-        .filter((failure) => failure.command === "answerInteraction")
-        .map((failure) => (
-          <ChatErrorNotice
-            key={failure.command}
-            error={failure.error}
-            operation={failure.command}
-            labels={labels}
-            onDismiss={() => dismissFailure(failure.command)}
-          />
-        ))}
-      {remoteAskUser.entries.length === 0 ? null : (
-        <div
-          role="region"
-          aria-label={String(labels.askUserLabel)}
-          style={{
-            flex: "0 1 auto",
-            minHeight: 0,
-            maxHeight: "40%",
-            overflowY: "auto",
-          }}
-        >
-          {remoteAskUser.entries.map((entry) => (
-            <div
-              key={entry.request.requestId}
-              style={{ padding: token.paddingXS }}
-            >
-              {entry.result === undefined ? (
-                <AskUserInteractionCard
-                  answerDisabled={false}
-                  labels={labels}
-                  onAnswer={remoteAskUser.answer}
-                  draft={entry.draft}
-                  onDraftChange={remoteAskUser.setDraft}
-                  onChatAboutThis={onChatAboutThis}
-                  request={entry.request}
-                />
-              ) : (
-                <AskUserInteractionResultView result={entry.result} />
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-      {snapshot.pendingInteraction === undefined ? null : (
-        <div style={{ padding: token.paddingXS }}>
-          <AskUserInteractionCard
-            key={JSON.stringify([
-              conversationId,
-              snapshot.pendingInteraction.requestId,
-              snapshot.pendingInteraction.revision,
-            ])}
-            answerDisabled={
-              !lifecycleOperable ||
-              snapshot.capabilities.answerInteraction !== true
-            }
-            labels={labels}
-            onAnswer={answerInteraction}
-            onChatAboutThis={onChatAboutThis}
-            request={snapshot.pendingInteraction}
-          />
-        </div>
-      )}
-      {visibleCommandFailures
-        .filter((failure) => failure.command !== "answerInteraction")
-        .map((failure) => (
-          <ChatErrorNotice
-            key={failure.command}
-            error={failure.error}
-            operation={failure.command}
-            labels={labels}
-            onDismiss={() => dismissFailure(failure.command)}
-          />
-        ))}
-      {cache.conversationId === conversationId &&
-      cache.unavailableAttachments > 0 ? (
-        <span role="status">{labels.cacheAttachmentUnavailable}</span>
-      ) : null}
-      <ChatComposer
-        sendShortcut={sendShortcut}
-        renderUploadError={(error) => (
-          <ChatErrorNotice
-            error={error}
-            operation="uploadAttachment"
-            labels={labels}
-          />
-        )}
-        onUploadError={(error) =>
-          client.recordDiagnostic({
-            ...error,
-            conversationId,
-            diagnostic: { ...error.diagnostic, operation: "uploadAttachment" },
-          })
-        }
-        attachmentUploader={
-          snapshot.capabilities.sendAttachments === true
-            ? attachmentUploader
-            : undefined
-        }
-        draft={composer.draft}
-        getDeadlineAt={getDeadlineAt}
-        key={viewResetKey}
-        disabled={
-          !lifecycleOperable ||
-          (!snapshot.capabilities.sendText &&
-            !(
-              snapshot.capabilities.sendAttachments === true &&
-              attachmentUploader !== undefined
-            ))
-        }
-        disabledReason={
-          lifecycleOperable &&
-          (snapshot.capabilities.sendText ||
-            (snapshot.capabilities.sendAttachments === true &&
-              attachmentUploader !== undefined))
-            ? undefined
-            : cache.conversationId === conversationId &&
-                cache.status === "syncing"
-              ? undefined
-              : snapshot.lifecycle?.status === "connecting" ||
-                  snapshot.lifecycle?.status === "joining"
-                ? undefined
-                : snapshot.lifecycle !== undefined && !lifecycleOperable
-                  ? lifecycleDisplayStatus === undefined
-                    ? undefined
-                    : labels.lifecycleStatus?.[lifecycleDisplayStatus]
-                  : labels.textSendingUnavailable
-        }
-        interruptAction={
-          snapshot.run?.status === "running"
-            ? {
-                disabled:
-                  !snapshot.capabilities.interrupt ||
-                  !lifecycleOperable ||
-                  !snapshot.run.canInterrupt,
-                onInterrupt: interrupt,
-                resetKey: snapshot.run.id,
-              }
-            : undefined
-        }
-        labels={labels}
-        onSend={sendText}
-        onDraftChange={composer.setDraft}
-        resetKey={viewResetKey}
-        textInputDisabled={!snapshot.capabilities.sendText}
-      />
-      <Modal
-        afterOpenChange={(open) => {
-          if (!open) restoreTriggerFocus();
+    <ConversationFailureContext.Provider value={failureActions}>
+      <section
+        className={className}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          minHeight: 0,
+          ...style,
         }}
-        closeIcon={
-          <span aria-label={labels.eventDetailClose} role="img">
-            ×
-          </span>
-        }
-        destroyOnClose
-        footer={null}
-        keyboard
-        onCancel={() => setModalOpen(false)}
-        open={eventDetailModalVisible}
-        title={labels.eventDetailTitle}
       >
-        {selectedEvent === undefined ? null : (
-          <ChatEventDetail
+        <ChatNotices
+          key={`notices:${viewResetKey}`}
+          showDiagnostics={presentation === "standard"}
+          conversationId={conversationId}
+          timing={noticeTiming}
+          labels={labels}
+          getDeadlineAt={getDeadlineAt}
+          onRequestAuthentication={onRequestAuthentication}
+        />
+        {presentation === "standard" ? (
+          <ChatRunStatus
+            key={`${viewResetKey}:${snapshot.run?.id ?? "no-run"}`}
+            canInterrupt={lifecycleOperable && snapshot.capabilities.interrupt}
             labels={labels}
-            formatTimestamp={formatTimestamp}
-            item={selectedEvent}
-            onRendererError={onRendererError}
-            renderers={renderers}
+            onInterrupt={interrupt}
+            run={snapshot.run}
+            showInterruptButton={false}
+            showError={false}
           />
+        ) : snapshot.run?.status === "running" ? (
+          <span role="status" style={{ padding: "4px 12px", fontSize: 12 }}>
+            {labels.sending}
+          </span>
+        ) : null}
+        {presentation === "standard" ? (
+          <div
+            style={{
+              alignItems: "center",
+              display: "flex",
+              gap: token.marginXS,
+              justifyContent: "flex-end",
+              padding: `${token.paddingXXS}px ${token.paddingSM}px`,
+            }}
+          >
+            <Typography.Text type="secondary">
+              {labels.eventDetailModeLabel}
+            </Typography.Text>
+            <Segmented
+              aria-label={labels.eventDetailModeLabel}
+              onChange={changeEventDetailMode}
+              options={eventDetailModeOptions}
+              size="small"
+              value={requestedEventDetailMode}
+            />
+          </div>
+        ) : null}
+        <div
+          data-chat-event-layout={resolvedEventDetailMode}
+          ref={layoutRef}
+          style={{ display: "flex", flex: 1, minHeight: 0, minWidth: 0 }}
+        >
+          <EventDetailSplitLayout
+            ariaLabel={
+              labels.eventDetailSplitHandleLabel ?? "Resize event detail panes"
+            }
+            detail={eventDetail}
+            onRatioChange={changeEventDetailSplitRatio}
+            ratio={resolvedEventDetailSplitRatio}
+            resizable={
+              controlledEventDetailSplitRatio === undefined ||
+              onEventDetailSplitRatioChange !== undefined
+            }
+            split={resolvedEventDetailMode === "split"}
+            timeline={timeline}
+          />
+        </div>
+        {visibleCommandFailures
+          .filter((failure) => failure.command === "answerInteraction")
+          .map((failure) => (
+            <ChatErrorNotice
+              key={failure.command}
+              error={failure.error}
+              operation={failure.command}
+              labels={labels}
+              onDismiss={() => dismissFailure(failure.command)}
+            />
+          ))}
+        {remoteAskUser.entries.length === 0 ? null : (
+          <div
+            role="region"
+            aria-label={String(labels.askUserLabel)}
+            style={{
+              flex: "0 1 auto",
+              minHeight: 0,
+              maxHeight: "40%",
+              overflowY: "auto",
+            }}
+          >
+            {remoteAskUser.entries.map((entry) => (
+              <div
+                key={entry.request.requestId}
+                style={{ padding: token.paddingXS }}
+              >
+                {entry.result === undefined ? (
+                  <AskUserInteractionCard
+                    answerDisabled={false}
+                    labels={labels}
+                    onAnswer={remoteAskUser.answer}
+                    draft={entry.draft}
+                    onDraftChange={remoteAskUser.setDraft}
+                    onChatAboutThis={onChatAboutThis}
+                    request={entry.request}
+                  />
+                ) : (
+                  <AskUserInteractionResultView result={entry.result} />
+                )}
+              </div>
+            ))}
+          </div>
         )}
-      </Modal>
-    </section>
+        {snapshot.pendingInteraction === undefined ? null : (
+          <div style={{ padding: token.paddingXS }}>
+            <AskUserInteractionCard
+              key={JSON.stringify([
+                conversationId,
+                snapshot.pendingInteraction.requestId,
+                snapshot.pendingInteraction.revision,
+              ])}
+              answerDisabled={
+                !lifecycleOperable ||
+                snapshot.capabilities.answerInteraction !== true
+              }
+              labels={labels}
+              onAnswer={answerInteraction}
+              onChatAboutThis={onChatAboutThis}
+              request={snapshot.pendingInteraction}
+            />
+          </div>
+        )}
+        {visibleCommandFailures
+          .filter((failure) => failure.command !== "answerInteraction")
+          .map((failure) => (
+            <ChatErrorNotice
+              key={failure.command}
+              error={failure.error}
+              operation={failure.command}
+              labels={labels}
+              onDismiss={() => dismissFailure(failure.command)}
+            />
+          ))}
+        {cache.conversationId === conversationId &&
+        cache.unavailableAttachments > 0 ? (
+          <span role="status">{labels.cacheAttachmentUnavailable}</span>
+        ) : null}
+        <ChatComposer
+          sendShortcut={sendShortcut}
+          renderUploadError={(error) => (
+            <ChatErrorNotice
+              error={error}
+              operation="uploadAttachment"
+              labels={labels}
+            />
+          )}
+          onUploadError={(error) =>
+            client.recordDiagnostic({
+              ...error,
+              conversationId,
+              diagnostic: {
+                ...error.diagnostic,
+                operation: "uploadAttachment",
+              },
+            })
+          }
+          attachmentUploader={
+            snapshot.capabilities.sendAttachments === true
+              ? attachmentUploader
+              : undefined
+          }
+          draft={composer.draft}
+          getDeadlineAt={getDeadlineAt}
+          key={viewResetKey}
+          disabled={
+            !lifecycleOperable ||
+            (!snapshot.capabilities.sendText &&
+              !(
+                snapshot.capabilities.sendAttachments === true &&
+                attachmentUploader !== undefined
+              ))
+          }
+          disabledReason={
+            lifecycleOperable &&
+            (snapshot.capabilities.sendText ||
+              (snapshot.capabilities.sendAttachments === true &&
+                attachmentUploader !== undefined))
+              ? undefined
+              : cache.conversationId === conversationId &&
+                  cache.status === "syncing"
+                ? undefined
+                : snapshot.lifecycle?.status === "connecting" ||
+                    snapshot.lifecycle?.status === "joining"
+                  ? undefined
+                  : snapshot.lifecycle !== undefined && !lifecycleOperable
+                    ? lifecycleDisplayStatus === undefined
+                      ? undefined
+                      : labels.lifecycleStatus?.[lifecycleDisplayStatus]
+                    : labels.textSendingUnavailable
+          }
+          interruptAction={
+            snapshot.run?.status === "running"
+              ? {
+                  disabled:
+                    !snapshot.capabilities.interrupt ||
+                    !lifecycleOperable ||
+                    !snapshot.run.canInterrupt,
+                  onInterrupt: interrupt,
+                  resetKey: snapshot.run.id,
+                }
+              : undefined
+          }
+          labels={labels}
+          onSend={sendText}
+          onDraftChange={composer.setDraft}
+          resetKey={viewResetKey}
+          textInputDisabled={!snapshot.capabilities.sendText}
+        />
+        <Modal
+          afterOpenChange={(open) => {
+            if (!open) restoreTriggerFocus();
+          }}
+          closeIcon={
+            <span aria-label={labels.eventDetailClose} role="img">
+              ×
+            </span>
+          }
+          destroyOnClose
+          footer={null}
+          keyboard
+          onCancel={() => setModalOpen(false)}
+          open={eventDetailModalVisible}
+          title={labels.eventDetailTitle}
+        >
+          {selectedEvent === undefined ? null : (
+            <ChatEventDetail
+              labels={labels}
+              formatTimestamp={formatTimestamp}
+              item={selectedEvent}
+              onRendererError={onRendererError}
+              renderers={renderers}
+            />
+          )}
+        </Modal>
+        <Modal
+          open={pendingRestore !== undefined}
+          title={labels.overwriteFailureDraftTitle}
+          okText={labels.overwriteFailureDraftConfirm}
+          cancelText={labels.deleteConversationCancel}
+          onCancel={() => setPendingRestore(undefined)}
+          onOk={() => {
+            if (pendingRestore !== undefined) restoreDraft(pendingRestore);
+            setPendingRestore(undefined);
+          }}
+          focusTriggerAfterClose={false}
+          afterClose={() => {
+            if (restoredScope.current === liveRestoreScope.current) {
+              const scope = restoredScope.current;
+              setComposerFocus((value) => ({
+                scope,
+                revision: (value?.revision ?? 0) + 1,
+              }));
+            }
+            restoredScope.current = undefined;
+          }}
+        >
+          {labels.overwriteFailureDraftDescription}
+        </Modal>
+      </section>
+    </ConversationFailureContext.Provider>
   );
 };
