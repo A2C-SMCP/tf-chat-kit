@@ -430,6 +430,13 @@ export function registerManagerUiTests() {
     await expect(
       primary.getByText("Direct browser reply", { exact: true }),
     ).toHaveCount(3);
+    // Ant Design can retain a hidden, named loading icon after settling.
+    // Accept only that decorative prefix while matching the send command,
+    // then verify the previous request cleared its draft before fault injection.
+    const sendAction = page.getByRole("button", {
+      name: /^(?:loading\s+)?发送$/,
+    });
+    await expect(sendAction).toBeDisabled();
     await page.screenshot({
       path: test.info().outputPath("issue-141-identity.png"),
     });
@@ -443,7 +450,7 @@ export function registerManagerUiTests() {
     await page
       .locator("textarea:not([aria-hidden])")
       .fill(`${content}-网络失败`);
-    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await sendAction.click();
     await expect(
       outgoing.locator('[data-send-status="unknown"]'),
     ).toContainText("发送结果未确认");
