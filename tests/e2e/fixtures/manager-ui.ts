@@ -1,5 +1,13 @@
 import { test, expect, type Page } from "@playwright/test";
 
+const readyDialog = async (page: Page, name?: string) => {
+  const dialog = page.getByRole("dialog", name ? { name } : {});
+  await expect(dialog).toBeVisible();
+  // WebKit can drop a click while Ant Design's zoom transition is entering.
+  await expect(dialog).not.toHaveClass(/(?:^|\s)ant-zoom-enter(?:\s|$)/);
+  return dialog;
+};
+
 const mount = async (
   page: Page,
   options: {
@@ -246,16 +254,19 @@ export function registerManagerUiTests() {
     await expect(input).toBeFocused();
     await input.fill("保留当前草稿");
     await card.getByRole("button", { name: "回填后编辑" }).click();
-    await expect(
-      page.getByRole("dialog", { name: "替换当前草稿？" }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "取消", exact: true }).click();
+    let confirmation = await readyDialog(page, "替换当前草稿？");
+    await confirmation
+      .getByRole("button", { name: "取消", exact: true })
+      .click();
     await expect(input).toHaveValue("保留当前草稿");
     await expect(
       page.getByRole("dialog", { name: "替换当前草稿？" }),
     ).not.toBeVisible();
     await card.getByRole("button", { name: "回填后编辑" }).click();
-    await page.getByRole("button", { name: "替换草稿", exact: true }).click();
+    confirmation = await readyDialog(page, "替换当前草稿？");
+    await confirmation
+      .getByRole("button", { name: "替换草稿", exact: true })
+      .click();
     await expect(
       page.getByRole("dialog", { name: "替换当前草稿？" }),
     ).not.toBeVisible();
@@ -515,8 +526,11 @@ export function registerManagerUiTests() {
     await page.getByRole("button", { name: "切换平台", exact: true }).click();
     await page.getByRole("button", { name: /备选平台/ }).click();
     await page.getByRole("button", { name: "开始对话" }).click();
-    await expect(page.getByRole("dialog")).toBeVisible();
-    await page.getByRole("button", { name: "取消", exact: true }).click();
+    await (
+      await readyDialog(page)
+    )
+      .getByRole("button", { name: "取消", exact: true })
+      .click();
     await expect(page.getByRole("dialog")).toBeHidden();
     await page.getByRole("button", { name: "返回账号与设置" }).click();
     await expect(workspace).toContainText("Word fixture");
@@ -540,8 +554,7 @@ export function registerManagerUiTests() {
     await alternativePlatform.click();
     await expect(alternativePlatform).toHaveAttribute("aria-pressed", "true");
     await page.getByRole("button", { name: "开始对话" }).click();
-    const confirmation = page.getByRole("dialog");
-    await expect(confirmation).toBeVisible();
+    const confirmation = await readyDialog(page);
     await confirmation
       .getByRole("button", { name: "确认", exact: true })
       .click();
