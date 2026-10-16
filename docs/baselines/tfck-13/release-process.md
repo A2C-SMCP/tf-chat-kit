@@ -111,6 +111,12 @@ Registry consumer 验证按 release manifest 中每个包的确切版本安装 `
 
 ## 失败、重入与回滚
 
+### 取消稳定版本后的 next 续接
+
+用户明确取消稳定发布、继续同一 next 序列时，可通过单独 PR 还原最后一次稳定版本生成提交的元数据，并恢复其退出前的 `next` 状态。已有 npm 版本和不可变标签不得更改。恢复不能夹带公共包源码变更，也不能修改退出前的版本、changelog、计数基线或已消费 changeset；主干上后来新增的待发布 changeset 必须原样保留。
+
+`check:changesets` 会从 Git 历史找到最近一次删除 prerelease 状态的提交，在隔离 worktree 中重放固定版本的 Changesets，验证该历史提交确实是完整生成输出，再逐字节核对其逆向恢复。只有证明成立，才以原 prerelease 输入作为比较基线，继续执行原有的覆盖和版本输出检查。恢复后另建普通 Changesets 版本 PR 生成下一次 next 版本，不能手改版本号或在恢复 PR 中同时消费新条目。
+
 发布脚本先对整个 fixed group 做只读预检，再紧邻每个 `npm publish` 重新读取该包的 Registry；以最新
 响应和 tarball integrity 判定同版本是否可安全跳过，并只在门面最新响应仍为 404 时注入首发 token。
 脚本在鉴权和制品预检前即初始化进度文件；预检、写入、对账及 workflow 后续 consumer/GitHub Release
