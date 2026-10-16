@@ -1,5 +1,11 @@
 # @turingfocus/chat-protocol
 
+## 0.10.1
+
+### Patch Changes
+
+- 4ff5ca5: Publish the complete stable core group above the interrupted 0.10.0 release, including compact chat controls, five-second recovery notices, and realtime and historical conversation failure cards. Ensure ordinary installs use the Protocol version containing the new failure API.
+
 ## 0.10.0
 
 ### Minor Changes
