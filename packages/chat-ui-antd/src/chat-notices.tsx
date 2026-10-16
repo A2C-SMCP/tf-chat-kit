@@ -1,5 +1,6 @@
 import { Alert, Button } from "antd";
 import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   useChatClient,
   useChatSelector,
@@ -27,9 +28,11 @@ const duration = (value: number | undefined, fallback: number) =>
 function RecoveryNotice({
   text,
   durationMs,
+  inline = false,
 }: {
-  text: string;
+  text: ReactNode;
   durationMs: number;
+  inline?: boolean;
 }) {
   const [visible, setVisible] = useState(true);
   const [hover, setHover] = useState(false);
@@ -56,7 +59,7 @@ function RecoveryNotice({
         if (!event.currentTarget.contains(event.relatedTarget)) setFocus(false);
       }}
     >
-      <Alert type="success" message={text} />
+      {inline ? text : <Alert type="success" message={text} />}
     </div>
   );
 }
@@ -205,7 +208,16 @@ export function ChatNotices({
       <div
         style={{ display: "flex", alignItems: "center", gap: 8, padding: 4 }}
       >
-        <span role="status">{summary}</span>
+        {!initial && !cacheFailed && status === "degraded" ? (
+          <RecoveryNotice
+            key={`${conversationId}:${lifecycle?.subscriptionId}:${lifecycle?.generation}`}
+            inline
+            text={summary}
+            durationMs={duration(timing?.bestEffortDurationMs, 5000)}
+          />
+        ) : (
+          <span role="status">{summary}</span>
+        )}
         {showDiagnostics ? (
           <ChatDiagnostics conversationId={conversationId} labels={labels} />
         ) : null}
