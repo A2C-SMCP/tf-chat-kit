@@ -4,7 +4,7 @@
 
 ### Patch Changes
 
-- Updated dependencies [e816e30]
+- Updated dependencies [1e43425]
   - @turingfocus/chat-runtime@0.10.0-next.5
 
 ## 0.10.0-next.4

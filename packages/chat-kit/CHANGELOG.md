@@ -4,12 +4,12 @@
 
 ### Minor Changes
 
-- e816e30: Display realtime and persisted conversation failures with safe business explanations and authoritative original text. Allow users to restore text into the composer with overwrite confirmation, without resending or treating conversation errors as current-run outcomes. Legacy transports without shared error identities retain separate realtime observations and history records.
+- 1e43425: Display realtime and persisted conversation failures with safe business explanations and authoritative original text. Allow users to restore text into the composer with overwrite confirmation, without resending or treating conversation errors as current-run outcomes. Legacy transports without shared error identities retain separate realtime observations and history records.
 
 ### Patch Changes
 
-- Updated dependencies [e816e30]
-- Updated dependencies [344ee0e]
+- Updated dependencies [1e43425]
+- Updated dependencies [55b4248]
   - @turingfocus/chat-protocol@0.10.0-next.5
   - @turingfocus/chat-gateway-tfrobot@0.10.0-next.5
   - @turingfocus/chat-runtime@0.10.0-next.5

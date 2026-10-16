@@ -4,12 +4,12 @@
 
 ### Minor Changes
 
-- e816e30: Display realtime and persisted conversation failures with safe business explanations and authoritative original text. Allow users to restore text into the composer with overwrite confirmation, without resending or treating conversation errors as current-run outcomes. Legacy transports without shared error identities retain separate realtime observations and history records.
+- 1e43425: Display realtime and persisted conversation failures with safe business explanations and authoritative original text. Allow users to restore text into the composer with overwrite confirmation, without resending or treating conversation errors as current-run outcomes. Legacy transports without shared error identities retain separate realtime observations and history records.
 
 ### Patch Changes
 
-- 344ee0e: Hide the best-effort connection recovery status after five seconds using the existing recovery notice timing and accessibility behavior.
-- Updated dependencies [e816e30]
+- 55b4248: Hide the best-effort connection recovery status after five seconds using the existing recovery notice timing and accessibility behavior.
+- Updated dependencies [1e43425]
   - @turingfocus/chat-protocol@0.10.0-next.5
   - @turingfocus/chat-react@0.10.0-next.5
 
