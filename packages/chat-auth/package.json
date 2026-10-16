@@ -1,6 +1,6 @@
 {
   "name": "@turingfocus/chat-auth",
-  "version": "0.12.0",
+  "version": "0.12.0-next.1",
   "description": "Optional host-agnostic authentication contracts and adapters for Chat Kit",
   "license": "MIT",
   "repository": {

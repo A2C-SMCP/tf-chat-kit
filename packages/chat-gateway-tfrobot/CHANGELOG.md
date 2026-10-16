@@ -1,24 +1,5 @@
 # @turingfocus/chat-gateway-tfrobot
 
-## 0.10.0
-
-### Minor Changes
-
-- 473865d: Correlate user messages by the Server's elementId across POST receipts, realtime,
-  history and cache, independently of author display and database persistence.
-  Expose instance-local outgoing send observations with accepted, failed and unknown
-  outcomes and render them outside the formal timeline. Preserve legacy Server
-  compatibility and never replay sends from cache. Full POST promotion metadata and
-  correlated business terminal states still require the Server contracts tracked in #141.
-- 04ffac1: Expose explicit auth subentries through chat-kit so hosts can install one facade while chat-auth retains its independent version. Add explicit JSON conversation creation and Server platform discovery, with validated platform selection and lifecycle isolation in Manager integrations.
-
-### Patch Changes
-
-- ba54e24: Reconcile mutable author names and avatars independently from current-server user-message identity. Keep historical author updates across cache reads, pagination, concurrent loads and reconnects without overwriting newer message content. Add optional message provenance and author-only recovery updates. Preserve unassociated provisional messages and show them in an expandable review section in the default UI; never alias different user IDs or claim complete current-server recovery.
-- Updated dependencies [ba54e24]
-- Updated dependencies [473865d]
-  - @turingfocus/chat-protocol@0.10.0
-
 ## 0.10.0-next.4
 
 ### Patch Changes

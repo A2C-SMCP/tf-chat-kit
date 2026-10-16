@@ -1,16 +1,5 @@
 # @turingfocus/chat-auth
 
-## 0.12.0
-
-### Minor Changes
-
-- b4741c9: Add an optional complete Manager chat interface with Chinese/English copy, compact conversation navigation, explicit identity/robot/platform selection and instance-scoped lifecycle handling.
-- f7c1fa2: Clarify identity, organization, robot and platform context in the default Manager UI. Add consistent switch controls and preserve active chat and drafts while browsing or cancelling robot/platform candidates. Keep host-fixed platforms visible and distinguish account display names from organization IDs.
-
-  Preserve the optional Manager organizationName field independently of account displayName, with safe ID fallbacks for missing organization names.
-
-  Restore focus to the actual history/help navigation trigger in WebKit as well as Chromium.
-
 ## 0.12.0-next.1
 
 ### Minor Changes
