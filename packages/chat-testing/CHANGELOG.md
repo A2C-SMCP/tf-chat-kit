@@ -1,5 +1,22 @@
 # @turingfocus/chat-testing
 
+## 0.10.0
+
+### Minor Changes
+
+- 473865d: Correlate user messages by the Server's elementId across POST receipts, realtime,
+  history and cache, independently of author display and database persistence.
+  Expose instance-local outgoing send observations with accepted, failed and unknown
+  outcomes and render them outside the formal timeline. Preserve legacy Server
+  compatibility and never replay sends from cache. Full POST promotion metadata and
+  correlated business terminal states still require the Server contracts tracked in #141.
+
+### Patch Changes
+
+- Updated dependencies [ba54e24]
+- Updated dependencies [473865d]
+  - @turingfocus/chat-protocol@0.10.0
+
 ## 0.10.0-next.4
 
 ### Patch Changes

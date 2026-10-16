@@ -1,5 +1,42 @@
 # @turingfocus/chat-kit
 
+## 0.10.0
+
+### Minor Changes
+
+- 61976ab: Compact default chat controls into accessible icon buttons and a dropdown menu. Show the assistant and platform badge on one compact row, with the conversation title and 28px actions on the next; long names expose their complete text in tooltips. Keep assistant and platform summaries read-only and move their switch actions into the menu. The compact organization header is read-only, with organization switching available through account settings. Hosts can append actions through the optional compact workspace moreActions prop. Conversation creation still derives its required title from the first message without asking the user to enter a name.
+- b4741c9: Add an optional complete Manager chat interface with Chinese/English copy, compact conversation navigation, explicit identity/robot/platform selection and instance-scoped lifecycle handling.
+- 473865d: Correlate user messages by the Server's elementId across POST receipts, realtime,
+  history and cache, independently of author display and database persistence.
+  Expose instance-local outgoing send observations with accepted, failed and unknown
+  outcomes and render them outside the formal timeline. Preserve legacy Server
+  compatibility and never replay sends from cache. Full POST promotion metadata and
+  correlated business terminal states still require the Server contracts tracked in #141.
+- 04ffac1: Expose explicit auth subentries through chat-kit so hosts can install one facade while chat-auth retains its independent version. Add explicit JSON conversation creation and Server platform discovery, with validated platform selection and lifecycle isolation in Manager integrations.
+
+### Patch Changes
+
+- 52a7803: Resolve packed workspace dependencies from the target package version so the auth facade installs the independently released chat-auth API it requires. Verify actual registry dependency resolution without overrides in Manager consumers.
+- f7c1fa2: Clarify identity, organization, robot and platform context in the default Manager UI. Add consistent switch controls and preserve active chat and drafts while browsing or cancelling robot/platform candidates. Keep host-fixed platforms visible and distinguish account display names from organization IDs.
+
+  Preserve the optional Manager organizationName field independently of account displayName, with safe ID fallbacks for missing organization names.
+
+  Restore focus to the actual history/help navigation trigger in WebKit as well as Chromium.
+
+- Updated dependencies [61976ab]
+- Updated dependencies [ba54e24]
+- Updated dependencies [b4741c9]
+- Updated dependencies [f7c1fa2]
+- Updated dependencies [16690cf]
+- Updated dependencies [473865d]
+- Updated dependencies [04ffac1]
+  - @turingfocus/chat-ui-antd@0.10.0
+  - @turingfocus/chat-gateway-tfrobot@0.10.0
+  - @turingfocus/chat-protocol@0.10.0
+  - @turingfocus/chat-runtime@0.10.0
+  - @turingfocus/chat-auth@0.12.0
+  - @turingfocus/chat-react@0.10.0
+
 ## 0.10.0-next.4
 
 ### Minor Changes
