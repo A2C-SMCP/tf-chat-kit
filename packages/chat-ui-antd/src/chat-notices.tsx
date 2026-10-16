@@ -6,6 +6,7 @@ import {
   useChatSelector,
   useConversationCache,
 } from "@turingfocus/chat-react";
+import { getConversationFailure } from "@turingfocus/chat-protocol";
 import type { ChatError } from "@turingfocus/chat-protocol";
 import { ChatDiagnostics, ChatErrorNotice } from "./chat-diagnostics.js";
 import { resolveChatUiLabels } from "./labels.js";
@@ -155,7 +156,19 @@ export function ChatNotices({
     }
   }, [disconnected, terminal, status, lifecycle]);
   const active = (snapshot?.activeErrors ?? [])
-    .filter((item) => item.scope.kind !== "command")
+    .filter(
+      (item) =>
+        item.scope.kind !== "command" &&
+        !(
+          item.source === "domain" &&
+          item.timelineItemId !== undefined &&
+          snapshot?.timeline.some(
+            (entry) =>
+              entry.id === item.timelineItemId &&
+              getConversationFailure(entry) !== undefined,
+          )
+        ),
+    )
     .slice()
     .reverse()
     .sort(

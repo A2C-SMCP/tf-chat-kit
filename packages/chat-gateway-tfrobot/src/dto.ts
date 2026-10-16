@@ -133,7 +133,17 @@ export const eventDtoSchema = z.looseObject({
   transitionSequence: z.number().int().nonnegative().optional(),
 });
 
+export const chatErrorRecordDtoSchema = z.looseObject({
+  id: identifierSchema,
+  conversationId: identifierSchema,
+  error: z.string(),
+  createTimestamp: z.number().finite().nonnegative(),
+  code: z.string().nullable().optional(),
+  message: messageDtoSchema.nullable().optional(),
+});
+
 export const historyDtoSchema = z.looseObject({
+  errors: z.array(chatErrorRecordDtoSchema).optional(),
   cursor: z.string().nullable().optional(),
   events: z.array(eventDtoSchema).nullable(),
   messages: z.array(messageDtoSchema).nullable(),
@@ -173,6 +183,7 @@ export const interruptDtoSchema = z
   });
 
 export const chatErrorEventDtoSchema = z.looseObject({
+  code: z.string().nullable().optional(),
   conversationId: identifierSchema,
   createTimestamp: z.number().finite().nonnegative().optional(),
   error: z.unknown(),
@@ -194,3 +205,5 @@ export type EventDto = z.infer<typeof eventDtoSchema>;
 export type HistoryDto = z.infer<typeof historyDtoSchema>;
 export type MessageDto = z.infer<typeof messageDtoSchema>;
 export type StatusDto = z.infer<typeof statusDtoSchema>;
+
+export type ChatErrorRecordDto = z.infer<typeof chatErrorRecordDtoSchema>;

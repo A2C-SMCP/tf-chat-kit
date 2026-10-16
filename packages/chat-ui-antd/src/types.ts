@@ -83,6 +83,19 @@ export interface ChatResourceLabels {
 }
 
 export interface ChatUiLabels {
+  readonly conversationFailureTitle?: ReactNode;
+  readonly formatConversationFailureTitle?:
+    ((code: string | undefined) => ReactNode) | undefined;
+  readonly failureHistory?: ReactNode;
+  readonly failureUploadsPending?: ReactNode;
+  readonly failureRealtime?: ReactNode;
+  readonly failureOriginalMessage?: ReactNode;
+  readonly restoreFailureDraft?: ReactNode;
+  readonly overwriteFailureDraftTitle?: ReactNode;
+  readonly overwriteFailureDraftDescription?: ReactNode;
+  readonly overwriteFailureDraftConfirm?: ReactNode;
+  readonly expandFailure?: ReactNode;
+
   readonly diagnostics?: string;
   readonly copyDiagnostic?: string;
   readonly diagnosticCopied?: string;

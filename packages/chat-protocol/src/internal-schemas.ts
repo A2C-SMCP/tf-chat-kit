@@ -212,6 +212,33 @@ const agentEventStatusParser = z.enum([
 ]);
 
 const agentEventTransitionParser: z.ZodType<AgentEventTransition> = z.object({
+  failure: z
+    .object({
+      message: z
+        .string()
+        .max(65_536)
+        .transform((value) => sanitizeDiagnosticText(value).slice(0, 65_536)),
+      businessCode: z
+        .string()
+        .min(1)
+        .max(256)
+        .transform((value) => sanitizeDiagnosticText(value).slice(0, 256))
+        .optional(),
+      source: z.enum(["realtime", "history"]),
+      recordId: idParser.optional(),
+      originalMessage: z
+        .object({
+          id: idParser.optional(),
+          text: z
+            .string()
+            .min(1)
+            .max(262_144)
+            .transform(sanitizeDiagnosticText)
+            .pipe(z.string().max(262_144)),
+        })
+        .optional(),
+    })
+    .optional(),
   content: rawParser.optional(),
   id: idParser,
   status: agentEventStatusParser,
@@ -655,6 +682,7 @@ const chatErrorScopeParser = z.discriminatedUnion("kind", [
 ]);
 
 const chatErrorOccurrenceParser = z.object({
+  timelineItemId: idParser.optional(),
   id: z.string().min(1),
   error: chatErrorParser,
   source: z.enum([
@@ -914,6 +942,7 @@ export const chatUpdateParser: z.ZodType<ChatUpdate> = z
     }),
     z.object({
       kind: z.literal("error.reported"),
+      timelineItemId: idParser.optional(),
       conversationId: idParser.optional(),
       error: chatErrorParser,
       errorId: z.string().min(1).optional(),

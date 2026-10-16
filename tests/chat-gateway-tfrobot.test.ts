@@ -4582,6 +4582,21 @@ describe("TFRobotChatGateway Socket boundary", () => {
       kind: "run.replace",
       run: { id: "run-live", status: "running" },
     });
+    expect(
+      updates.filter((update) => update.kind === "timeline.upsert").at(-1),
+    ).toMatchObject({
+      item: {
+        eventType: "conversation.failure",
+        transitions: [
+          {
+            failure: {
+              source: "realtime",
+              message: "Run failed token=[REDACTED]",
+            },
+          },
+        ],
+      },
+    });
     expect(errors.at(-1)).toMatchObject({ code: "server" });
     expect(JSON.stringify(errors)).not.toContain("secret-value");
 
@@ -4594,7 +4609,7 @@ describe("TFRobotChatGateway Socket boundary", () => {
           update.kind === "event.transition.upsert" ||
           update.kind === "run.replace",
       ),
-    ).toHaveLength(4);
+    ).toHaveLength(5);
     expect(socket.connected).toBe(true);
     await gateway.dispose({ deadlineAt: deadline() });
     expect(socket.connected).toBe(false);
@@ -4704,7 +4719,7 @@ describe("TFRobotChatGateway Socket boundary", () => {
             update.kind === "timeline.upsert" ||
             update.kind === "event.transition.upsert",
         ),
-      ).toHaveLength(3);
+      ).toHaveLength(4);
       expect(JSON.stringify(updates)).toContain("[REDACTED]");
       expect(JSON.stringify({ diagnostics, errors, updates })).not.toContain(
         secret,

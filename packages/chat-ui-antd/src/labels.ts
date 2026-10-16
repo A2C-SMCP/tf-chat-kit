@@ -4,6 +4,13 @@ import type {
   ChatUiLabels,
 } from "./types.js";
 
+const defaultConversationFailureTitles = new Map<string, string>([
+  ["robot.acquisition.config_absent", "Robot configuration is missing"],
+  ["robot.acquisition.build_failed", "Robot could not be built"],
+  ["robot.acquisition.dependency_permanent", "Robot dependency is unavailable"],
+  ["robot.acquisition.id_mismatch", "Robot identity mismatch"],
+]);
+
 export const defaultChatResourceLabels: ChatResourceLabels = Object.freeze({
   screenshot: "Browser screenshot",
   generatedFile: "Generated file",
@@ -27,6 +34,21 @@ export const defaultChatResourceLabels: ChatResourceLabels = Object.freeze({
 });
 
 export const defaultChatUiLabels: ChatUiLabels = Object.freeze({
+  conversationFailureTitle: "This response failed",
+  formatConversationFailureTitle: (code: string | undefined) =>
+    defaultConversationFailureTitles.get(code ?? ""),
+  failureHistory: "Saved error",
+  failureUploadsPending:
+    "Complete or remove pending attachments before restoring the original message.",
+  failureRealtime: "Realtime observation; persistence unconfirmed",
+  failureOriginalMessage: "Original message",
+  restoreFailureDraft: "Edit original message",
+  overwriteFailureDraftTitle: "Replace the current draft?",
+  overwriteFailureDraftDescription:
+    "This replaces the draft text, references and attachments. Review and send it yourself.",
+  overwriteFailureDraftConfirm: "Replace draft",
+  expandFailure: "Show more",
+
   cacheSyncing: "Showing cached conversation. Syncing latest updates…",
   cacheStale: "Showing older cached content. Syncing latest updates…",
   cacheSyncFailed: "Could not sync. Cached content may be out of date.",

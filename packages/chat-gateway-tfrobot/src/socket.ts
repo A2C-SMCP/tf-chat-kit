@@ -35,6 +35,7 @@ import {
 } from "./dto.js";
 import {
   mapEventUpdate,
+  mapConversationFailure,
   mapMessageUpdate,
   mapRun,
   mapUnknownSocketEvent,
@@ -503,6 +504,18 @@ const recoveryIdentitiesOfSnapshot = (
       : [getTimelineItemKey(item)],
   );
 
+// Persisted local observations must remain distinct across Gateway recreation,
+// browser reloads and separate realms. This is an identity, not a credential.
+const createFailureObservationNamespace = (): string => {
+  const random = globalThis.crypto;
+  if (typeof random?.randomUUID === "function") return random.randomUUID();
+  if (typeof random?.getRandomValues === "function")
+    return Array.from(random.getRandomValues(new Uint32Array(4)), (value) =>
+      value.toString(16).padStart(8, "0"),
+    ).join("");
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+};
+
 export class TFRobotSocketClient {
   #disposed = false;
   #establishing: ActiveSubscription | undefined;
@@ -527,6 +540,7 @@ export class TFRobotSocketClient {
   readonly #subscriptions = new Set<ActiveSubscription>();
   readonly #transports = new TFRobotSocketTransports();
   #subscriptionGeneration = 0;
+  readonly #failureObservationNamespace = createFailureObservationNamespace();
 
   constructor(
     options: TFRobotGatewayOptions,
@@ -860,6 +874,7 @@ export class TFRobotSocketClient {
     const report = (
       error: ChatError,
       source: ChatErrorSource = "protocol",
+      timelineItemId?: string,
     ): void => {
       if (!active.active) return;
       if (replaceableErrorSources.has(source)) resolveError(source);
@@ -890,6 +905,7 @@ export class TFRobotSocketClient {
           conversationId: errorConversationId(),
           error: occurrenceError,
           errorId,
+          ...(timelineItemId === undefined ? {} : { timelineItemId }),
           source,
           scope:
             source === "domain"
@@ -1640,6 +1656,16 @@ export class TFRobotSocketClient {
         ) {
           return;
         }
+        const failure = mapConversationFailure(
+          parsed.data,
+          `conversation.failure:realtime:${this.#failureObservationNamespace}:${subscriptionId}:${errorSequence + 1}`,
+          this.#now(),
+        );
+        next({
+          kind: "timeline.upsert",
+          conversationId: targetConversationId,
+          item: failure,
+        });
         report(
           this.#error(
             "server",
@@ -1652,6 +1678,7 @@ export class TFRobotSocketClient {
             credentialValues,
           ),
           "domain",
+          failure.id,
         );
       }, payload);
     });

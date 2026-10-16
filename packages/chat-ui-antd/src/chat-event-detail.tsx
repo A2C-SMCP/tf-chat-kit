@@ -1,3 +1,4 @@
+import { ConversationFailureLabelsProvider } from "./conversation-failure-card.js";
 import { ResourceLabelsProvider } from "./resource-labels.js";
 import { Empty } from "antd";
 import { useMemo, type CSSProperties } from "react";
@@ -48,18 +49,20 @@ export const ChatEventDetail = ({
     [renderers],
   );
   return (
-    <ResourceLabelsProvider labels={labels}>
-      <div className={className} style={style}>
-        <ChatTimelineItem
-          displayMode="detail"
-          formatTimestamp={formatTimestamp}
-          item={item}
-          onRendererError={onRendererError}
-          registry={registry}
-          selected
-        />
-      </div>
-    </ResourceLabelsProvider>
+    <ConversationFailureLabelsProvider labels={labels}>
+      <ResourceLabelsProvider labels={labels}>
+        <div className={className} style={style}>
+          <ChatTimelineItem
+            displayMode="detail"
+            formatTimestamp={formatTimestamp}
+            item={item}
+            onRendererError={onRendererError}
+            registry={registry}
+            selected
+          />
+        </div>
+      </ResourceLabelsProvider>
+    </ConversationFailureLabelsProvider>
   );
 };
 

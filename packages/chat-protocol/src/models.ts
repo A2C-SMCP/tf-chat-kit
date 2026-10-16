@@ -148,7 +148,25 @@ export interface Message {
 export type AgentEventStatus =
   "aborted" | "failed" | "running" | "success" | "timeout" | "unknown";
 
+/** User-facing conversation failure facts, separate from diagnostic payloads.
+ * An observation is not proof of persistence or of the current run's outcome.
+ */
+export interface ConversationFailure {
+  readonly message: string;
+  readonly businessCode?: string | undefined;
+  readonly source: "realtime" | "history";
+  readonly recordId?: string | undefined;
+  /** Only authoritative, text-only input; never inferred from timeline proximity. */
+  readonly originalMessage?:
+    | {
+        readonly id?: string | undefined;
+        readonly text: string;
+      }
+    | undefined;
+}
+
 export interface AgentEventTransition {
+  readonly failure?: ConversationFailure | undefined;
   readonly content?: ReadonlyJsonValue | undefined;
   /** Gateway-normalized stable ID; duplicate delivery must reuse the same ID. */
   readonly id: string;
@@ -403,6 +421,8 @@ export type ChatErrorScope =
 
 /** One independently resolvable error occurrence. */
 export interface ChatErrorOccurrence {
+  /** Corresponding failure card; diagnostics retain this occurrence. */
+  readonly timelineItemId?: TimelineItemId | undefined;
   readonly id: string;
   readonly error: ChatError;
   readonly source: ChatErrorSource;
@@ -505,6 +525,7 @@ export type ChatUpdate =
     }
   | {
       readonly kind: "error.reported";
+      readonly timelineItemId?: TimelineItemId | undefined;
       readonly conversationId?: ConversationId | undefined;
       readonly error: ChatError;
       readonly errorId?: string | undefined;
@@ -578,3 +599,13 @@ export const hasCompatibleAgentEventMetadata = (
   (update.event.createdAt === undefined ||
     event.createdAt === update.event.createdAt) &&
   event.sequence === update.event.sequence;
+
+/** Reads only the standard generic failure event, never raw transport fields. */
+export const getConversationFailure = (
+  item: TimelineItem,
+): ConversationFailure | undefined =>
+  item.kind === "agent-event" &&
+  item.eventCategory === "generic" &&
+  item.eventType === "conversation.failure"
+    ? item.transitions.at(-1)?.failure
+    : undefined;

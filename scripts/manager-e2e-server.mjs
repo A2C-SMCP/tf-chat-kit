@@ -28,6 +28,7 @@ let switchAccountStatus = 200;
 let authorMismatch = false;
 let serverMessageIds = false;
 let holdMessageEcho = false;
+let conversationFailures = false;
 /** @type {Array<() => void>} */
 const heldMessageEchoes = [];
 /** @type {Map<number, import("../packages/chat-gateway-tfrobot/src/dto.js").MessageDto[]>} */
@@ -90,8 +91,21 @@ const server = createListener((req, res) => {
         authorMismatch = input.authorMismatch;
       if (input.serverMessageIds !== undefined)
         serverMessageIds = input.serverMessageIds;
+      if (input.conversationFailures !== undefined)
+        conversationFailures = input.conversationFailures;
       if (input.holdMessageEcho !== undefined)
         holdMessageEcho = input.holdMessageEcho;
+      reply({});
+      return;
+    }
+    if (url.pathname === "/__test/conversation-failure") {
+      for (const io of sockets)
+        io.of("/chat").to("42").emit("chat_error", {
+          conversationId: 42,
+          error: "实时运行失败：请拆分问题。",
+          createTimestamp: Date.now(),
+          code: "future.code",
+        });
       reply({});
       return;
     }
@@ -128,6 +142,7 @@ const server = createListener((req, res) => {
       authorMismatch = false;
       serverMessageIds = false;
       holdMessageEcho = false;
+      conversationFailures = false;
       heldMessageEchoes.length = 0;
       platforms = [{ platformId: 17, name: "Word fixture" }];
       activeAccount = account;
@@ -459,6 +474,27 @@ const server = createListener((req, res) => {
                 : url.searchParams.has("cursor")
                   ? []
                   : (messageHistory.get(conversationId) ?? []),
+            errors:
+              conversationFailures && conversationId === 42
+                ? [
+                    {
+                      id: "saved-token-error",
+                      conversationId: 42,
+                      error:
+                        "当前 Chain 的 Token 使用量 139132 超过最大限制 128000。请拆分问题。",
+                      code: null,
+                      createTimestamp: Date.now(),
+                      message: {
+                        msgId: "failed-user-input",
+                        conversationId: 42,
+                        role: "user",
+                        msgType: "text",
+                        content: "我选中的文字加粗",
+                        createTimestamp: Date.now() - 100,
+                      },
+                    },
+                  ]
+                : [],
             events: [],
             cursor:
               messageHistory.has(conversationId) &&

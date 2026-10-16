@@ -1,7 +1,28 @@
 import type { ChatUiLabelOverrides } from "./types.js";
 
+const zhConversationFailureTitles = new Map<string, string>([
+  ["robot.acquisition.config_absent", "机器人配置缺失"],
+  ["robot.acquisition.build_failed", "机器人构建失败"],
+  ["robot.acquisition.dependency_permanent", "机器人依赖不可用"],
+  ["robot.acquisition.id_mismatch", "机器人 ID 不匹配"],
+]);
+
 /** Copy for the opt-in composed interface; legacy defaults stay unchanged. */
 export const compactChatZhCN: ChatUiLabelOverrides = {
+  conversationFailureTitle: "本轮生成失败",
+  formatConversationFailureTitle: (code: string | undefined) =>
+    zhConversationFailureTitles.get(code ?? ""),
+  failureHistory: "历史错误记录",
+  failureUploadsPending: "请先完成或移除待处理的附件，再回填原消息。",
+  failureRealtime: "实时错误，尚未确认已保存",
+  failureOriginalMessage: "原消息",
+  restoreFailureDraft: "回填后编辑",
+  overwriteFailureDraftTitle: "替换当前草稿？",
+  overwriteFailureDraftDescription:
+    "这将替换草稿文字、引用和附件。回填后请检查，再自行发送。",
+  overwriteFailureDraftConfirm: "替换草稿",
+  expandFailure: "展开全文",
+
   unconfirmedMessages: "待核对消息",
   outgoingMessages: "发送记录",
   outgoingSending: "正在发送",

@@ -1,5 +1,6 @@
 import {
   chatSnapshotSchema,
+  getConversationFailure,
   sanitizeDiagnosticText,
   type ChatSnapshot,
   type TimelineItem,
@@ -69,6 +70,37 @@ const persistedItem = (item: TimelineItem): TimelineItem => {
               kind: "unknown",
               summary: "Cached resource; reconnect to restore content.",
             },
+    };
+  }
+  const failure = getConversationFailure(item);
+  if (failure !== undefined && item.kind === "agent-event") {
+    return {
+      ...base,
+      kind: "agent-event",
+      eventCategory: "generic",
+      eventType: "conversation.failure",
+      status: "unknown",
+      transitions: [
+        {
+          id: "cache",
+          status: "unknown",
+          occurredAt: item.createdAt,
+          failure: {
+            message: cacheText(failure.message).slice(0, 65_536),
+            source: failure.source,
+            ...(failure.recordId === undefined
+              ? {}
+              : { recordId: failure.recordId }),
+            ...(failure.businessCode === undefined
+              ? {}
+              : {
+                  businessCode: cacheText(failure.businessCode).slice(0, 256),
+                }),
+            // Original input is an action-bearing fact. Disk is display-only;
+            // require a fresh Server record before offering draft restoration.
+          },
+        },
+      ],
     };
   }
   if (item.kind === "agent-event")

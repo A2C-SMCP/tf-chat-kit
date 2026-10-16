@@ -54,6 +54,7 @@ export type {
   ChatSnapshot,
   ChatUpdate,
   Conversation,
+  ConversationFailure,
   ConversationId,
   ContactMessageContent,
   FileMessageContent,
@@ -133,3 +134,5 @@ export type {
   RemoteToolClock,
   RemoteToolTransport,
 } from "./remote-tool.js";
+
+export { getConversationFailure } from "./models.js";

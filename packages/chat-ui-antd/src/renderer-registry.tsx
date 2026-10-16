@@ -1,3 +1,4 @@
+import { ConversationFailureCard } from "./conversation-failure-card.js";
 import { Alert, Skeleton, Typography, theme } from "antd";
 import {
   Component,
@@ -150,6 +151,7 @@ const MessageRenderer = ({ formatTimestamp, item }: ChatRendererProps) => {
 };
 
 export const defaultChatRendererRegistry: ChatRendererRegistry = Object.freeze({
+  "agent-event:conversation.failure": ConversationFailureCard,
   "agent-event:tool": ToolEventRenderer,
   "agent-event": AgentEventRenderer,
   message: MessageRenderer,
