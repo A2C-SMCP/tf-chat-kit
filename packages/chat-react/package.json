@@ -1,6 +1,6 @@
 {
   "name": "@turingfocus/chat-react",
-  "version": "0.10.0-next.4",
+  "version": "0.10.0-next.5",
   "description": "Unstyled React bindings for the chat runtime",
   "license": "MIT",
   "repository": {

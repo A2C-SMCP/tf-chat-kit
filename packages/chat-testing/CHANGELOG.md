@@ -1,5 +1,12 @@
 # @turingfocus/chat-testing
 
+## 0.10.0-next.5
+
+### Patch Changes
+
+- Updated dependencies [1e43425]
+  - @turingfocus/chat-protocol@0.10.0-next.5
+
 ## 0.10.0-next.4
 
 ### Patch Changes

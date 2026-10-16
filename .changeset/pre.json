@@ -12,11 +12,13 @@
     "@turingfocus/chat-ui-antd": "0.9.0"
   },
   "changesets": [
+    "clear-conversation-failures",
     "compact-chat-toolbar",
     "current-server-author-display",
     "default-manager-ui",
     "fix-independent-auth-package-range",
     "manager-context-ui",
+    "recovery-status-five-seconds",
     "server-message-identity",
     "word-auth-facade-contract"
   ]

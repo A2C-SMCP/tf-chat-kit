@@ -1,5 +1,16 @@
 # @turingfocus/chat-runtime
 
+## 0.10.0-next.5
+
+### Minor Changes
+
+- 1e43425: Display realtime and persisted conversation failures with safe business explanations and authoritative original text. Allow users to restore text into the composer with overwrite confirmation, without resending or treating conversation errors as current-run outcomes. Legacy transports without shared error identities retain separate realtime observations and history records.
+
+### Patch Changes
+
+- Updated dependencies [1e43425]
+  - @turingfocus/chat-protocol@0.10.0-next.5
+
 ## 0.10.0-next.4
 
 ### Patch Changes
