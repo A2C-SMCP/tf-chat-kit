@@ -1,5 +1,17 @@
 # @turingfocus/chat-kit
 
+## 0.10.1
+
+### Patch Changes
+
+- 4ff5ca5: Publish the complete stable core group above the interrupted 0.10.0 release, including compact chat controls, five-second recovery notices, and realtime and historical conversation failure cards. Ensure ordinary installs use the Protocol version containing the new failure API.
+- Updated dependencies [4ff5ca5]
+  - @turingfocus/chat-protocol@0.10.1
+  - @turingfocus/chat-runtime@0.10.1
+  - @turingfocus/chat-gateway-tfrobot@0.10.1
+  - @turingfocus/chat-react@0.10.1
+  - @turingfocus/chat-ui-antd@0.10.1
+
 ## 0.10.0
 
 ### Minor Changes
