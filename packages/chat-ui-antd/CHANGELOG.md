@@ -1,33 +1,5 @@
 # @turingfocus/chat-ui-antd
 
-## 0.10.0
-
-### Minor Changes
-
-- 61976ab: Compact default chat controls into accessible icon buttons and a dropdown menu. Show the assistant and platform badge on one compact row, with the conversation title and 28px actions on the next; long names expose their complete text in tooltips. Keep assistant and platform summaries read-only and move their switch actions into the menu. The compact organization header is read-only, with organization switching available through account settings. Hosts can append actions through the optional compact workspace moreActions prop. Conversation creation still derives its required title from the first message without asking the user to enter a name.
-- ba54e24: Reconcile mutable author names and avatars independently from current-server user-message identity. Keep historical author updates across cache reads, pagination, concurrent loads and reconnects without overwriting newer message content. Add optional message provenance and author-only recovery updates. Preserve unassociated provisional messages and show them in an expandable review section in the default UI; never alias different user IDs or claim complete current-server recovery.
-- b4741c9: Add an optional complete Manager chat interface with Chinese/English copy, compact conversation navigation, explicit identity/robot/platform selection and instance-scoped lifecycle handling.
-- 473865d: Correlate user messages by the Server's elementId across POST receipts, realtime,
-  history and cache, independently of author display and database persistence.
-  Expose instance-local outgoing send observations with accepted, failed and unknown
-  outcomes and render them outside the formal timeline. Preserve legacy Server
-  compatibility and never replay sends from cache. Full POST promotion metadata and
-  correlated business terminal states still require the Server contracts tracked in #141.
-
-### Patch Changes
-
-- f7c1fa2: Clarify identity, organization, robot and platform context in the default Manager UI. Add consistent switch controls and preserve active chat and drafts while browsing or cancelling robot/platform candidates. Keep host-fixed platforms visible and distinguish account display names from organization IDs.
-
-  Preserve the optional Manager organizationName field independently of account displayName, with safe ID fallbacks for missing organization names.
-
-  Restore focus to the actual history/help navigation trigger in WebKit as well as Chromium.
-
-- 16690cf: Hide the best-effort connection recovery status after five seconds using the existing recovery notice timing and accessibility behavior.
-- Updated dependencies [ba54e24]
-- Updated dependencies [473865d]
-  - @turingfocus/chat-protocol@0.10.0
-  - @turingfocus/chat-react@0.10.0
-
 ## 0.10.0-next.4
 
 ### Minor Changes

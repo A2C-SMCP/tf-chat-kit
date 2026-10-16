@@ -13,6 +13,7 @@ import {
 import { selectGithubComparisonBase } from "./changeset-base.mjs";
 import { validateChangesetCoverage } from "./changeset-policy.mjs";
 import { generateConsumedReleaseOutput } from "./changeset-release-output.mjs";
+import { resolvePrereleaseResumeBase } from "./changeset-prerelease-resume.mjs";
 import { assembleWorkspaceReleasePlan } from "./changeset-release-plan.mjs";
 import { PACKAGE_POLICY } from "./workspace-policy.mjs";
 
@@ -264,7 +265,26 @@ const readCurrentChangelogs = async () =>
   );
 
 try {
-  const comparisonBase = resolveComparisonBase();
+  let comparisonBase = resolveComparisonBase();
+  const resumeFiles = [
+    ...new Set([
+      ...lines(
+        runGit(["diff", "--no-renames", "--name-only", comparisonBase, "--"]),
+      ),
+      ...lines(runGit(["ls-files", "--others", "--exclude-standard"])),
+    ]),
+  ];
+  const resumeBase = await resolvePrereleaseResumeBase({
+    rootDirectory,
+    comparisonBase,
+    changedFiles: resumeFiles,
+  });
+  if (resumeBase !== undefined) {
+    console.log(
+      `Verified exact historical Changesets restoration; validating against prerelease input ${resumeBase.slice(0, 12)}.`,
+    );
+    comparisonBase = resumeBase;
+  }
   const trackedChanges = lines(
     runGit(["diff", "--no-renames", "--name-only", comparisonBase, "--"]),
   );
