@@ -1,6 +1,7 @@
 import {
   chatSnapshotSchema,
   getConversationFailure,
+  getGeneratedEventTexts,
   sanitizeDiagnosticText,
   type ChatSnapshot,
   type TimelineItem,
@@ -120,7 +121,11 @@ const persistedItem = (item: TimelineItem): TimelineItem => {
           occurredAt: item.createdAt,
           ...(item.eventCategory === "tool"
             ? { toolReturn: { result: "Cached event; reconnect for details." } }
-            : {}),
+            : getGeneratedEventTexts(item) === undefined
+              ? {}
+              : {
+                  generatedTexts: getGeneratedEventTexts(item)!.map(cacheText),
+                }),
         },
       ],
     };

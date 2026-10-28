@@ -144,11 +144,13 @@ export function ChatDiagnostics({
 }
 
 export function ChatErrorNotice({
+  debug = false,
   error,
   operation,
   labels,
   onDismiss,
 }: {
+  debug?: boolean | undefined;
   error: ChatError;
   operation?: string | undefined;
   labels?: ChatUiLabelOverrides | undefined;
@@ -188,14 +190,16 @@ export function ChatErrorNotice({
         onClose={() => onDismiss?.()}
         message={copy.formatChatError?.(safe) ?? errorSummary(safe)}
         action={
-          <Button size="small" onClick={() => setOpen(true)}>
-            {copy.diagnosticDetails ?? "Details"}
-          </Button>
+          debug ? (
+            <Button size="small" onClick={() => setOpen(true)}>
+              {copy.diagnosticDetails ?? "Details"}
+            </Button>
+          ) : undefined
         }
       />
       <Modal
         title={copy.diagnosticDetails ?? "Details"}
-        open={open}
+        open={debug && open}
         onCancel={() => setOpen(false)}
         footer={null}
       >

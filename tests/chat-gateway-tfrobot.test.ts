@@ -2827,6 +2827,13 @@ describe("TFRobotChatGateway current-server profile", () => {
     expect(fixture.sessionRequests).toHaveLength(1);
     expect(fixture.requests).toHaveLength(2);
     expect(
+      new URL(
+        fixture.requests.find((request) =>
+          new URL(request.url).pathname.endsWith("/messages"),
+        )!.url,
+      ).searchParams.get("count"),
+    ).toBe("1");
+    expect(
       fixture.requests.every(
         (request) => request.authorization === "Bearer fixture-session-token",
       ),

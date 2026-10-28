@@ -6,8 +6,10 @@ import {
 import type { AuthClient } from "../../packages/chat-auth/src/headless.js";
 import type { PlaygroundRobotDescriptor } from "./manager-directory.js";
 import type { RobotServerConnectionConfig } from "./robotserver-session.js";
+import { createTFRobotPlatformClient } from "@turingfocus/chat-gateway-tfrobot";
 
 export interface ManagerRobotServerSessionOptions {
+  readonly platformId?: number | undefined;
   readonly client: AuthClient;
   readonly managerBaseUrl: string;
   readonly robot: PlaygroundRobotDescriptor;
@@ -54,7 +56,32 @@ export const createManagerRobotServerConnection = async (
   });
   try {
     const connection = await manager.connect(robot, { signal: options.signal });
+    const catalog = createTFRobotPlatformClient({
+      baseUrl: connection.target.baseUrl,
+      sessionProvider: connection.sessionProvider,
+      fetch: options.fetch,
+      now: options.now,
+    });
+    let platforms;
+    try {
+      const result = await catalog.list({
+        signal: options.signal,
+        deadlineAt: (options.now ?? Date.now)() + 30_000,
+      });
+      if (!result.ok) throw new Error(result.error.message);
+      platforms = result.value;
+    } finally {
+      catalog.dispose();
+    }
+    if (
+      options.platformId !== undefined &&
+      !platforms.some((p) => p.platformId === options.platformId)
+    )
+      throw new Error("所选平台不可用，请重新选择平台。");
     return {
+      conversationContract: "json-v2",
+      platforms,
+      platformId: options.platformId,
       httpBaseUrl: connection.target.baseUrl,
       socketNamespaceUrl: connection.target.socketNamespaceUrl,
       socketPath: connection.target.socketPath,

@@ -238,7 +238,10 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
       createElement(
         ChatProvider,
         { client },
-        createElement(ChatConversationView, { getDeadlineAt: deadlineAt }),
+        createElement(ChatConversationView, {
+          debug: true,
+          getDeadlineAt: deadlineAt,
+        }),
       ),
     );
     try {
@@ -339,7 +342,10 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
         createElement(
           ChatProvider,
           { client },
-          createElement(ChatConversationView, { getDeadlineAt: deadlineAt }),
+          createElement(ChatConversationView, {
+            debug: true,
+            getDeadlineAt: deadlineAt,
+          }),
         ),
       );
       try {
@@ -1092,6 +1098,7 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
         ChatProvider,
         { client },
         createElement(ChatConversationView, {
+          debug: true,
           getDeadlineAt: deadlineAt,
           onCommandError: (failure) => {
             failures.push(failure);
@@ -1126,6 +1133,7 @@ describe("@turingfocus/chat-ui-antd vertical slice", () => {
             ChatProvider,
             { client },
             createElement(ChatConversationView, {
+              debug: true,
               getDeadlineAt: deadlineAt,
               key: "after-realtime-update",
               onCommandError: (failure) => {

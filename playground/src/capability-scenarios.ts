@@ -9,6 +9,11 @@ import type { ChatDocumentSource } from "@turingfocus/chat-runtime";
 
 export const capabilityScenarios = [
   {
+    id: "progress",
+    title: "过程消息与工具",
+    hint: "直接阅读 LLM 过程消息；点击工具查看结构化参数、结果与复制图标。演示数据不连接真实服务。",
+  },
+  {
     id: "tools",
     title: "工具呈现",
     hint: "点击时间线中的工具，查看 Browser 截图、Preview 代码、Editor 差异、Shell 输出和 Download 产物。",
@@ -110,6 +115,122 @@ export function createCapabilityTimeline(
     sequence: index,
     content,
   });
+  if (scenario === "progress")
+    return [
+      {
+        kind: "agent-event",
+        eventCategory: "generic",
+        id: `${prefix}-llm`,
+        conversationId,
+        eventType: "LLM",
+        status: "success",
+        createdAt: now,
+        sequence: 0,
+        summary:
+          "已找到文件，而且它正在 Excel 里打开着。我先读取明细，分析费用构成。",
+        transitions: [
+          {
+            id: `${prefix}-llm-result`,
+            status: "success",
+            occurredAt: now,
+            summary:
+              "**已找到文件**，而且它正在 Excel 里打开着（7,616 行收支明细）。\n\n我会先读取明细，再进行以下分析：\n\n1. 按天统计总费用\n2. 找出费用增长最大的项目\n3. 生成可继续核查的汇总表",
+          },
+        ],
+      },
+      {
+        kind: "agent-event",
+        eventCategory: "tool",
+        id: `${prefix}-inspect`,
+        conversationId,
+        eventType: "Tool",
+        status: "success",
+        createdAt: now + 1,
+        sequence: 1,
+        transitions: [
+          {
+            id: `${prefix}-inspect-result`,
+            status: "success",
+            occurredAt: now + 1,
+            toolCall: {
+              name: "office-local__excel_get_range",
+              arguments: {
+                document: "云费用账单.xlsx",
+                sheet: "收支明细",
+                range: "A1:F7617",
+                options: { includeHeaders: true, formatted: false },
+              },
+            },
+            toolReturn: {
+              success: true,
+              done: true,
+              result: {
+                rows: 7616,
+                columns: ["日期", "产品", "资源", "金额"],
+                totals: { amount: 12846.52, currency: "CNY" },
+                samples: [
+                  { date: "2026-10-27", product: "云服务器", amount: 286.5 },
+                  { date: "2026-10-27", product: "对象存储", amount: 42.8 },
+                ],
+              },
+            },
+          },
+        ],
+      },
+      {
+        kind: "agent-event",
+        eventCategory: "generic",
+        id: `${prefix}-llm-next`,
+        conversationId,
+        eventType: "LLM",
+        status: "success",
+        createdAt: now + 2,
+        sequence: 2,
+        transitions: [
+          {
+            id: `${prefix}-llm-next-result`,
+            status: "success",
+            occurredAt: now + 2,
+            summary:
+              "数据结构已经确认。接下来按日期和产品汇总，再核对异常波动。",
+          },
+        ],
+      },
+      {
+        kind: "agent-event",
+        eventCategory: "tool",
+        id: `${prefix}-markdown-result`,
+        conversationId,
+        eventType: "Tool",
+        status: "success",
+        createdAt: now + 3,
+        sequence: 3,
+        transitions: [
+          {
+            id: `${prefix}-markdown-result-success`,
+            status: "success",
+            occurredAt: now + 3,
+            toolCall: {
+              name: "report__read_summary",
+              arguments: { report: "云费用核查" },
+            },
+            toolReturn: {
+              success: true,
+              done: true,
+              result:
+                "### 核查结果\n\n**已完成账单结构检查。**\n\n- 已读取 7,616 行明细\n- 金额单位：人民币\n\n| 项目 | 状态 |\n| --- | --- |\n| 日期字段 | 正常 |\n| 金额字段 | 正常 |\n\n下一步按天汇总。",
+            },
+          },
+        ],
+      },
+      message(
+        {
+          kind: "text",
+          text: "### 费用汇总已完成\n\n已读取账单并生成按天、按产品的汇总，建议优先核对增长较大的云服务器与存储费用。详细结果可在生成的表格中继续查看。",
+        },
+        4,
+      ),
+    ];
   if (scenario === "tools") {
     const tools: readonly [string, ToolPresentation][] = [
       [

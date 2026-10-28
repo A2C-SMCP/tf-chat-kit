@@ -44,6 +44,9 @@
       ],
       "@turingfocus/chat-kit/auth/antd": [
         "./packages/chat-kit/src/auth-antd.ts"
+      ],
+      "@turingfocus/chat-kit/manager-antd": [
+        "./packages/chat-kit/src/manager-antd.tsx"
       ]
     },
     "rootDir": ".",

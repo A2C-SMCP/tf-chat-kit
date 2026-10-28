@@ -26,6 +26,18 @@ export default defineConfig(({ command }) => ({
   root: fileURLToPath(new URL(".", import.meta.url)),
   resolve: {
     alias: {
+      "@turingfocus/chat-kit/manager-antd": path.join(
+        workspaceRoot,
+        "packages/chat-kit/src/manager-antd.tsx",
+      ),
+      "@turingfocus/chat-kit/auth/manager": path.join(
+        workspaceRoot,
+        "packages/chat-kit/src/auth-manager.ts",
+      ),
+      "@turingfocus/chat-kit/auth": path.join(
+        workspaceRoot,
+        "packages/chat-kit/src/auth.ts",
+      ),
       "@turingfocus/chat-gateway-tfrobot": packageSource(
         "chat-gateway-tfrobot",
       ),

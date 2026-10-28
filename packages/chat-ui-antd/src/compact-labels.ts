@@ -22,6 +22,8 @@ export const compactChatZhCN: ChatUiLabelOverrides = {
     "这将替换草稿文字、引用和附件。回填后请检查，再自行发送。",
   overwriteFailureDraftConfirm: "替换草稿",
   expandFailure: "展开全文",
+  expandIntermediateMessage: "展开全文",
+  collapseIntermediateMessage: "收起",
 
   unconfirmedMessages: "待核对消息",
   outgoingMessages: "发送记录",
