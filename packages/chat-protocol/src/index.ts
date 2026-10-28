@@ -22,6 +22,7 @@ export {
   compareTimelineItems,
   conversationSchema,
   getTimelineItemKey,
+  getGeneratedEventTexts,
   hasCompatibleAgentEventMetadata,
   messageSchema,
   runSchema,

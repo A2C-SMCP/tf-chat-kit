@@ -67,7 +67,11 @@ import {
 export type { ChatUiCommand, ChatUiCommandFailure };
 
 export interface ChatConversationViewProps {
-  /** Hide developer controls in a composed end-user interface. */
+  /** Explicit developer controls. Product UI is the default. */
+  readonly debug?: boolean | undefined;
+  /** Show Auto / Split / Modal controls; defaults to true, independently of debug. */
+  readonly showEventDetailModeSelector?: boolean | undefined;
+  /** @deprecated Prefer debug. Explicit standard remains a legacy debug opt-in. */
   readonly presentation?: "standard" | "compact" | undefined;
   readonly sendShortcut?: ChatComposerSendShortcut | undefined;
   readonly noticeTiming?: ChatNoticeTiming | undefined;
@@ -155,7 +159,9 @@ const equalChatConversationViewSnapshot = (
     left.outgoingMessages === right.outgoingMessages);
 
 export const ChatConversationView = ({
-  presentation = "standard",
+  showEventDetailModeSelector = true,
+  presentation = "compact",
+  debug = presentation === "standard",
   sendShortcut,
   className,
   noticeTiming,
@@ -539,6 +545,7 @@ export const ChatConversationView = ({
   if (snapshot === null) {
     return (
       <ChatNotices
+        showDiagnostics={debug}
         loading
         labels={labels}
         timing={noticeTiming}
@@ -651,14 +658,14 @@ export const ChatConversationView = ({
       >
         <ChatNotices
           key={`notices:${viewResetKey}`}
-          showDiagnostics={presentation === "standard"}
+          showDiagnostics={debug}
           conversationId={conversationId}
           timing={noticeTiming}
           labels={labels}
           getDeadlineAt={getDeadlineAt}
           onRequestAuthentication={onRequestAuthentication}
         />
-        {presentation === "standard" ? (
+        {debug ? (
           <ChatRunStatus
             key={`${viewResetKey}:${snapshot.run?.id ?? "no-run"}`}
             canInterrupt={lifecycleOperable && snapshot.capabilities.interrupt}
@@ -673,7 +680,7 @@ export const ChatConversationView = ({
             {labels.sending}
           </span>
         ) : null}
-        {presentation === "standard" ? (
+        {showEventDetailModeSelector ? (
           <div
             style={{
               alignItems: "center",
@@ -719,6 +726,7 @@ export const ChatConversationView = ({
           .filter((failure) => failure.command === "answerInteraction")
           .map((failure) => (
             <ChatErrorNotice
+              debug={debug}
               key={failure.command}
               error={failure.error}
               operation={failure.command}
@@ -782,6 +790,7 @@ export const ChatConversationView = ({
           .filter((failure) => failure.command !== "answerInteraction")
           .map((failure) => (
             <ChatErrorNotice
+              debug={debug}
               key={failure.command}
               error={failure.error}
               operation={failure.command}
@@ -797,6 +806,7 @@ export const ChatConversationView = ({
           sendShortcut={sendShortcut}
           renderUploadError={(error) => (
             <ChatErrorNotice
+              debug={debug}
               error={error}
               operation="uploadAttachment"
               labels={labels}

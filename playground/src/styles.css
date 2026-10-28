@@ -386,7 +386,6 @@ input {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  min-height: 100vh;
   padding: 1px 0 32px;
 }
 

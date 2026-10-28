@@ -166,6 +166,8 @@ export interface ConversationFailure {
 }
 
 export interface AgentEventTransition {
+  /** Model output text only. An empty array means no text; absence retains legacy presentation. */
+  readonly generatedTexts?: readonly string[] | undefined;
   readonly failure?: ConversationFailure | undefined;
   readonly content?: ReadonlyJsonValue | undefined;
   /** Gateway-normalized stable ID; duplicate delivery must reuse the same ID. */
@@ -334,6 +336,19 @@ export interface UnknownEvent {
 }
 
 export type TimelineItem = AgentEvent | Message | UnknownEvent;
+
+/** Latest explicitly supplied model output, without inferring from event summaries. */
+export const getGeneratedEventTexts = (
+  item: TimelineItem,
+): readonly string[] | undefined => {
+  if (item.kind !== "agent-event" || item.eventCategory !== "generic")
+    return undefined;
+  for (let index = item.transitions.length - 1; index >= 0; index--) {
+    const texts = item.transitions[index]?.generatedTexts;
+    if (texts !== undefined) return texts;
+  }
+  return undefined;
+};
 
 export type RunStatus =
   "aborted" | "failed" | "running" | "succeeded" | "unknown";

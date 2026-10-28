@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTFRobotChatGateway } from "../packages/chat-gateway-tfrobot/src/index.js";
 import type { ChatUpdate } from "../packages/chat-protocol/src/index.js";
+import { createChatClient } from "../packages/chat-runtime/src/index.js";
 
 const deadlineAt = (): number => Date.now() + 5_000;
 
@@ -13,6 +14,99 @@ describe("TFRobot Gateway real Socket.IO lifecycle", () => {
 
   afterEach(async () => {
     await Promise.allSettled(cleanups.splice(0).map((cleanup) => cleanup()));
+  });
+
+  it("uses a minimal preflight and downloads full history only after join", async () => {
+    const counts: string[] = [];
+    let joined = false;
+    let fullDownloads = 0;
+    const httpServer = createServer((request, response) => {
+      const url = new URL(request.url ?? "/", "http://localhost");
+      let data: unknown = { taskId: null, working: false };
+      if (url.pathname.endsWith("/conversations"))
+        data = {
+          conversations: [
+            { conversationId: 42, title: "Read once", description: null },
+          ],
+          cursor: null,
+        };
+      if (url.pathname.endsWith("/messages")) {
+        const count = url.searchParams.get("count")!;
+        counts.push(count);
+        if (count !== "1") {
+          expect(joined).toBe(true);
+          fullDownloads++;
+        }
+        data = {
+          messages:
+            count === "1"
+              ? []
+              : [
+                  {
+                    msgId: "after-preflight",
+                    conversationId: 42,
+                    role: "assistant",
+                    msgType: "text",
+                    content: "Arrived between preflight and join",
+                    createTimestamp: 1000,
+                  },
+                ],
+          events: [],
+          cursor: null,
+        };
+      }
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ code: 200, message: "Success", data }));
+    });
+    const io = new SocketIoServer(httpServer, { transports: ["websocket"] });
+    io.of("/chat").on("connection", (socket) =>
+      socket.on("join_conversation", (_payload, acknowledge) => {
+        joined = true;
+        acknowledge();
+      }),
+    );
+    await new Promise<void>((resolve) =>
+      httpServer.listen(0, "127.0.0.1", resolve),
+    );
+    const address = httpServer.address();
+    if (!address || typeof address === "string")
+      throw new Error("Missing TCP port");
+    const origin = `http://127.0.0.1:${address.port}`;
+    const client = createChatClient({
+      gateway: createTFRobotChatGateway({
+        baseUrl: origin,
+        socketNamespaceUrl: `${origin}/chat`,
+        serverProfile: { kind: "current-server" },
+        messageCreatorProvider: () => ({ name: "Fixture", uid: "fixture" }),
+        sessionProvider: {
+          getSession: () => ({ kind: "bearer", token: "fixture" }),
+        },
+      }),
+    });
+    try {
+      const result = await client.loadConversation({
+        conversationId: "42",
+        deadlineAt: deadlineAt(),
+      });
+      expect(result.ok).toBe(true);
+      expect(counts).toEqual(["1", "-20"]);
+      expect(fullDownloads).toBe(1);
+      expect(client.getSnapshot()?.timeline).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            content: {
+              kind: "text",
+              text: "Arrived between preflight and join",
+            },
+          }),
+        ]),
+      );
+    } finally {
+      await client.dispose({ deadlineAt: deadlineAt() });
+      await new Promise<void>((resolve) => io.close(() => resolve()));
+      if (httpServer.listening)
+        await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+    }
   });
 
   it.each([401, 403, 200])(

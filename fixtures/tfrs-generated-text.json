@@ -1,0 +1,64 @@
+[
+  {
+    "generatedTexts": [
+      "**找到文件了**\n\n这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。这是一段需要在窄窗格完整阅读的模型生成正文。\n\ncontinuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_continuous_word_\n\n```text\nmodel_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line model_output_line \n```\n\n长段落验收结束"
+    ],
+    "content": "diagnostic summary",
+    "conversationId": "42",
+    "createTimestamp": 1000,
+    "eventId": "text",
+    "eventScene": "LLM",
+    "exception": null,
+    "status": "success",
+    "chainPath": null,
+    "chainExposeTrace": null,
+    "exposeTrace": null,
+    "absorbExternalTrace": null,
+    "parentSpanId": null
+  },
+  {
+    "generatedTexts": [],
+    "content": "diagnostic summary",
+    "conversationId": "42",
+    "createTimestamp": 1000,
+    "eventId": "tool-only",
+    "eventScene": "LLM",
+    "exception": null,
+    "status": "success",
+    "chainPath": null,
+    "chainExposeTrace": null,
+    "exposeTrace": null,
+    "absorbExternalTrace": null,
+    "parentSpanId": null
+  },
+  {
+    "generatedTexts": ["继续核对"],
+    "content": "diagnostic summary",
+    "conversationId": "42",
+    "createTimestamp": 1000,
+    "eventId": "mixed",
+    "eventScene": "LLM",
+    "exception": null,
+    "status": "success",
+    "chainPath": null,
+    "chainExposeTrace": null,
+    "exposeTrace": null,
+    "absorbExternalTrace": null,
+    "parentSpanId": null
+  },
+  {
+    "generatedTexts": null,
+    "content": "diagnostic summary",
+    "conversationId": "42",
+    "createTimestamp": 1000,
+    "eventId": "memory",
+    "eventScene": "Memory",
+    "exception": null,
+    "status": "success",
+    "chainPath": null,
+    "chainExposeTrace": null,
+    "exposeTrace": null,
+    "absorbExternalTrace": null,
+    "parentSpanId": null
+  }
+]

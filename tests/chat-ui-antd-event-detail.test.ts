@@ -220,6 +220,7 @@ describe("@turingfocus/chat-ui-antd event details", () => {
         ChatProvider,
         { client },
         createElement(ChatConversationView, {
+          debug: true,
           defaultEventDetailMode: "split",
           getDeadlineAt: deadlineAt,
           onEventDetailSplitRatioChange,
@@ -325,6 +326,7 @@ describe("@turingfocus/chat-ui-antd event details", () => {
           ChatProvider,
           { client },
           createElement(ChatConversationView, {
+            debug: true,
             defaultEventDetailMode: "split",
             getDeadlineAt: deadlineAt,
             onEventDetailSplitRatioChange,
@@ -424,6 +426,7 @@ describe("@turingfocus/chat-ui-antd event details", () => {
         ChatProvider,
         { client },
         createElement(ChatConversationView, {
+          debug: true,
           defaultEventDetailMode: "split",
           eventDetailSplitRatio: ratio,
           getDeadlineAt: deadlineAt,
@@ -482,7 +485,10 @@ describe("@turingfocus/chat-ui-antd event details", () => {
       createElement(
         ChatProvider,
         { client },
-        createElement(ChatConversationView, { getDeadlineAt: deadlineAt }),
+        createElement(ChatConversationView, {
+          debug: true,
+          getDeadlineAt: deadlineAt,
+        }),
       ),
     );
 
@@ -746,6 +752,7 @@ describe("@turingfocus/chat-ui-antd event details", () => {
         ChatProvider,
         { client },
         createElement(ChatConversationView, {
+          debug: true,
           defaultEventDetailMode: "split",
           getDeadlineAt: deadlineAt,
           onSelectedEventChange,
@@ -792,6 +799,13 @@ describe("@turingfocus/chat-ui-antd event details", () => {
         await flushMicrotasks();
       });
       expect(onInnerAction).toHaveBeenCalledOnce();
+      // Custom renderer controls have the same reserved action area as built-ins.
+      expect(innerButton.closest(".tf-chat-event-content")).not.toBeNull();
+      expect(
+        innerButton
+          .closest(".tf-chat-event-content")
+          ?.contains(findTrigger(rendered.container, event.id)),
+      ).toBe(false);
       expect(onSelectedEventChange).not.toHaveBeenCalled();
 
       await act(async () => {
@@ -854,6 +868,7 @@ describe("@turingfocus/chat-ui-antd event details", () => {
         ChatProvider,
         { client },
         createElement(ChatConversationView, {
+          debug: true,
           eventDetailMode: "split",
           getDeadlineAt: deadlineAt,
           onEventDetailModeChange,
@@ -898,4 +913,109 @@ describe("@turingfocus/chat-ui-antd event details", () => {
       await client.dispose({ deadlineAt: deadlineAt() });
     }
   });
+});
+
+it("defaults to product UI and toggles debug without losing the composer draft", async () => {
+  const { client } = await createLoadedClient();
+  const node = (debug?: boolean, showEventDetailModeSelector?: boolean) =>
+    createElement(
+      ChatProvider,
+      { client },
+      createElement(ChatConversationView, {
+        getDeadlineAt: deadlineAt,
+        debug,
+        showEventDetailModeSelector,
+      }),
+    );
+  const rendered = await renderInDom(node());
+  try {
+    expect(rendered.container.textContent).not.toContain("Diagnostics");
+    expect(rendered.container.querySelector(".ant-segmented")).not.toBeNull();
+    await act(async () => {
+      findSegment("Split").click();
+    });
+    expect(
+      rendered.container
+        .querySelector("[data-chat-event-layout]")
+        ?.getAttribute("data-chat-event-layout"),
+    ).toBe("split");
+    await act(async () => {
+      findSegment("Modal").click();
+    });
+    expect(
+      rendered.container
+        .querySelector("[data-chat-event-layout]")
+        ?.getAttribute("data-chat-event-layout"),
+    ).toBe("modal");
+    await act(async () => {
+      findSegment("Auto").click();
+    });
+    const input =
+      rendered.container.querySelector<HTMLTextAreaElement>("textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )!.set!.call(input, "keep this draft");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => rendered.root.render(node(true)));
+    expect(rendered.container.textContent).toContain("Diagnostics");
+    expect(rendered.container.querySelector(".ant-segmented")).not.toBeNull();
+    expect(rendered.container.querySelector("textarea")?.value).toBe(
+      "keep this draft",
+    );
+    await act(async () => rendered.root.render(node(false, false)));
+    expect(rendered.container.querySelector(".ant-segmented")).toBeNull();
+    expect(rendered.container.textContent).not.toContain("Diagnostics");
+    expect(rendered.container.querySelector("textarea")?.value).toBe(
+      "keep this draft",
+    );
+    await act(async () => rendered.root.render(node(false)));
+    expect(rendered.container.querySelector(".ant-segmented")).not.toBeNull();
+  } finally {
+    await rendered.unmount();
+    await client.dispose({ deadlineAt: deadlineAt() });
+  }
+});
+
+it("opens details from the card without a separate arrow and leaves text selection alone", async () => {
+  const { memory, event } = createEventSnapshot();
+  const { client } = await createLoadedClient(memory);
+  const onSelectedEventChange = vi.fn();
+  const rendered = await renderInDom(
+    createElement(
+      ChatProvider,
+      { client },
+      createElement(ChatConversationView, {
+        getDeadlineAt: deadlineAt,
+        onSelectedEventChange,
+        defaultEventDetailMode: "split",
+      }),
+    ),
+  );
+  const selection = document.getSelection()!;
+  try {
+    const trigger = findTrigger(rendered.container, event.id);
+    expect(trigger.textContent).toBe("");
+    expect(trigger.querySelector("svg")).not.toBeNull();
+    const card = trigger.closest<HTMLElement>(".tf-chat-event-card")!;
+    const content = card.querySelector<HTMLElement>("[data-chat-event-row]")!;
+    expect(content).not.toBeNull();
+    const range = document.createRange();
+    range.selectNodeContents(content);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    await act(async () => content.click());
+    expect(onSelectedEventChange).not.toHaveBeenCalled();
+    selection.removeAllRanges();
+    await act(async () => content.click());
+    expect(onSelectedEventChange).toHaveBeenCalledOnce();
+    expect(onSelectedEventChange.mock.calls[0]?.[0]).toBe(event.id);
+    expect(card.getAttribute("data-event-selected")).toBe("true");
+  } finally {
+    selection.removeAllRanges();
+    await rendered.unmount();
+    await client.dispose({ deadlineAt: deadlineAt() });
+  }
 });

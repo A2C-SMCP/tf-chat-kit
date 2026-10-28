@@ -715,10 +715,14 @@ export class TFRobotChatGateway implements ChatGateway {
         options: input,
         conversationId: input.conversationId,
         query: {
-          count: -Math.min(
-            input.limits.pageSize,
-            input.limits.maxItems - itemCount,
-          ),
+          // Forward one-message preflight avoids the newest-user page's open
+          // trajectory window while a long run is still in progress.
+          count: input.initialPreflight
+            ? 1
+            : -Math.min(
+                input.limits.pageSize,
+                input.limits.maxItems - itemCount,
+              ),
           cursor,
         },
         schema: historyDtoSchema,

@@ -220,6 +220,7 @@ try {
         "test",
         "--config",
         path.join(output, "playwright.config.mjs"),
+        ...process.argv.slice(2),
       ],
       {
         cwd: root,

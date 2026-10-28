@@ -1,6 +1,19 @@
-import { Alert, Card, Space, Tabs, Tag, Typography, theme } from "antd";
-import type { ReactNode } from "react";
+import {
+  Alert,
+  Button,
+  Card,
+  Space,
+  Spin,
+  Tabs,
+  Tag,
+  Typography,
+  theme,
+} from "antd";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { resolveChatUiLabels } from "./labels.js";
+import type { ChatUiLabelOverrides } from "./types.js";
 
+import { getGeneratedEventTexts } from "@turingfocus/chat-protocol";
 import type {
   AgentEvent,
   AgentEventStatus,
@@ -17,8 +30,146 @@ import type { ChatRendererProps } from "./renderer-registry.js";
 import { ChatResourceView } from "./resource-content.js";
 import { ToolPresentationView } from "./tool-presentation.js";
 
-import { ValueInspector, serializeInspectionValue } from "./value-inspector.js";
+import { ValueInspector } from "./value-inspector.js";
 import { ChatMarkdownContent } from "./markdown-content.js";
+
+export const EventTime = ({
+  timestamp,
+  formatTimestamp,
+}: {
+  timestamp: number;
+  formatTimestamp: (timestamp: number) => string;
+}) => {
+  const full = formatTimestamp(timestamp);
+  const time = full.match(/\b\d{2}:\d{2}:\d{2}\b/u)?.[0] ?? full;
+  return <span title={full}>{time}</span>;
+};
+
+const IntermediateMessage = ({
+  item,
+  texts,
+  formatTimestamp,
+  labels: overrides,
+}: {
+  item: AgentEvent;
+  texts: readonly string[];
+  formatTimestamp: (timestamp: number) => string;
+  labels?: ChatUiLabelOverrides | undefined;
+}) => {
+  const { token } = theme.useToken();
+  const labels = resolveChatUiLabels(overrides);
+  const content = useRef<HTMLDivElement>(null);
+  const viewport = useRef<HTMLDivElement>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  const id = useId();
+  const [long, setLong] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const lineHeight = token.fontSize * token.lineHeight;
+  useEffect(() => {
+    const element = content.current;
+    if (!element) return;
+    const measure = () => {
+      const first = element.firstElementChild?.getBoundingClientRect();
+      const last = element.lastElementChild?.getBoundingClientRect();
+      const height =
+        first && last ? last.bottom - first.top : element.scrollHeight;
+      setLong(height > lineHeight * 5 + 1);
+    };
+    measure();
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? undefined
+        : new ResizeObserver(measure);
+    observer?.observe(element);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [texts, lineHeight]);
+  const collapsed = long && !expanded;
+  return (
+    <div
+      data-chat-generated-text=""
+      style={{
+        padding: "10px 16px",
+        minWidth: 0,
+        overflowWrap: "anywhere",
+        borderLeft: `3px solid ${token.colorPrimaryBorder}`,
+        background: token.colorFillQuaternary,
+        borderRadius: 8,
+      }}
+    >
+      <Typography.Text
+        type="secondary"
+        style={{ fontSize: 12, display: "block", marginBottom: 4 }}
+      >
+        {item.status === "running" ? <Spin size="small" /> : null}
+        <EventTime
+          timestamp={item.createdAt}
+          formatTimestamp={formatTimestamp}
+        />
+      </Typography.Text>
+      {isFailedStatus(item.status) ? (
+        <Alert
+          type="error"
+          message={item.transitions.at(-1)?.error?.message ?? "Event failed"}
+        />
+      ) : null}
+      <div
+        ref={viewport}
+        id={id}
+        data-chat-progress-collapsed={collapsed ? "true" : "false"}
+        onScroll={(event) => {
+          if (collapsed && event.currentTarget.scrollTop !== 0) {
+            event.currentTarget.scrollTop = 0;
+            toggle.current?.focus({ preventScroll: true });
+          }
+        }}
+        style={{
+          maxHeight: collapsed ? lineHeight * 3 : undefined,
+          overflow: collapsed ? "hidden" : undefined,
+        }}
+        onFocusCapture={(event) => {
+          if (
+            collapsed &&
+            viewport.current &&
+            event.target instanceof HTMLElement &&
+            event.target.getBoundingClientRect().bottom >
+              viewport.current.getBoundingClientRect().bottom
+          )
+            toggle.current?.focus({ preventScroll: true });
+        }}
+      >
+        <div
+          ref={content}
+          style={{ display: "flow-root", lineHeight: `${lineHeight}px` }}
+        >
+          {texts
+            .filter((text) => text.trim().length > 0)
+            .map((text, index) => (
+              <ChatMarkdownContent key={index}>{text}</ChatMarkdownContent>
+            ))}
+        </div>
+      </div>
+      {long ? (
+        <Button
+          ref={toggle}
+          type="link"
+          size="small"
+          aria-expanded={expanded}
+          aria-controls={id}
+          onClick={() => setExpanded((value) => !value)}
+          style={{ paddingInline: 0, marginTop: 4, height: "auto" }}
+        >
+          {expanded
+            ? labels.collapseIntermediateMessage
+            : labels.expandIntermediateMessage}
+        </Button>
+      ) : null}
+    </div>
+  );
+};
 
 const statusColor = (
   status: string,
@@ -33,6 +184,23 @@ const statusColor = (
 
 const isFailedStatus = (status: AgentEventStatus): boolean =>
   status === "failed" || status === "timeout";
+
+export const isEmptyLlmEvent = (item: TimelineItem): boolean => {
+  if (
+    item.kind !== "agent-event" ||
+    item.eventCategory !== "generic" ||
+    item.eventType.toLowerCase() !== "llm"
+  )
+    return false;
+  const texts = getGeneratedEventTexts(item) ?? [
+    item.transitions.at(-1)?.summary ?? item.summary ?? "",
+  ];
+  return (
+    !texts.some((text) => text.trim()) &&
+    !isFailedStatus(item.status) &&
+    item.status !== "running"
+  );
+};
 
 const getEventTitle = (item: AgentEvent | UnknownEvent): string =>
   item.kind === "unknown-event" ? item.originalType : item.eventType;
@@ -51,7 +219,7 @@ export const getEventSummary = (item: TimelineItem): string => {
       (transition) => transition.toolReturn?.presentation,
     );
     if (call !== undefined)
-      return `${presentation?.kind ?? "Tool"}: ${call.name} ${call.arguments === undefined ? "" : serializeInspectionValue(call.arguments).slice(0, 160)}`;
+      return `${presentation?.kind ?? "Tool"} · ${call.name.split("__").at(-1) ?? call.name}`;
   }
   return (
     item.summary ??
@@ -120,7 +288,10 @@ const EventCompactRow = ({
         style={{ flexShrink: 0, fontSize: token.fontSizeSM }}
         type="secondary"
       >
-        {formatTimestamp(item.createdAt)}
+        <EventTime
+          timestamp={item.createdAt}
+          formatTimestamp={formatTimestamp}
+        />
       </Typography.Text>
     </div>
   );
@@ -251,7 +422,10 @@ const ToolTransitionContent = ({
       <>
         <Typography.Text strong>{transition.toolCall.name}</Typography.Text>
         {transition.toolCall.arguments === undefined ? null : (
-          <ValueInspector value={transition.toolCall.arguments} />
+          <ValueInspector
+            value={transition.toolCall.arguments}
+            label="输入参数"
+          />
         )}
       </>
     )}
@@ -260,7 +434,7 @@ const ToolTransitionContent = ({
     )}
     {transition.toolReturn?.result === undefined ||
     transition.toolReturn.presentation !== undefined ? null : (
-      <ValueInspector value={transition.toolReturn.result} />
+      <ValueInspector value={transition.toolReturn.result} label="执行结果" />
     )}
     {transition.toolReturn?.attachments?.map((attachment, index) => (
       <ChatResourceView
@@ -362,12 +536,30 @@ const ToolEventDetail = ({
 };
 
 export const AgentEventRenderer = ({
+  labels,
   displayMode = "detail",
   formatTimestamp,
   item,
   selected,
 }: ChatRendererProps) => {
   if (item.kind !== "agent-event") return null;
+  const generated = getGeneratedEventTexts(item);
+  const isLlm =
+    item.eventCategory === "generic" && item.eventType.toLowerCase() === "llm";
+  const texts = generated ?? [
+    item.transitions.at(-1)?.summary ?? item.summary ?? "",
+  ];
+  if (isLlm && displayMode === "timeline") {
+    if (isEmptyLlmEvent(item)) return null;
+    return (
+      <IntermediateMessage
+        item={item}
+        texts={texts}
+        formatTimestamp={formatTimestamp}
+        labels={labels}
+      />
+    );
+  }
   if (displayMode === "timeline") {
     return (
       <EventCompactRow

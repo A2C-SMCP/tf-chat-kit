@@ -115,6 +115,24 @@ Production Word 真正会话/回复、生产 issuer/audience、cookie BFF、Mana
 没有由这些 fixture 证明。Manager 公共入口已发布于 chat-auth 0.10.0 / chat-kit 0.9.0；
 本次新增的 routed-server 尚未发布，不能让旧包消费者提前使用。宿主无需 UAT Seed 变更，本地设施不写生产数据。
 
+## Manager 聊天阅读宽度
+
+`ManagerChatApp` 的消息和输入区默认随宿主容器展开。需要限制阅读宽度时，可传
+`contentMaxWidth={680}`（CSS 像素）或 `contentMaxWidth="52rem"`；省略该属性或使用
+`"none"` 即恢复完整可用宽度。内容在上限内居中，窄窗格始终受可用宽度约束。
+欢迎页和已有会话采用相同策略；顶部组织/机器人栏及登录、组织选择、设置页面不受该属性影响。
+调整宽度配置只改变布局，保留当前连接、会话和草稿。用户消息气泡仍保留自身的阅读宽度，assistant 使用内容区的可用宽度；
+工具摘要仍遵循紧凑展示规则；此配置不改变事件分类或正文展开行为。
+
+## 模型生成正文
+
+LLM 事件直接使用现有 `content` 映射的正文，以中间消息样式渲染安全 Markdown。
+不需要 Server 新增字段。上游确认的规则是：有生成文本则使用文本，没有文本就不发送对应成功 LLM event；
+Kit 不猜测过滤旧数据中的 `tool_calls=[...]` 摘要。该 Server 规则的实现和部署由 TFRS-641 单独追踪。
+Kit 保留可选 `generatedTexts` 的兼容读取，但它不是接入前提。
+原事件 ID、宿主 renderer 和 `role="assistant"` 消息通道保持，详细边界见
+[LLM 中间消息契约](design/issue-162-assistant-progress-contract.md)。
+
 ## Issue #116：Word 直连验收边界
 
 Playground Manager 模式现在直接使用公共 `routed-server`，不经过 `/__tfrobot_proxy`。
@@ -141,3 +159,28 @@ https://rest.test.turingfocus.cn。实际机器人来源必须根据账户的 co
 登录 Portal Cookie 不能直接作为 Word 的认证方案；宿主需显式调用 auth 或注入 SessionProvider。
 本次浏览器测试的认证恢复与真实 Word 登录验收分别记录，见
 [验收记录](baselines/word-010-test-2026-10-13.md)。
+
+## 默认界面与开发诊断
+
+完整 Manager 接入优先使用 `@turingfocus/chat-kit/manager-antd` 导出的 `ManagerChatApp`。
+它和 `ChatCompactWorkspace`、`ChatConversationView` 都默认使用产品界面：保留消息、工具详情、复制操作、用户错误与重试；不显示 Diagnostics、技术恢复提示、运行调试栏。
+宿主已有认证与连接编排时，可以直接使用后两个组件，无需额外选择一套产品/调试 view。
+
+```tsx
+<ManagerChatApp auth={auth} manager={manager} chat={chat} />
+// 开发或排查时显式启用；切换不重连、不清空草稿。
+<ManagerChatApp auth={auth} manager={manager} chat={chat} debug />
+```
+
+`ChatConversationView` 的旧 `presentation="standard"` 仍作为兼容的诊断开关；新接入使用 `debug`，显式 `debug={false}` 优先于旧参数。
+`ManagerChatApp.requestTimeoutMs` 默认 15 秒，允许配置到 60 秒，覆盖目录 UI、连接、平台发现和会话操作的 deadline。
+ManagerClient 的传输上限仍由宿主在 `createManagerClient({ timeoutMs })` 配置。
+Playground 的公开 Manager 入口将两者均设为 60 秒，以支持低带宽加载大会话；默认不勾选“开发诊断”。
+
+事件详情的“自动 / 双栏 / 弹窗”属于产品功能，默认保留，与 `debug` 无关。
+接入方可设置 `showEventDetailModeSelector={false}` 隐藏选择器；`ManagerChatApp`、`ChatCompactWorkspace` 和 `ChatConversationView` 均支持此配置。
+隐藏只影响选择器可见性，`ChatConversationView` 已有的受控或默认详情模式配置仍有效。
+
+中间 LLM 消息用边线与浅色背景区分，不重复显示标题。事件列表显示时分秒，悬停时间及详情保留完整时间。
+中间消息按实际渲染高度判断：超过五行时默认预览前三行，支持展开与收起；窗口宽度或流式内容变化会重新判断。
+assistant 消息占满宿主允许的内容宽度，仍受 `contentMaxWidth` 约束。
