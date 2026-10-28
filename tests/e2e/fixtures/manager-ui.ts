@@ -3,8 +3,10 @@ import { test, expect, type Page } from "@playwright/test";
 const readyDialog = async (page: Page, name?: string) => {
   const dialog = page.getByRole("dialog", name ? { name } : {});
   await expect(dialog).toBeVisible();
-  // WebKit can drop a click while Ant Design's zoom transition is entering.
-  await expect(dialog).not.toHaveClass(/(?:^|\s)ant-zoom-enter(?:\s|$)/);
+  // WebKit can drop a click during either the first appear or subsequent enter transition.
+  await expect(dialog).not.toHaveClass(
+    /(?:^|\s)ant-zoom-(?:appear|enter)(?:-\S+)?(?:\s|$)/,
+  );
   return dialog;
 };
 
@@ -1059,20 +1061,26 @@ export function registerManagerUiTests() {
       .getByRole("button", { name: "Browser round trip actions", exact: true })
       .click();
     await page.getByRole("menuitem", { name: "重命名" }).click();
-    await page
+    const renameDialog = await readyDialog(page);
+    await renameDialog
       .getByRole("textbox", { name: "对话名称" })
       .fill("已重命名的会话");
     const renamed = page.waitForResponse(
       (response) => response.request().method() === "PATCH",
     );
-    await page.getByRole("button", { name: "保存", exact: true }).click();
+    await renameDialog
+      .getByRole("button", { name: "保存", exact: true })
+      .click();
     expect((await renamed).status()).toBe(200);
     await expect(page.getByRole("dialog")).not.toBeVisible();
     await page
       .getByRole("button", { name: "已重命名的会话 actions", exact: true })
       .click();
     await page.getByRole("menuitem", { name: "删除对话" }).click();
-    await page.getByRole("button", { name: "删除", exact: true }).click();
+    const deleteDialog = await readyDialog(page);
+    await deleteDialog
+      .getByRole("button", { name: "删除", exact: true })
+      .click();
     await expect(page.getByRole("dialog")).not.toBeVisible();
     await expect(
       page.getByText("已重命名的会话", { exact: true }),
@@ -1085,7 +1093,10 @@ export function registerManagerUiTests() {
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).not.toBeVisible();
     await page.getByRole("button", { name: "退出登录", exact: true }).click();
-    await page.getByRole("button", { name: "确认", exact: true }).click();
+    const logoutDialog = await readyDialog(page);
+    await logoutDialog
+      .getByRole("button", { name: "确认", exact: true })
+      .click();
     await expect(
       page.getByRole("button", { name: "登录", exact: true }),
     ).toBeVisible();
