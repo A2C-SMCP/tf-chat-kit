@@ -27,7 +27,7 @@ export interface ManagerChatConnection {
 export interface ManagerChatSource<Robot> {
   connect(
     robot: Robot,
-    options?: { readonly signal?: AbortSignal },
+    options?: { readonly signal?: AbortSignal; readonly deadlineAt?: number },
   ): Promise<ManagerChatConnection>;
   getSnapshot?(): {
     readonly status: string;
@@ -62,6 +62,8 @@ export interface ManagerChatControllerOptions<Robot> {
   >;
   /** A lifecycle deadline, not a polling interval. */
   readonly disposeTimeoutMs?: number | undefined;
+  /** Supplies a fresh request deadline for connection and platform discovery. */
+  readonly getDeadlineAt?: (() => number) | undefined;
   readonly onDisposeError?: ((error: unknown) => void) | undefined;
 }
 export class ManagerChatController<Robot> {
@@ -167,6 +169,9 @@ export class ManagerChatController<Robot> {
     try {
       connection = await this.#options.manager.connect(robot, {
         signal: controller.signal,
+        ...(this.#options.getDeadlineAt
+          ? { deadlineAt: this.#options.getDeadlineAt() }
+          : {}),
       });
       if (this.#disposed || generation !== this.#generation) {
         connection.dispose();
@@ -183,7 +188,9 @@ export class ManagerChatController<Robot> {
         });
         const result = await catalog.list({
           signal: controller.signal,
-          deadlineAt: (this.#options.chat.now ?? Date.now)() + 30_000,
+          deadlineAt:
+            this.#options.getDeadlineAt?.() ??
+            (this.#options.chat.now ?? Date.now)() + 30_000,
         });
         catalog.dispose();
         if (this.#disposed || generation !== this.#generation) return;

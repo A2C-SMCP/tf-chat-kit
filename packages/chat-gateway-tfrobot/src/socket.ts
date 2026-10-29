@@ -462,6 +462,7 @@ const rememberBoundedMapValue = (
 };
 
 export interface CurrentServerRestInput extends GatewayRequestOptions {
+  readonly initialPreflight?: boolean | undefined;
   readonly checkpoint: ReadonlySet<string>;
   readonly conversationId: string;
   readonly limits: ResolvedTFRobotCurrentServerRebaseOptions;
@@ -675,12 +676,17 @@ export class TFRobotSocketClient {
     }
     if (this.#profile.kind === "current-server") {
       const preflightInput = {
+        initialPreflight: true,
         checkpoint: new Set<string>(),
         conversationId,
         deadlineAt: options.deadlineAt,
         limits: {
           ...this.#profile.rebase,
-          maxItems: this.#profile.rebase.pageSize,
+          // Validate the pinned REST credential and conversation before joining,
+          // without downloading the normal history page twice. The authoritative
+          // snapshot is loaded after join so notifications can bridge that boundary.
+          pageSize: 1,
+          maxItems: 1,
           maxPages: 1,
         },
         signal: establishmentAbort.signal,

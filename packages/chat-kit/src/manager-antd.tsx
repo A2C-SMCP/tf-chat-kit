@@ -42,6 +42,11 @@ import { managerUiCopy } from "./manager-ui-copy.js";
 import { managerUiStyle } from "./manager-ui-style.js";
 
 export interface ManagerChatAppProps {
+  readonly debug?: boolean | undefined;
+  /** Show Auto / Split / Modal controls; defaults to true, independently of debug. */
+  readonly showEventDetailModeSelector?: boolean | undefined;
+  /** Host-controlled request budget; defaults to 15 seconds, maximum 60 seconds. */
+  readonly requestTimeoutMs?: number | undefined;
   /** Host-owned clients; the app never disposes them or persists credentials. */
   readonly auth: AuthClient;
   readonly manager: ManagerClient;
@@ -55,6 +60,8 @@ export interface ManagerChatAppProps {
   readonly brand?: ReactNode;
   readonly getPopupContainer?: (() => HTMLElement) | undefined;
   readonly theme?: ThemeConfig | undefined;
+  /** Chat reading width. Defaults to the full available width; numbers are CSS pixels. */
+  readonly contentMaxWidth?: CSSProperties["maxWidth"] | undefined;
   readonly className?: string | undefined;
   readonly style?: CSSProperties | undefined;
   /** Host performs restoration; while true no password form is rendered. */
@@ -71,7 +78,6 @@ const enUS = (
     readonly default: import("antd/es/locale/index.js").Locale;
   }
 ).default;
-const deadline = () => Date.now() + 15_000;
 const defaultTheme: ThemeConfig = {
   token: {
     colorPrimary: "#236653",
@@ -86,6 +92,19 @@ const defaultTheme: ThemeConfig = {
 
 /** Opt-in complete interface. Owns only its connection controller and local UI. */
 export function ManagerChatApp(props: ManagerChatAppProps) {
+  if (
+    props.requestTimeoutMs !== undefined &&
+    (!Number.isFinite(props.requestTimeoutMs) ||
+      props.requestTimeoutMs <= 0 ||
+      props.requestTimeoutMs > 60_000)
+  )
+    throw new TypeError("Invalid Manager request timeout");
+  const requestBudget = useRef(props.requestTimeoutMs ?? 15_000);
+  requestBudget.current = props.requestTimeoutMs ?? 15_000;
+  const getDeadlineAt = useCallback(
+    () => Date.now() + requestBudget.current,
+    [],
+  );
   const sequence = useRef(0);
   const appRoot = useRef<HTMLDivElement>(null);
   const [entry, setEntry] = useState<{
@@ -103,12 +122,14 @@ export function ManagerChatApp(props: ManagerChatAppProps) {
     const controller = createManagerChatController({
       manager: props.manager,
       chat: props.chat,
+      getDeadlineAt,
       onDisposeError: (error) => report.current?.(error),
     });
     // Candidate catalog loading never releases the active chat client.
     const picker = createManagerChatController({
       manager: props.manager,
       chat: { ...props.chat, platformId: undefined },
+      getDeadlineAt,
       onDisposeError: (error) => report.current?.(error),
     });
     setEntry({
@@ -125,7 +146,7 @@ export function ManagerChatApp(props: ManagerChatAppProps) {
         (error) => report.current?.(error),
       );
     };
-  }, [props.manager, props.chat, props.auth, props.platformId]);
+  }, [props.manager, props.chat, props.auth, props.platformId, getDeadlineAt]);
   const active =
     entry?.auth === props.auth &&
     entry.manager === props.manager &&
@@ -164,6 +185,10 @@ export function ManagerChatApp(props: ManagerChatAppProps) {
                 props.theme?.token?.colorTextSecondary ?? "#647366",
               "--tf-manager-border":
                 props.theme?.token?.colorBorder ?? "#d7e0d9",
+              "--tf-manager-content-max-width":
+                typeof props.contentMaxWidth === "number"
+                  ? `${props.contentMaxWidth}px`
+                  : (props.contentMaxWidth ?? "none"),
               ...props.style,
             } as CSSProperties
           }
@@ -197,11 +222,17 @@ function ManagerAppBinding({
   restoring,
   brand,
   getPopupContainer,
+  debug = false,
+  showEventDetailModeSelector = true,
+  requestTimeoutMs = 15_000,
 }: ManagerChatAppProps & {
   controller: ManagerChatController<ManagerRobot>;
   picker: ManagerChatController<ManagerRobot>;
 }) {
   const copy = managerUiCopy[locale];
+  const requestBudget = useRef(requestTimeoutMs);
+  requestBudget.current = requestTimeoutMs;
+  const deadline = useCallback(() => Date.now() + requestBudget.current, []);
   const authState = useAuthSelector((s) => s);
   const scope = managerIdentityScope(authState);
   const directory = useSyncExternalStore(
@@ -847,6 +878,8 @@ function ManagerAppBinding({
     const chat = connected ? (
       <ChatProvider client={connection.client!}>
         <ChatCompactWorkspace
+          debug={debug}
+          showEventDetailModeSelector={showEventDetailModeSelector}
           key={clientKey.current.id}
           header={header}
           moreActions={[

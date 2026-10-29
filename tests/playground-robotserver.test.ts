@@ -1666,7 +1666,7 @@ describe("RobotServer Playground page security boundary", () => {
   }, 10_000);
 });
 
-describe("Playground Manager quick chat", () => {
+describe("Playground public Manager robot selection", () => {
   const managerResponse = (data: unknown): Response =>
     new Response(JSON.stringify(data), {
       status: 200,
@@ -1682,6 +1682,12 @@ describe("Playground Manager quick chat", () => {
             ? input.href
             : input.url;
       const path = new URL(href).pathname;
+      if (path.endsWith("/v1/chat/platforms"))
+        return managerResponse({
+          code: 200,
+          message: "Success",
+          data: [{ platformId: 17, name: "验收平台" }],
+        });
       if (path === "/auth/login-by-password") {
         return managerResponse({
           account: {
@@ -1744,43 +1750,9 @@ describe("Playground Manager quick chat", () => {
       throw new Error(`Unexpected Manager request: ${path}`);
     });
 
-  const robotFetch = (conversationTitle: string) =>
-    vi.fn(
-      async (
-        input: Parameters<typeof globalThis.fetch>[0],
-        init?: Parameters<typeof globalThis.fetch>[1],
-      ) => {
-        const request = new Request(input, init);
-        const url = new URL(request.url);
-        if (
-          request.method === "GET" &&
-          url.pathname.endsWith("/conversations")
-        ) {
-          return envelope({
-            conversations: [conversationDto(7, conversationTitle)],
-            cursor: null,
-          });
-        }
-        if (request.method === "GET" && url.pathname.endsWith("/messages")) {
-          return envelope({ cursor: null, events: [], messages: [] });
-        }
-        if (request.method === "GET" && url.pathname.endsWith("/status")) {
-          return envelope({ taskId: null, working: false });
-        }
-        if (request.method === "POST" && url.pathname.endsWith("/messages")) {
-          return envelope({ taskId: "run-accepted" });
-        }
-        if (request.method === "DELETE") {
-          return envelope({ conversationId: 7, message: "deleted" });
-        }
-        throw new Error(`Unexpected RobotServer request: ${request.method}`);
-      },
-    );
-
   it.each([false, true])(
-    "automatically connects the selected robot and supports retry (fail first: %s)",
+    "uses public robot/platform selection and supports retry (fail first: %s)",
     async (failFirst) => {
-      const conversationTitle = "word测试";
       const manager = managerFetch();
       let connectionAttempts = 0;
       vi.stubGlobal(
@@ -1794,7 +1766,6 @@ describe("Playground Manager quick chat", () => {
           return manager(args[0]);
         },
       );
-      const sockets = socketFixture();
       const container = document.createElement("div");
       document.body.append(container);
       const root = createRoot(container);
@@ -1814,16 +1785,7 @@ describe("Playground Manager quick chat", () => {
 
       try {
         await act(async () => {
-          root.render(
-            createElement(PlaygroundApp, {
-              createRobotServerSession: (config: RobotServerConnectionConfig) =>
-                createRobotServerPlaygroundSession(config, {
-                  fetch: robotFetch(conversationTitle),
-                  socketFactory: sockets.factory,
-                }),
-              createSession: () => createMockPlaygroundSession(),
-            }),
-          );
+          root.render(createElement(PlaygroundApp));
           await Promise.resolve();
         });
 
@@ -1850,39 +1812,33 @@ describe("Playground Manager quick chat", () => {
         );
         await clickButton("用户登录");
         await vi.waitFor(() =>
-          expect(container.textContent).toContain("当前机器人：通用"),
+          expect(container.textContent).toContain("使用这个机器人"),
         );
-
-        expect(container.textContent).not.toContain("连接当前机器人并开始对话");
-        if (failFirst) {
-          await vi.waitFor(() =>
-            expect(container.textContent).toContain("连接当前机器人失败"),
-          );
-          expect(connectionAttempts).toBe(1);
-          await clickButton("重试连接当前机器人");
-        }
         await vi.waitFor(() =>
-          expect(
-            container.querySelector('button[aria-label="历史会话"]'),
-          ).not.toBeNull(),
+          expect(container.querySelector(".tf-choice")).not.toBeNull(),
         );
         await act(async () => {
-          container
-            .querySelector<HTMLButtonElement>('button[aria-label="历史会话"]')!
-            .click();
+          container.querySelector<HTMLButtonElement>(".tf-choice")!.click();
         });
+        await clickButton("使用这个机器人");
+        if (failFirst) {
+          await vi.waitFor(() =>
+            expect(container.querySelector('[role="alert"]')).not.toBeNull(),
+          );
+          await clickButton("重试");
+        }
         await vi.waitFor(() =>
-          expect(
-            document.querySelector('[role="menu"]')?.textContent,
-          ).toContain(conversationTitle),
+          expect(container.textContent).toContain("验收平台"),
         );
-        expect(
-          document.querySelector('[role="menu"]')?.textContent,
-        ).not.toContain("暂无会话");
-        expect(connectionAttempts).toBe(failFirst ? 2 : 1);
-        expect(container.textContent).toContain(
-          `正在查看「${conversationTitle}」`,
+        const count = connectionAttempts;
+        const debug = [...container.querySelectorAll("label")].find(
+          (label) => label.textContent === "开发诊断",
         );
+        expect(debug).toBeDefined();
+        await act(async () => debug!.click());
+        expect(container.textContent).toContain("验收平台");
+        expect(connectionAttempts).toBe(count); // Debug changes never recreate the Manager connection.
+        expect(container.querySelector(".tf-choice")).toBeTruthy();
       } finally {
         await act(async () => root.unmount());
         container.remove();
@@ -1977,6 +1933,7 @@ describe("RobotServer deadline presentation", () => {
   });
 
   it("reports the joining phase and a sanitized trace when a join is never acknowledged", async () => {
+    vi.useFakeTimers();
     const socket = new NoAckSocket();
     const warnings = vi
       .spyOn(console, "warn")
@@ -2011,7 +1968,14 @@ describe("RobotServer deadline presentation", () => {
     });
 
     try {
-      await session.start();
+      const starting = session.start();
+      await vi.waitFor(() =>
+        expect(socket.emitted.map(([eventName]) => eventName)).toContain(
+          "join_conversation",
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(60_001);
+      await starting;
       expect(socket.emitted.map(([eventName]) => eventName)).toContain(
         "join_conversation",
       );
@@ -2038,8 +2002,13 @@ describe("RobotServer deadline presentation", () => {
       expect(JSON.stringify(traces)).not.toContain("bearer-secret");
     } finally {
       warnings.mockRestore();
-      await session.dispose();
+      try {
+        const disposing = session.dispose();
+        await vi.runAllTimersAsync();
+        await disposing;
+      } finally {
+        vi.useRealTimers();
+      }
     }
-    // The join intentionally waits out the real local request deadline.
-  }, 20_000);
+  });
 });

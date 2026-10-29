@@ -151,7 +151,12 @@ test("long result expansion, persistent selection and mobile detail", async ({
   const detail = page.locator(detailSelector);
   await expect(detail.getByRole("tab")).toHaveCount(2);
   await expect(detail).toContainText("检查完成");
-  await detail.getByRole("button", { name: /Show more/ }).click();
+  // Results expand in bounded increments; inspect the full original after expansion.
+  const more = detail.getByRole("button", { name: /Show more/ });
+  for (let step = 0; step < 16 && (await more.count()); step++)
+    await more.click();
+  const raw = detail.locator("summary", { hasText: "查看原文" });
+  if (await raw.count()) await raw.click();
   await expect(detail).toContainText('"index": 179');
   await expect(
     page.getByRole("navigation", { name: "Event navigation" }),

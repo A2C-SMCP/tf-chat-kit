@@ -6,6 +6,16 @@ import { Server } from "socket.io";
 const origin = process.env["TF_CHAT_MANAGER_ORIGIN"] ?? "http://127.0.0.1:4312";
 const cert = process.env["TF_CHAT_MANAGER_CERT"];
 const key = process.env["TF_CHAT_MANAGER_KEY"];
+/** DTOs exported by the real Server converter in the generated-text integration test. */
+/** @type {Array<Record<string, unknown> & {eventId: string}>} */
+const generatedEvents = JSON.parse(
+  readFileSync(
+    new URL("../fixtures/tfrs-generated-text.json", import.meta.url),
+    "utf8",
+  ),
+);
+let generatedTextEvents = false;
+let generatedLive = false;
 const account = {
   userId: "manager-user",
   accountId: "account",
@@ -75,6 +85,8 @@ const server = createListener((req, res) => {
   req.on("end", () => {
     if (url.pathname === "/__test/ui-options") {
       const input = JSON.parse(body);
+      if (input.generatedTextEvents !== undefined)
+        generatedTextEvents = input.generatedTextEvents;
       if (input.platforms !== undefined) platforms = input.platforms;
       if (input.platformsStatus !== undefined)
         platformsStatus = input.platformsStatus;
@@ -95,6 +107,20 @@ const server = createListener((req, res) => {
         conversationFailures = input.conversationFailures;
       if (input.holdMessageEcho !== undefined)
         holdMessageEcho = input.holdMessageEcho;
+      reply({});
+      return;
+    }
+    if (url.pathname === "/__test/generated-text") {
+      generatedLive = true;
+      for (const io of sockets) {
+        for (let index = 0; index < 3; index++)
+          io.of("/chat")
+            .to("42")
+            .emit(
+              "chat_event",
+              generatedEvents.find((event) => event.eventId === "mixed"),
+            );
+      }
       reply({});
       return;
     }
@@ -132,6 +158,8 @@ const server = createListener((req, res) => {
     if (url.pathname === "/auth/login-by-password") {
       directoryStatus = 200;
       chatStatus = 200;
+      generatedTextEvents = false;
+      generatedLive = false;
       historyStatus = 200;
       accountsStatus = 200;
       accountDisplayName = undefined;
@@ -495,7 +523,12 @@ const server = createListener((req, res) => {
                     },
                   ]
                 : [],
-            events: [],
+            events:
+              generatedTextEvents && conversationId === 42
+                ? generatedEvents.filter(
+                    (event) => generatedLive || event.eventId !== "mixed",
+                  )
+                : [],
             cursor:
               messageHistory.has(conversationId) &&
               !url.searchParams.has("cursor")

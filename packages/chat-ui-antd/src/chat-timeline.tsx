@@ -35,6 +35,7 @@ import {
   type TimelineTailState,
 } from "./timeline-tail-tracker.js";
 import type { ChatUiLabelOverrides } from "./types.js";
+import { isEmptyLlmEvent } from "./event-renderers.js";
 
 const MemoizedTimelineItem = memo(ChatTimelineItem);
 
@@ -101,7 +102,7 @@ export const ChatTimeline = ({
   className,
   conversationId,
   formatTimestamp = formatChatTimestampUtc,
-  items,
+  items: sourceItems,
   labels: labelOverrides,
   onEventSelect,
   onRendererError,
@@ -114,6 +115,20 @@ export const ChatTimeline = ({
   const registry = useMemo(
     () => createChatRendererRegistry(renderers),
     [renderers],
+  );
+  const items = useMemo(
+    () =>
+      sourceItems.filter((item) => {
+        if (!isEmptyLlmEvent(item) || item.kind !== "agent-event") return true;
+        return [
+          `agent-event:${item.eventType}`,
+          `agent-event:${item.eventCategory}`,
+          "agent-event",
+        ].some((key) =>
+          Object.prototype.hasOwnProperty.call(renderers ?? {}, key),
+        );
+      }),
+    [sourceItems, renderers],
   );
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
   const atBottomRef = useRef(true);
@@ -168,6 +183,14 @@ export const ChatTimeline = ({
       };
       const handleClick = (event: MouseEvent<HTMLDivElement>) => {
         if (isInteractiveEventTarget(event.target, event.currentTarget)) return;
+        const selection = event.currentTarget.ownerDocument.getSelection();
+        if (
+          selection &&
+          !selection.isCollapsed &&
+          (event.currentTarget.contains(selection.anchorNode) ||
+            event.currentTarget.contains(selection.focusNode))
+        )
+          return;
         const trigger = event.currentTarget.querySelector<HTMLElement>(
           "[data-chat-event-trigger]",
         );
@@ -196,49 +219,67 @@ export const ChatTimeline = ({
             alignItems: "stretch",
             cursor: selectable ? "pointer" : undefined,
             display: "flex",
-            gap: selectable ? token.marginXXS : undefined,
             outlineOffset: 2,
             padding: `${token.paddingXXS}px ${token.paddingSM}px`,
           }}
         >
-          {selectable ? (
-            <button
-              aria-label={selectionLabel}
-              aria-pressed={selected}
-              data-chat-event-trigger={item.id}
-              onClick={(event) => {
-                event.stopPropagation();
-                select(event.currentTarget);
-              }}
-              onKeyDown={handleKeyDown}
-              style={{
-                background: selected
-                  ? token.colorPrimaryBg
-                  : token.colorBgContainer,
-                border: `1px solid ${
-                  selected ? token.colorPrimary : token.colorBorderSecondary
-                }`,
-                borderRadius: token.borderRadius,
-                color: token.colorPrimary,
-                cursor: "pointer",
-                minWidth: 28,
-                padding: 0,
-              }}
-              title={selectionLabel}
-              type="button"
-            >
-              <span aria-hidden="true">›</span>
-            </button>
-          ) : null}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <MemoizedTimelineItem
-              displayMode="timeline"
-              formatTimestamp={formatTimestamp}
-              item={item}
-              onRendererError={onRendererError}
-              registry={registry}
-              selected={selected}
-            />
+          <div
+            className={selectable ? "tf-chat-event-card" : undefined}
+            data-event-selected={selectable && selected ? "true" : undefined}
+            style={
+              {
+                flex: 1,
+                minWidth: 0,
+                position: "relative",
+                borderRadius: token.borderRadiusLG,
+                "--tf-event-hover": token.colorFillTertiary,
+                "--tf-event-outline": token.colorPrimaryBorder,
+                "--tf-event-primary": token.colorPrimary,
+                "--tf-event-button-bg": token.colorBgContainer,
+              } as CSSProperties
+            }
+          >
+            <div className={selectable ? "tf-chat-event-content" : undefined}>
+              <MemoizedTimelineItem
+                labels={labelOverrides}
+                displayMode="timeline"
+                formatTimestamp={formatTimestamp}
+                item={item}
+                onRendererError={onRendererError}
+                registry={registry}
+                selected={selected}
+              />
+            </div>
+            {selectable ? (
+              <button
+                className="tf-chat-event-detail-action"
+                aria-label={selectionLabel}
+                aria-pressed={selected}
+                data-chat-event-trigger={item.id}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  select(event.currentTarget);
+                }}
+                onKeyDown={handleKeyDown}
+                title={selectionLabel}
+                type="button"
+              >
+                <svg
+                  aria-hidden="true"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="3" y="4" width="18" height="16" rx="3" />
+                  <path d="M14 4v16M6.5 9h4M6.5 13h4" />
+                </svg>
+              </button>
+            ) : null}
           </div>
         </div>
       );
@@ -246,16 +287,16 @@ export const ChatTimeline = ({
     [
       formatTimestamp,
       labels.openEventDetail,
+      labelOverrides,
       onEventSelect,
       onRendererError,
       registry,
       selectedEventId,
-      token.borderRadius,
+      token.borderRadiusLG,
       token.colorBgContainer,
-      token.colorBorderSecondary,
+      token.colorPrimaryBorder,
+      token.colorFillTertiary,
       token.colorPrimary,
-      token.colorPrimaryBg,
-      token.marginXXS,
       token.paddingSM,
       token.paddingXXS,
     ],
@@ -284,6 +325,20 @@ export const ChatTimeline = ({
   return (
     <ConversationFailureLabelsProvider labels={labelOverrides}>
       <ResourceLabelsProvider labels={labelOverrides}>
+        <style>{`
+          .tf-chat-event-content { padding-inline-end: 36px; min-width: 0; }
+          .tf-chat-event-content > [data-chat-event-row],
+          .tf-chat-event-content > [data-chat-generated-text] { margin-inline-end: -36px; padding-inline-end: 44px !important; }
+          .tf-chat-event-card:hover > .tf-chat-event-content > [data-chat-event-row],
+          .tf-chat-event-card:hover > .tf-chat-event-content > [data-chat-generated-text] { background: var(--tf-event-hover) !important; }
+          .tf-chat-event-card:hover { background: var(--tf-event-hover); box-shadow: 0 0 0 1px var(--tf-event-outline); }
+          .tf-chat-event-card[data-event-selected="true"], .tf-chat-event-card:focus-within { box-shadow: 0 0 0 1px var(--tf-event-outline); }
+          .tf-chat-event-detail-action { position: absolute; inset-inline-end: 8px; top: 8px; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; color: var(--tf-event-primary); background: var(--tf-event-button-bg); cursor: pointer; opacity: 0; }
+          .tf-chat-event-card:hover .tf-chat-event-detail-action,
+          .tf-chat-event-card:focus-within .tf-chat-event-detail-action { opacity: 1; }
+          .tf-chat-event-detail-action:focus-visible { outline: 2px solid var(--tf-event-primary); outline-offset: 2px; }
+          @media (hover: none) { .tf-chat-event-detail-action { opacity: 1; } }
+        `}</style>
         <div
           className={className}
           style={{

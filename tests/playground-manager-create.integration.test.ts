@@ -6,8 +6,6 @@ import { createRoot } from "react-dom/client";
 import { Server } from "socket.io";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { PlaygroundApp } from "../playground/src/app.js";
-import { createRobotServerPlaygroundSession } from "../playground/src/robotserver-session.js";
-import type { PlaygroundSession } from "../playground/src/playground-session.js";
 
 beforeAll(() => {
   Object.defineProperty(window, "matchMedia", {
@@ -29,7 +27,7 @@ const conversation = (id: number, title: string) => ({
   updateTimestamp: Date.now(),
 });
 
-describe("Manager quick-chat creation through real local HTTP/Socket.IO", () => {
+describe("Public Manager Playground through real local HTTP/Socket.IO", () => {
   it.each(["existing", "empty", "failure", "logout"] as const)(
     "creates an independent conversation (%s)",
     async (mode) => {
@@ -49,6 +47,10 @@ describe("Manager quick-chat creation through real local HTTP/Socket.IO", () => 
         });
         request.on("end", () => {
           const url = new URL(request.url ?? "/", "http://localhost");
+          url.pathname = url.pathname.replace(
+            /^\/c\/tfrobot\/local-ns\/local-robot/,
+            "",
+          );
           const reply = (data: unknown, status = 200, envelope = false) => {
             if (response.destroyed || response.writableEnded) return;
             response.writeHead(status, { "Content-Type": "application/json" });
@@ -107,7 +109,7 @@ describe("Manager quick-chat creation through real local HTTP/Socket.IO", () => 
                 namespace: "local-ns",
                 rid: "local-robot",
                 robotType: "tfrobot",
-                socketBaseURL: "https://robot.turingfocus.cn",
+                socketBaseURL: origin,
                 sioPath: "/socket.io/",
               },
             });
@@ -116,6 +118,8 @@ describe("Manager quick-chat creation through real local HTTP/Socket.IO", () => 
             reply({ access_token: "robot-fixture", expires_in: 3_600 });
           } else if (request.headers.authorization !== "Bearer robot-fixture")
             reply(null, 401, true);
+          else if (url.pathname === "/v1/chat/platforms")
+            reply([{ platformId: 17, name: "验收平台" }], 200, true);
           else if (
             url.pathname === "/v1/chat/conversations" &&
             request.method === "GET"
@@ -129,7 +133,13 @@ describe("Manager quick-chat creation through real local HTTP/Socket.IO", () => 
             url.pathname === "/v1/chat/conversations" &&
             request.method === "POST"
           ) {
-            const title = url.searchParams.get("title") ?? "";
+            const payload = JSON.parse(body) as {
+              title: string;
+              platformId: number;
+            };
+            expect(payload.platformId).toBe(17);
+            expect(url.searchParams.has("title")).toBe(false);
+            const title = payload.title;
             creates.push({
               title,
               authorized:
@@ -171,7 +181,10 @@ describe("Manager quick-chat creation through real local HTTP/Socket.IO", () => 
           } else reply(null, 404, true);
         });
       });
-      const sockets = new Server(server, { transports: ["websocket"] });
+      const sockets = new Server(server, {
+        transports: ["websocket"],
+        path: "/c/tfrobot/local-ns/local-robot/socket.io/",
+      });
       const socketTokens: unknown[] = [];
       sockets
         .of("/chat")
@@ -207,8 +220,12 @@ describe("Manager quick-chat creation through real local HTTP/Socket.IO", () => 
                 ? input.href
                 : input.url,
           );
-          if (url.hostname === "api-staging.turingfocus.cn") {
-            const rewritten = `${origin}${url.pathname}${url.search}`;
+          if (
+            ["api-staging.turingfocus.cn", "robot.turingfocus.cn"].includes(
+              url.hostname,
+            )
+          ) {
+            const rewritten = `${origin}${url.pathname.replace(/^\/c\/tfrobot\/local-ns\/local-robot/, "")}${url.search}`;
             return nativeFetch(
               typeof input === "string" || input instanceof URL
                 ? rewritten
@@ -219,7 +236,7 @@ describe("Manager quick-chat creation through real local HTTP/Socket.IO", () => 
           return nativeFetch(input, init);
         },
       );
-      const sessions: PlaygroundSession[] = [];
+      vi.stubGlobal("__TF_CHAT_PLAYGROUND_ALLOWED_SERVER_ORIGINS__", origin);
       const container = document.createElement("div");
       document.body.append(container);
       const root = createRoot(container);
@@ -240,30 +257,7 @@ describe("Manager quick-chat creation through real local HTTP/Socket.IO", () => 
         });
       };
       try {
-        await act(async () =>
-          root.render(
-            createElement(PlaygroundApp, {
-              createRobotServerSession: (config) => {
-                expect(config.httpBaseUrl).toBe(
-                  "https://robot.turingfocus.cn/c/tfrobot/local-ns/local-robot",
-                );
-                expect(config.credential).toBeUndefined();
-                expect(config.sessionProvider).toBeDefined();
-                const session = createRobotServerPlaygroundSession(
-                  {
-                    ...config,
-                    httpBaseUrl: origin,
-                    socketNamespaceUrl: `${origin}/chat`,
-                    socketPath: "/socket.io",
-                  },
-                  { fetch: nativeFetch },
-                );
-                sessions.push(session);
-                return session;
-              },
-            }),
-          ),
-        );
+        await act(async () => root.render(createElement(PlaygroundApp)));
         await click("进入登录与机器人");
         const realMode = [...container.querySelectorAll("label")].find(
           (label) => label.textContent === "真实用户模式",
@@ -288,53 +282,59 @@ describe("Manager quick-chat creation through real local HTTP/Socket.IO", () => 
           }
         });
         await click("用户登录");
+        await vi.waitFor(() =>
+          expect(container.querySelector(".tf-choice")).not.toBeNull(),
+        );
+        await vi.waitFor(() =>
+          expect(container.querySelector(".tf-choice")).not.toBeNull(),
+        );
+        await act(async () => {
+          container.querySelector<HTMLButtonElement>(".tf-choice")!.click();
+        });
+        await click("使用这个机器人");
+        await vi.waitFor(() =>
+          expect(container.textContent).toContain("验收平台"),
+        );
+        await click("验收平台");
+        await click("开始对话");
         await vi.waitFor(
-          () => expect(sessions.at(-1)?.getState().listLoading).toBe(false),
+          () =>
+            expect(
+              container.querySelector('button[aria-label="新建对话"]'),
+              [...container.querySelectorAll("p,[role=alert],h1,button")]
+                .map((e) => e.textContent)
+                .join(" | "),
+            ).not.toBeNull(),
           { timeout: 8_000 },
         );
-        expect(sessions).toHaveLength(1);
-        await vi.waitFor(() =>
-          expect(container.textContent).toContain(
-            mode === "empty" ? "已加载 0 个会话" : business.title,
-          ),
-        );
-        expect(exchanges).toHaveLength(1);
-        expect(exchanges[0]?.get("subject_token")).toBe("manager-fixture");
-        expect(exchanges[0]?.get("audience")).toBe("robot:robot-account");
-        await click("新建会话");
-        expect(
-          document.querySelector('[role="dialog"]')?.textContent,
-        ).toContain("Playground");
-        await click("确认新建");
+        expect(container.textContent).not.toContain("Diagnostics");
+        expect(container.textContent).not.toContain("事件详情模式");
+        // The public workspace creates a conversation on first send, not by a private Playground modal.
+        const composer =
+          container.querySelector<HTMLTextAreaElement>("textarea")!;
+        expect(composer).not.toBeNull();
+        await act(async () => {
+          Object.getOwnPropertyDescriptor(
+            HTMLTextAreaElement.prototype,
+            "value",
+          )!.set!.call(composer, "Public Manager fixture message");
+          composer.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        await click("发送");
         await vi.waitFor(() => expect(creates).toHaveLength(1));
         if (mode === "failure") {
           await vi.waitFor(() =>
-            expect(sessions[0]?.getState().contentState.kind).toBe("error"),
+            expect(container.querySelector('[role="alert"]')).not.toBeNull(),
           );
-          expect(container.textContent).toContain(
-            sessions[0]!.getState().status,
-          );
-          expect(document.querySelector('[role="dialog"]')).not.toBeNull();
-          await click("确认新建");
-        }
-        if (mode === "logout") {
-          await click("退出登录");
+          expect(sentTo).toEqual([]);
+        } else if (mode === "logout") {
+          // Unmount the public host while create is in flight; no message may escape afterwards.
+          await act(async () => root.render(null));
           heldReply?.();
-          await vi.waitFor(() => expect(sessions[0]?.disposed).toBe(true));
-          expect(container.textContent).not.toContain(
-            "正在查看「[tf-chat-kit playground]",
-          );
         } else {
-          await vi.waitFor(
-            () =>
-              expect(sessions[0]?.getState().selectedConversationId).toBe("42"),
-            { timeout: 8_000 },
-          );
-          await vi.waitFor(() =>
-            expect(container.textContent).toContain(
-              `正在查看「${creates.at(-1)?.title}」`,
-            ),
-          );
+          await vi.waitFor(() => expect(sentTo).toEqual(["42"]), {
+            timeout: 8_000,
+          });
           expect(socketTokens.length).toBeGreaterThan(0);
           expect(socketTokens.every((token) => token === "robot-fixture")).toBe(
             true,
@@ -344,24 +344,16 @@ describe("Manager quick-chat creation through real local HTTP/Socket.IO", () => 
           creates.every(
             (entry) =>
               entry.authorized &&
-              entry.title.startsWith("[tf-chat-kit playground] "),
+              entry.title === "Public Manager fixture message",
           ),
         ).toBe(true);
-        expect(sentTo).toEqual([]);
+        if (mode === "failure" || mode === "logout") expect(sentTo).toEqual([]);
         expect(container.innerHTML).not.toContain("robot-fixture");
         expect(container.innerHTML).not.toContain("manager-fixture");
       } finally {
         heldReply?.();
         try {
           await act(async () => root.unmount());
-          await Promise.all(sessions.map((session) => session.dispose()));
-          await vi.waitFor(
-            () =>
-              expect(sessions.every((session) => session.client.disposed)).toBe(
-                true,
-              ),
-            { timeout: 8_000 },
-          );
         } finally {
           container.remove();
           if (previousAct === undefined)
@@ -375,7 +367,7 @@ describe("Manager quick-chat creation through real local HTTP/Socket.IO", () => 
         }
       }
       // Logout revokes all sessions immediately: cleanup cannot retain a credential for DELETE.
-      expect(deleted).toEqual(mode === "logout" ? [] : ["42"]);
+      expect(deleted).toEqual([]); // Public Manager never deletes user conversations on unmount.
       if (mode !== "empty") expect(conversations.get(7)).toEqual(business);
     },
     20_000,

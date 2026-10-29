@@ -53,6 +53,7 @@ export const ChatEventDetail = ({
       <ResourceLabelsProvider labels={labels}>
         <div className={className} style={style}>
           <ChatTimelineItem
+            labels={labels}
             displayMode="detail"
             formatTimestamp={formatTimestamp}
             item={item}

@@ -32,7 +32,7 @@ beforeAll(() => {
     configurable: true,
   });
 });
-async function fixture(labels?: ChatUiLabelOverrides) {
+async function fixture(labels?: ChatUiLabelOverrides, debug = true) {
   const { client, memory } = await createLoadedClient();
   const conversationId = memory.fixtures.conversation.id;
   const element = document.createElement("div");
@@ -44,6 +44,7 @@ async function fixture(labels?: ChatUiLabelOverrides) {
         ChatProvider,
         { client },
         createElement(ChatNotices, {
+          showDiagnostics: debug,
           conversationId,
           getDeadlineAt: deadlineAt,
           labels,
@@ -490,6 +491,24 @@ it("keeps dismissed global faults inspectable without exposing another conversat
       f.client.getDiagnostics().find((record) => record.id === "global-fault")
         ?.resolved,
     ).toBe(true);
+  } finally {
+    await f.close();
+  }
+});
+
+it("keeps technical recovery and diagnostics hidden in product mode", async () => {
+  const f = await fixture(undefined, false);
+  try {
+    await f.emit({
+      status: "degraded",
+      recovery: {
+        complete: false,
+        assurance: "best-effort",
+        source: "rest-rebase",
+      },
+    });
+    expect(f.element.textContent).not.toContain("best-effort");
+    expect(f.element.textContent).not.toContain("Diagnostics");
   } finally {
     await f.close();
   }
