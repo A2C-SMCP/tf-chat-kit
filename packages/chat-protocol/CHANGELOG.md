@@ -1,5 +1,11 @@
 # @turingfocus/chat-protocol
 
+## 0.11.0
+
+### Minor Changes
+
+- d655c82: Render LLM event content as safe intermediate Markdown and hide empty successful output by default. Preserve optional generatedTexts compatibility, event identity, host renderer overrides, and sanitized display-only cache projections; no new Server field is required.
+
 ## 0.10.1
 
 ### Patch Changes

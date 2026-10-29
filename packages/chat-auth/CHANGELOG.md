@@ -1,5 +1,11 @@
 # @turingfocus/chat-auth
 
+## 0.12.1
+
+### Patch Changes
+
+- d655c82: Keep the account selection control visible at its container width and show a localized placeholder before an account is selected.
+
 ## 0.12.0
 
 ### Minor Changes

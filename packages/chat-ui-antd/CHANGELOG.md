@@ -1,5 +1,21 @@
 # @turingfocus/chat-ui-antd
 
+## 0.11.0
+
+### Minor Changes
+
+- d655c82: Render LLM event content as safe intermediate Markdown and hide empty successful output by default. Preserve optional generatedTexts compatibility, event identity, host renderer overrides, and sanitized display-only cache projections; no new Server field is required.
+- d655c82: Default conversation interfaces to product UI. Enable developer diagnostics explicitly with debug, including loading/error states; preserve user-facing errors and recovery actions. Playground Manager now consumes the public ManagerChatApp with an explicit 60 second request budget. Auto / Split / Modal selection remains visible by default and can be hidden independently with showEventDetailModeSelector. Event cards replace the separate arrow column with a hover/focus detail icon, keep keyboard access, and do not open details while selecting text.
+
+  Simplify intermediate messages, collapse rendered content taller than five lines to a three-line preview, shorten event timeline times while keeping full timestamps in details, and use the available width for assistant messages.
+
+### Patch Changes
+
+- d655c82: Let Manager chat content follow the host width by default. Add optional contentMaxWidth to constrain both the welcome and conversation views without replacing the active connection or draft.
+- Updated dependencies [d655c82]
+  - @turingfocus/chat-protocol@0.11.0
+  - @turingfocus/chat-react@0.11.0
+
 ## 0.10.1
 
 ### Patch Changes
