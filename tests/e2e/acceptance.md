@@ -6,16 +6,16 @@ manual compatibility target and is never required by CI.
 
 ## Issue #97 identity and ChatKit separation
 
-| Acceptance criterion                                                                                                                   | Evidence                                                                                                                                                                                                               |
-| -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Playground landing page separates Chat Kit debugging from Manager identity and robot workflows                                         | `PlaygroundApp` renders two explicit module cards; Chat Kit starts Mock without login, while 登录与机器人 owns Manager auth, organization/robot selection and the quick-chat entry.                                    |
-| Mock ChatKit can render before login and remains independent from identity state                                                       | `Mock ChatKit does not require login and the identity toolbar can log out`                                                                                                                                             |
-| Identity supports Mock/Manager, staging/production/custom Manager, account or organization context, robot directory and logout         | The three Manager browser scenarios plus the logout flow in `tests/e2e/playground.spec.ts`                                                                                                                             |
-| Manager robot directory keeps employee ID, robot ID and robot account ID distinct, and strips legacy token fields from routing headers | `tests/playground-manager-directory.test.ts`                                                                                                                                                                           |
-| RobotServer mode keeps the existing explicit credential form and releases the previous ChatKit instance before reconnecting            | Bearer/Admin/password RobotServer scenarios and the existing lifecycle assertions                                                                                                                                      |
-| Manager bearer is not silently reused as a RobotServer credential; automatic connection remains capability-gated                       | Manager connection-info plus RFC 8693 exchange tests verify `robot:{robotAccountId}`, `chat:read chat:send`, `token_profile=session`, short-token caching, and the manual fallback for robots without `robotAccountId` |
-| Manager automatic connection exchanges the token through the browser fetch in a real browser                                           | `真实用户模式的 Token Exchange 走浏览器 fetch 并建立当前机器人会话` plus the receiver-contract unit test in `tests/manager-token-exchange.test.ts`                                                                     |
-| Public ChatKit package boundaries and authentication ownership remain unchanged                                                        | No public ChatKit runtime/UI package API was changed by this feature; the separate `chat-auth` transport compatibility fixes remain host-independent and are covered by their own tests                                |
+| Acceptance criterion                                                                                                                          | Evidence                                                                                                                                                                                                               |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Playground landing page separates Chat Kit debugging from Manager identity and robot workflows                                                | `PlaygroundApp` renders three explicit module cards; Chat Kit starts Mock without login, while 登录与机器人 owns Manager auth, organization/robot selection and the quick-chat entry.                                  |
+| Mock ChatKit can render before login and remains independent from identity state                                                              | `Mock ChatKit does not require login and the identity toolbar can log out`                                                                                                                                             |
+| Identity supports Mock/Manager, test (default)/staging/production/custom Manager, account or organization context, robot directory and logout | The three Manager browser scenarios plus the logout flow in `tests/e2e/playground.spec.ts`                                                                                                                             |
+| Manager robot directory keeps employee ID, robot ID and robot account ID distinct, and strips legacy token fields from routing headers        | `tests/playground-manager-directory.test.ts`                                                                                                                                                                           |
+| RobotServer mode keeps the existing explicit credential form and releases the previous ChatKit instance before reconnecting                   | Bearer/Admin/password RobotServer scenarios and the existing lifecycle assertions                                                                                                                                      |
+| Manager bearer is not silently reused as a RobotServer credential; automatic connection remains capability-gated                              | Manager connection-info plus RFC 8693 exchange tests verify `robot:{robotAccountId}`, `chat:read chat:send`, `token_profile=session`, short-token caching, and the manual fallback for robots without `robotAccountId` |
+| Manager automatic connection exchanges the token through the browser fetch in a real browser                                                  | `真实用户模式的 Token Exchange 走浏览器 fetch 并建立当前机器人会话` plus the receiver-contract unit test in `tests/manager-token-exchange.test.ts`                                                                     |
+| Public ChatKit package boundaries and authentication ownership remain unchanged                                                               | No public ChatKit runtime/UI package API was changed by this feature; the separate `chat-auth` transport compatibility fixes remain host-independent and are covered by their own tests                                |
 
 ## Parent #10
 
@@ -147,3 +147,17 @@ without mounting the repository (run the server in another terminal):
 docker run --rm --init --shm-size=1g -p 127.0.0.1:3002:3002 mcr.microsoft.com/playwright:v1.62.1-noble npx -y playwright@1.62.1 run-server --port 3002 --host 0.0.0.0
 PW_TEST_CONNECT_WS_ENDPOINT=ws://127.0.0.1:3002/ PW_TEST_CONNECT_EXPOSE_NETWORK='<loopback>' pnpm test:e2e tests/e2e/long-history-webkit.spec.ts
 ```
+
+## #167 共享连接验收与 test 默认环境
+
+`pnpm dev:playground` 后访问 `http://localhost:4311`：
+
+1. 首页进入「共享连接验收」，点击「一键连接两个通道」。底层连接数应为 1，两个连接标识相同。
+2. 输入并发送聊天消息，再修改「宿主选区内容」并让机器人调用工具。收到的结果应为新内容，宿主执行次数增加。
+3. 释放聊天后继续调用工具；重新连接聊天、注销工具后继续发送消息。另一方保持可用。
+4. 模拟断网，两个通道恢复后继续调用。两方都释放时底层连接数为 0；仍可重新接入。
+5. 「登录与机器人」→「真实用户模式」默认选中 test，显示 `https://api.test.turingfocus.cn`；可切回 staging、正式、自定义。
+
+自动化：`tests/e2e/shared-socket.spec.ts` 三项浏览器场景覆盖上述闭环、实际浏览器 WebSocket 数量、375px 窄屏、多窗口隔离和重置请求失败后的真实连接关闭。Manager 四项定向浏览器场景覆盖 test 默认地址、staging 切换、目录重试及换票；`tests/playground-manager-create.integration.test.ts` 经真实本地 HTTP 验证默认地址接入。
+
+这些是本地协议与 UI 验证，不代表真实 test 集群登录或机器人联调已经通过；不会读取或重放用户在浏览器输入的凭据。

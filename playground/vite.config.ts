@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { defineConfig } from "vite";
 
+import { createSharedSocketDemoPlugin } from "./shared-socket-server.js";
 import { createRobotServerProxyPlugin } from "./robotserver-proxy.js";
 
 const workspaceRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -19,6 +20,7 @@ export default defineConfig(({ command }) => ({
     ),
   },
   plugins: [
+    createSharedSocketDemoPlugin(),
     createRobotServerProxyPlugin({
       debugPrefillFilePath: path.join(workspaceRoot, ".debug"),
     }),

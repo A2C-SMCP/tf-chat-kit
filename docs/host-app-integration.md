@@ -1,5 +1,59 @@
 # 在宿主 App 中接入 Chat Kit
 
+## 共享聊天与 RemoteTool 连接（#167）
+
+本入口随 #167 的 Minor Changeset 发布。需要同时聊天与执行宿主工具时，可显式共享底层
+WebSocket。使用已解析的 RobotServer origin 和 Socket 路径，两个客户端的 namespace
+地址及 socketPath 必须与共享上下文匹配；不匹配会报错，不会另建连接。
+
+```ts
+import {
+  createTFRobotChatClient,
+  createTFRobotRemoteToolClient,
+  createTFRobotSocketConnection,
+} from "@turingfocus/chat-kit/headless";
+
+const connection = createTFRobotSocketConnection({
+  serverUrl: robotServerOrigin,
+  socketPath,
+});
+const chat = createTFRobotChatClient({
+  ...chatOptions,
+  socketFactory: connection.socketFactory,
+});
+const tools = createTFRobotRemoteToolClient({
+  ...toolOptions,
+  socketFactory: connection.socketFactory,
+});
+tools.start();
+// 正常使用 chat；两方可按需要分别释放。
+tools.dispose();
+await chat.dispose({ deadlineAt: Date.now() + 10_000 });
+connection.dispose();
+```
+
+构造上下文不会连接网络或读取凭据。两方分别通过各自 SessionProvider 取得认证材料，
+可以使用不同 scope 的短期 Token；上下文本身不判定业务身份。宿主须为每个身份、Robot
+创建独立上下文，身份切换时同时释放旧客户端和上下文。
+
+单独使用任一客户端都可工作。工具释放不关闭仍在线的聊天，聊天释放不注销工具。
+最后一个活动 namespace 断开后底层连接关闭；未 dispose 的上下文可再次接入新客户端。
+已 dispose 的客户端不复活，工具重注册通过创建新 Provider 完成。React 接入沿用
+`createTFRobotChatClientFactory` 的 socketFactory 选项。
+
+每个上下文同一 namespace 同时只允许一个所有者，聊天内部会话租约仍由 Gateway 管理；
+多个独立 ChatClient 或 Provider 需要分别创建上下文，避免抢占认证或监听器。
+普通网络故障会同时影响共享链路上的通道，由同一个 Manager 重连后各自恢复；
+单方认证拒绝或工具注册冲突只影响该 namespace。整体 `connection.dispose()` 为终止操作，
+会关闭所有通道、结束在途工作并禁止重新连接。建议先释放子客户端，再释放上下文。
+
+未注入共享 socketFactory 时，原有独立连接接法保持不变。
+
+工具 CONNECT 已发送后若认证超时，SDK 会保留必要的握手清理，消费迟到结果后再接入新
+所有者；对端始终不答复时重试仍会超时，聊天继续可用。当前兼容目标为 TFRobotServer 的
+Python Socket.IO 实现；Node Socket.IO 的立即 namespace 重入差异和实际协议探针结果见
+[#167 验证记录](baselines/issue-167/verification.md)。
+
 ## 服务端消息身份与发送记录（#141）
 
 支持正式 `elementId` 的 Server 会由 Gateway 映射为 `Message.serverMessageId`；同一会话的

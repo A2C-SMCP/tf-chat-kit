@@ -207,7 +207,7 @@ describe("Manager quick-chat creation through real local HTTP/Socket.IO", () => 
                 ? input.href
                 : input.url,
           );
-          if (url.hostname === "api-staging.turingfocus.cn") {
+          if (url.hostname === "api.test.turingfocus.cn") {
             const rewritten = `${origin}${url.pathname}${url.search}`;
             return nativeFetch(
               typeof input === "string" || input instanceof URL

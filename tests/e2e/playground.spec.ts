@@ -254,7 +254,7 @@ test("真实用户模式的 Token Exchange 走浏览器 fetch 并建立当前机
       conversationRequests.push(url);
     }
   });
-  await installManagerRoute(page, "https://api-staging.turingfocus.cn", {
+  await installManagerRoute(page, "https://api.test.turingfocus.cn", {
     connectable: true,
     onTokenExchange: (body) => exchanges.push(body),
   });
@@ -340,7 +340,7 @@ test.beforeEach(async ({ request }) => {
 });
 
 test("Manager 目录失败显示安全诊断并可原地重试", async ({ page }) => {
-  await installManagerRoute(page, "https://api-staging.turingfocus.cn", {
+  await installManagerRoute(page, "https://api.test.turingfocus.cn", {
     connectable: true,
   });
   let unavailable = true;
@@ -383,7 +383,7 @@ for (const unavailable of [
   test(`Manager 机器人资格原因准确：${unavailable.status}/${unavailable.templateType}`, async ({
     page,
   }) => {
-    await installManagerRoute(page, "https://api-staging.turingfocus.cn");
+    await installManagerRoute(page, "https://api.test.turingfocus.cn");
     await page.route("**/api/v1/digital-employees?*", (route) =>
       route.fulfill({
         json: {
@@ -480,7 +480,7 @@ test("legacy fixture accepts omitted platformId while retaining authentication a
   ]);
 });
 
-test("真实用户模式默认选择 staging 环境，也支持切换自定义地址", async ({
+test("真实用户模式默认选择 test 环境，也支持切换 staging 和自定义地址", async ({
   page,
 }) => {
   await page.goto("/");
@@ -489,7 +489,16 @@ test("真实用户模式默认选择 staging 环境，也支持切换自定义�
     page.getByRole("heading", { name: "Chat Kit 调试台" }),
   ).toHaveCount(0);
   await page.getByText("真实用户模式", { exact: true }).click();
-  await expect(page.getByText("staging", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("radio", { name: "test", exact: true }),
+  ).toBeChecked();
+  await expect(
+    page.getByText("https://api.test.turingfocus.cn", { exact: true }),
+  ).toBeVisible();
+  await page.getByText("staging", { exact: true }).click();
+  await expect(
+    page.getByText("https://api-staging.turingfocus.cn", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByText("正式", { exact: true })).toBeVisible();
   await expect(page.getByText("自定义", { exact: true })).toBeVisible();
   await expect(page.getByLabel("自定义 Manager API 地址")).toBeHidden();
@@ -506,6 +515,7 @@ test("真实用户模式可以直接使用 staging Manager 登录", async ({ pag
   await page.goto("/");
   await enterManager(page);
   await page.getByText("真实用户模式", { exact: true }).click();
+  await page.getByText("staging", { exact: true }).click();
   await page.getByLabel("用户账号").fill("real-user");
   await page.getByLabel("用户密码").fill("real-password");
   await page.getByRole("button", { name: "用户登录" }).click();

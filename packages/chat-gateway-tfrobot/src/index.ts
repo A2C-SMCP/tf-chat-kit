@@ -39,3 +39,9 @@ export {
   type TFRobotConversationPlatform,
 } from "./platforms.js";
 export type { TFRobotConversationContract } from "./types.js";
+
+export {
+  createTFRobotSocketConnection,
+  type TFRobotSocketConnection,
+  type TFRobotSocketConnectionOptions,
+} from "./socket-connection.js";

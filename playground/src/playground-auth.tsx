@@ -21,6 +21,7 @@ import { ManagerIntegrationError } from "../../packages/chat-auth/src/manager.js
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 /** The Manager deployment used by the local playground in the common case. */
+export const TEST_MANAGER_BASE_URL = "https://api.test.turingfocus.cn";
 export const STAGING_MANAGER_BASE_URL = "https://api-staging.turingfocus.cn";
 export const PRODUCTION_MANAGER_BASE_URL = "https://api.turingfocus.cn";
 
@@ -306,7 +307,7 @@ const PlaygroundAuthGateContent = ({
   readonly client: AuthClient;
   readonly onLogout: () => void;
   readonly onRealLogin: (
-    environment: "staging" | "production" | "custom",
+    environment: "test" | "staging" | "production" | "custom",
     baseUrl: string,
     identifier: string,
     password: string,
@@ -330,8 +331,8 @@ const PlaygroundAuthGateContent = ({
   const [robotId, setRobotId] = useState(selectedRobotId);
   const [loginMode, setLoginMode] = useState<"mock" | "real">("mock");
   const [realEnvironment, setRealEnvironment] = useState<
-    "staging" | "production" | "custom"
-  >("staging");
+    "test" | "staging" | "production" | "custom"
+  >("test");
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [realIdentifier, setRealIdentifier] = useState("");
   const [realPassword, setRealPassword] = useState("");
@@ -350,8 +351,8 @@ const PlaygroundAuthGateContent = ({
           <Typography.Title level={3}>身份与目录</Typography.Title>
           <Typography.Paragraph type="secondary">
             身份数据与 ChatKit 聊天后端相互独立。Mock
-            身份使用本地内存数据；真实身份可连接 staging Manager、正式 Manager
-            或自定义 Manager 环境。
+            身份使用本地内存数据；真实身份可连接 test Manager、staging
+            Manager、正式 Manager 或自定义 Manager 环境。
           </Typography.Paragraph>
           <Radio.Group
             block
@@ -389,13 +390,18 @@ const PlaygroundAuthGateContent = ({
                   onChange={(event) => setRealEnvironment(event.target.value)}
                   optionType="button"
                   options={[
+                    { label: "test", value: "test" },
                     { label: "staging", value: "staging" },
                     { label: "正式", value: "production" },
                     { label: "自定义", value: "custom" },
                   ]}
                   value={realEnvironment}
                 />
-                {realEnvironment === "staging" ? (
+                {realEnvironment === "test" ? (
+                  <Typography.Text type="secondary">
+                    {TEST_MANAGER_BASE_URL}
+                  </Typography.Text>
+                ) : realEnvironment === "staging" ? (
                   <Typography.Text type="secondary">
                     {STAGING_MANAGER_BASE_URL}
                   </Typography.Text>
@@ -432,11 +438,13 @@ const PlaygroundAuthGateContent = ({
                       setRealSubmitting(true);
                       void onRealLogin(
                         realEnvironment,
-                        realEnvironment === "staging"
-                          ? STAGING_MANAGER_BASE_URL
-                          : realEnvironment === "production"
-                            ? PRODUCTION_MANAGER_BASE_URL
-                            : customBaseUrl,
+                        realEnvironment === "test"
+                          ? TEST_MANAGER_BASE_URL
+                          : realEnvironment === "staging"
+                            ? STAGING_MANAGER_BASE_URL
+                            : realEnvironment === "production"
+                              ? PRODUCTION_MANAGER_BASE_URL
+                              : customBaseUrl,
                         realIdentifier,
                         realPassword,
                       )
@@ -522,7 +530,7 @@ export const PlaygroundAuthGate = ({
   readonly client: AuthClient;
   readonly onLogout: () => void;
   readonly onRealLogin: (
-    environment: "staging" | "production" | "custom",
+    environment: "test" | "staging" | "production" | "custom",
     baseUrl: string,
     identifier: string,
     password: string,

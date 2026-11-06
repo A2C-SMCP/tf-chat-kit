@@ -1,3 +1,4 @@
+import { SharedSocketPanel } from "./shared-socket-panel.js";
 import {
   capabilityScenarios,
   type CapabilityScenario,
@@ -598,7 +599,7 @@ const PlaygroundWorkspace = ({
   );
 };
 
-type PlaygroundModule = "home" | "chatkit" | "manager";
+type PlaygroundModule = "home" | "chatkit" | "manager" | "shared-socket";
 
 interface PlaygroundSessionPlan {
   readonly create: () => PlaygroundSession;
@@ -634,9 +635,11 @@ const PlaygroundModuleFrame = ({
 const PlaygroundLanding = ({
   onEnterChatKit,
   onEnterManager,
+  onEnterSharedSocket,
 }: {
   readonly onEnterChatKit: () => void;
   readonly onEnterManager: () => void;
+  readonly onEnterSharedSocket: () => void;
 }) => (
   <main className="playground-page playground-landing">
     <section className="playground-landing-hero">
@@ -645,8 +648,8 @@ const PlaygroundLanding = ({
       </Typography.Text>
       <Typography.Title level={1}>选择调试模块</Typography.Title>
       <Typography.Paragraph type="secondary">
-        ChatKit 调试和 Manager
-        登录目录是两条独立工作流。先选择你要验证的内容，避免登录、路由和聊天能力互相干扰。
+        选择 ChatKit 调试、共享连接验收或 Manager
+        登录与机器人，进入对应模块验证。
       </Typography.Paragraph>
     </section>
     <section className="playground-module-grid" aria-label="Playground 模块">
@@ -695,7 +698,7 @@ const PlaygroundLanding = ({
         <Typography.Title level={3}>登录与机器人</Typography.Title>
         <Typography.Paragraph type="secondary">
           专注 Manager
-          登录、staging/正式/自定义环境、组织切换、机器人切换，以及当前机器人最小对话验证。
+          登录、test（默认）/staging/正式/自定义环境、组织切换、机器人切换，以及当前机器人最小对话验证。
         </Typography.Paragraph>
         <button
           className="playground-module-card-link"
@@ -706,6 +709,20 @@ const PlaygroundLanding = ({
           type="button"
         >
           进入登录与机器人 →
+        </button>
+      </article>
+      <article className="playground-module-card" aria-label="共享连接验收模块">
+        <Typography.Title level={3}>共享连接验收</Typography.Title>
+        <Typography.Paragraph type="secondary">
+          真实本地
+          Socket.IO：聊天与宿主工具共用一条连接，分别注册、释放和恢复。无需登录。
+        </Typography.Paragraph>
+        <button
+          type="button"
+          className="playground-module-card-link"
+          onClick={onEnterSharedSocket}
+        >
+          进入共享连接验收 →
         </button>
       </article>
     </section>
@@ -977,7 +994,7 @@ export const PlaygroundApp = ({
     createRobotServerSession,
   ]);
   const loginWithManager = async (
-    environment: "staging" | "production" | "custom",
+    environment: "test" | "staging" | "production" | "custom",
     baseUrl: string,
     identifier: string,
     password: string,
@@ -992,7 +1009,7 @@ export const PlaygroundApp = ({
     setSessionPlan(null);
     const client = createAuthClient({
       // AuthClient only has canonical staging/production scopes; a custom
-      // URL uses staging semantics while retaining its explicit transport URL.
+      // URL and the test deployment use staging semantics with their own transport URL.
       environment: environment === "production" ? "production" : "staging",
       transport: createTfRobotAuthTransport({ baseUrl: trimmedBaseUrl }),
     });
@@ -1057,7 +1074,22 @@ export const PlaygroundApp = ({
       <PlaygroundLanding
         onEnterChatKit={enterChatKit}
         onEnterManager={enterManager}
+        onEnterSharedSocket={() => {
+          setPlaygroundModule("shared-socket");
+          setSessionPlan(null);
+        }}
       />
+    );
+  }
+  if (playgroundModule === "shared-socket") {
+    return (
+      <PlaygroundModuleFrame
+        title="共享连接验收"
+        description="可操作地验证 Chat 与 RemoteTool 的连接复用和独立生命周期。"
+        onBack={backToLanding}
+      >
+        <SharedSocketPanel />
+      </PlaygroundModuleFrame>
     );
   }
   if (playgroundModule === "chatkit") {

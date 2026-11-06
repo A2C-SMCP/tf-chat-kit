@@ -223,7 +223,11 @@ pnpm pack:workspace
 `pnpm dev:playground` 会在 `http://localhost:4311` 启动仓库私有演示应用。进入 Playground 后先选择一个独立模块：
 
 - **Chat Kit 调试**：不依赖 Manager 登录。默认进入 Mock ChatKit，用于验证正式 Runtime、React、Ant Design UI、Memory Gateway、会话历史、流式回复、中断、错误、断线和重连；也可以切换到 RobotServer 模式，手工填写地址、Namespace、Robot ID 与凭据，验证真实 HTTP/Socket Gateway。
-- **登录与机器人**：专注 Manager 用户登录、staging/正式/自定义环境、组织切换、机器人切换和登出。登录后只展示当前组织/机器人信息与一个“当前机器人快速对话”入口，不承载完整 ChatKit 能力演示。选择包含 `robotAccountId` 的 Manager 机器人后，可以一键读取 `connection-info`，按 RFC 8693 使用 Manager 用户 JWT 换取 `robot:{robotAccountId}` 的 session-profile 用户 Token，再建立一条最小 RobotServer 会话；Manager JWT 不会作为 RobotServer 凭据发送。
+- **登录与机器人**：专注 Manager 用户登录、test（默认）/staging/正式/自定义环境、组织切换、机器人切换和登出。登录后只展示当前组织/机器人信息与一个“当前机器人快速对话”入口，不承载完整 ChatKit 能力演示。选择包含 `robotAccountId` 的 Manager 机器人后，可以一键读取 `connection-info`，按 RFC 8693 使用 Manager 用户 JWT 换取 `robot:{robotAccountId}` 的 session-profile 用户 Token，再建立一条最小 RobotServer 会话；Manager JWT 不会作为 RobotServer 凭据发送。
+
+- **共享连接验收**：使用本地真实 Socket.IO 服务和正式 SDK，展示 `/chat` 与 `/remote-tool` 共用一条 WebSocket 的连接数量及标识。可操作聊天、宿主选区工具、单方释放、重新注册、断网重连和重置，无需填写凭据。后端只在本地 Vite 开发服务中提供，不操作真实机器人。
+
+真实用户模式默认使用 `https://api.test.turingfocus.cn`，仍可选择 staging、正式或自定义地址。
 
 自定义 Manager 地址仅属于本地 Playground 宿主，不改变公开 `chat-auth` 的固定环境契约。缺少 `robotAccountId` 的机器人不会提供可用的自动连接；如果 Manager 的 `connection-info` 缺失或不完整，连接时会显示明确错误，需要完整调试时请返回 **Chat Kit 调试** 使用手工 RobotServer 连接表单。
 Chat Kit 调试模块还提供会话创建/重命名/删除/切换、历史、中断、错误、断线和重连场景；新增“能力演示”入口提供工具呈现、媒体资源、Markdown、长结果导航和文档引用五组可交互示例，详见 [Playground 验收说明](tests/e2e/acceptance.md#issue-58-capability-demonstrations)。RobotServer 模式使用全中文单列表单，填写 RobotServer 服务地址、

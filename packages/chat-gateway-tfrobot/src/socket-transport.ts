@@ -1,3 +1,4 @@
+import { REUSE_DISCONNECTED_SOCKET } from "./socket-adapter.js";
 import type {
   TFRobotSocket,
   TFRobotSocketAnyListener,
@@ -35,6 +36,7 @@ class Connection {
   #auth: TFRobotSocketAuth;
   #closed = false;
   #connecting = false;
+  #authGeneration = 0;
   #anyAttached = false;
   #multipleConversations = false;
   readonly #anyListener: TFRobotSocketAnyListener = (event, ...args) => {
@@ -73,6 +75,17 @@ class Connection {
 
   get healthy(): boolean {
     return !this.#closed && this.#socket.connected;
+  }
+
+  get reusableWhileDisconnected(): boolean {
+    return (
+      !this.#closed &&
+      (
+        this.#socket as TFRobotSocket & {
+          [REUSE_DISCONNECTED_SOCKET]?: boolean;
+        }
+      )[REUSE_DISCONNECTED_SOCKET] === true
+    );
   }
 
   acquire(
@@ -201,6 +214,7 @@ class Connection {
         event === "disconnect"
       )
         this.#connecting = false;
+      if (event === "disconnect") ++this.#authGeneration;
       if (event === "disconnect" && this.#leases.size === 0) {
         this.close();
         return;
@@ -219,6 +233,7 @@ class Connection {
     const leases = [...this.#leases];
     if (this.#closed || leases.length === 0)
       throw new Error("TFRobot Socket authentication was cancelled");
+    const generation = ++this.#authGeneration;
     // Every live subscription needs the reconnect session for its REST rebase.
     // Different answers cannot be combined into a single authenticated socket.
     const results = await Promise.allSettled(
@@ -234,6 +249,7 @@ class Connection {
     const auth = values[0];
     if (
       this.#closed ||
+      generation !== this.#authGeneration ||
       auth === undefined ||
       values.some((value) => !sameAuth(value, auth))
     )
@@ -245,6 +261,7 @@ class Connection {
   close(authenticationChanged = false): void {
     if (this.#closed) return;
     this.#closed = true;
+    ++this.#authGeneration;
     this.#auth = {};
     this.#onClose(this);
     // Fail closed on an identity change even if an old Runtime snapshot is
@@ -305,7 +322,11 @@ export class TFRobotSocketTransports {
     if (this.#disposed) throw new Error("TFRobot Socket owner is disposed");
     this.isolateAuthentication(auth);
     if (this.#disposed) throw new Error("TFRobot Socket owner is disposed");
-    const reusable = this.#selectHealthy();
+    const reusable =
+      this.#selectHealthy() ??
+      [...this.#connections].find(
+        (connection) => connection.reusableWhileDisconnected,
+      );
     if (reusable) return reusable.acquire(input, conversationId, true);
     const connection = new Connection(
       factory,
