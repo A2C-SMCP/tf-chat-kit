@@ -116,6 +116,7 @@ const MESSAGE_KEYS = new Set([
   "sequence",
 ]);
 const EVENT_KEYS = new Set([
+  "generatedTexts",
   "content",
   "conversationId",
   "createTimestamp",
@@ -817,6 +818,15 @@ export const mapEvent = (dto: EventDto): AgentEvent => {
   }
   const transition: AgentEventTransition | ToolEventTransition =
     toolTransition ?? {
+      ...(dto.eventScene === "LLM" &&
+      dto.status === "success" &&
+      dto.generatedTexts != null
+        ? {
+            generatedTexts: dto.generatedTexts.filter(
+              (text) => text.trim().length > 0,
+            ),
+          }
+        : {}),
       id: transitionId,
       status: mapEventStatus(dto.status),
       occurredAt: dto.createTimestamp,

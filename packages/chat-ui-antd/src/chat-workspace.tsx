@@ -224,6 +224,10 @@ export const ChatWorkspace = ({
           workspace.snapshot.selectionStatus === "loading" ||
           workspace.snapshot.selectionStatus === "error" ? (
             <ChatNotices
+              showDiagnostics={
+                conversationViewProps?.debug ??
+                conversationViewProps?.presentation === "standard"
+              }
               key={
                 workspace.snapshot.selectionError?.conversationId ??
                 workspace.snapshot.pendingConversationId ??

@@ -383,10 +383,13 @@ export const AccountSelectionPanel = ({
       {
         direction: "vertical",
         ...classProps(className),
+        style: { width: "100%" },
         "aria-busy": action.busy,
       },
       createElement(Select<string>, {
         "aria-label": labels?.accountSelection ?? "Choose account",
+        placeholder: labels?.accountSelection ?? "Choose account",
+        style: { width: "100%" },
         loading: action.busy,
         disabled:
           disabled ||

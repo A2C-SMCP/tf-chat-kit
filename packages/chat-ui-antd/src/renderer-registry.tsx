@@ -8,10 +8,13 @@ import {
   type ReactNode,
 } from "react";
 
+import type { ChatUiLabelOverrides } from "./types.js";
+
 import type { Message, TimelineItem } from "@turingfocus/chat-protocol";
 
 import {
   AgentEventRenderer,
+  EventTime,
   ToolEventRenderer,
   UnknownEventRenderer,
   getEventSummary,
@@ -28,6 +31,7 @@ export type ChatRendererKey =
   | `unknown-event:${string}`;
 
 export interface ChatRendererProps {
+  readonly labels?: ChatUiLabelOverrides | undefined;
   readonly displayMode?: ChatRendererDisplayMode | undefined;
   readonly formatTimestamp: (timestamp: number) => string;
   readonly item: TimelineItem;
@@ -120,6 +124,7 @@ const MessageRenderer = ({ formatTimestamp, item }: ChatRendererProps) => {
   if (item.kind !== "message") return null;
   const { token } = theme.useToken();
   const isUser = item.role === "user";
+  const isAssistant = item.role === "assistant";
 
   return (
     <div
@@ -129,10 +134,13 @@ const MessageRenderer = ({ formatTimestamp, item }: ChatRendererProps) => {
       }}
     >
       <div
+        data-chat-message-role={item.role}
         style={{
           background: isUser ? token.colorPrimaryBg : token.colorFillQuaternary,
           borderRadius: token.borderRadiusLG,
-          maxWidth: "min(48rem, 85%)",
+          maxWidth: isAssistant ? "100%" : "min(48rem, 85%)",
+          width: isAssistant ? "100%" : undefined,
+          boxSizing: "border-box",
           padding: `${token.paddingXS}px ${token.paddingSM}px`,
           wordBreak: "break-word",
         }}
@@ -194,10 +202,12 @@ export const resolveChatRenderer = (
 };
 
 const SafeItemFallback = ({
+  displayMode,
   failed,
   formatTimestamp,
   item,
 }: {
+  readonly displayMode: ChatRendererDisplayMode;
   readonly failed: boolean;
   readonly formatTimestamp: (timestamp: number) => string;
   readonly item: TimelineItem;
@@ -219,7 +229,14 @@ const SafeItemFallback = ({
             {getEventSummary(item)}
           </Typography.Paragraph>
           <Typography.Text type="secondary">
-            {formatTimestamp(item.createdAt)}
+            {displayMode === "timeline" && item.kind !== "message" ? (
+              <EventTime
+                timestamp={item.createdAt}
+                formatTimestamp={formatTimestamp}
+              />
+            ) : (
+              formatTimestamp(item.createdAt)
+            )}
           </Typography.Text>
         </>
       }
@@ -278,6 +295,7 @@ class RendererBoundary extends Component<
 }
 
 export interface ChatTimelineItemProps {
+  readonly labels?: ChatUiLabelOverrides | undefined;
   readonly displayMode?: ChatRendererDisplayMode | undefined;
   readonly formatTimestamp?: ((timestamp: number) => string) | undefined;
   readonly item: TimelineItem;
@@ -288,6 +306,7 @@ export interface ChatTimelineItemProps {
 }
 
 export const ChatTimelineItem = ({
+  labels,
   displayMode = "detail",
   formatTimestamp = formatChatTimestampUtc,
   item,
@@ -298,6 +317,7 @@ export const ChatTimelineItem = ({
   const renderer = resolveChatRenderer(registry, item);
   const fallback = (
     <SafeItemFallback
+      displayMode={displayMode}
       failed={renderer !== undefined}
       formatTimestamp={formatTimestamp}
       item={item}
@@ -316,6 +336,7 @@ export const ChatTimelineItem = ({
     >
       <Suspense fallback={<Skeleton active paragraph={{ rows: 2 }} />}>
         {createElement(renderer, {
+          labels,
           displayMode,
           formatTimestamp,
           item,

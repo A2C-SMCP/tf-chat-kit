@@ -66,7 +66,7 @@ function RecoveryNotice({
 }
 
 export function ChatNotices({
-  showDiagnostics = true,
+  showDiagnostics = false,
   conversationId,
   timing,
   labels,
@@ -221,7 +221,9 @@ export function ChatNotices({
       <div
         style={{ display: "flex", alignItems: "center", gap: 8, padding: 4 }}
       >
-        {!initial && !cacheFailed && status === "degraded" ? (
+        {!showDiagnostics && status === "degraded" ? null : !initial &&
+          !cacheFailed &&
+          status === "degraded" ? (
           <RecoveryNotice
             key={`${conversationId}:${lifecycle?.subscriptionId}:${lifecycle?.generation}`}
             inline
@@ -244,6 +246,7 @@ export function ChatNotices({
         <div>
           {showFailure && failure ? (
             <ChatErrorNotice
+              debug={showDiagnostics}
               error={failure}
               labels={labels}
               onDismiss={() =>
@@ -291,7 +294,7 @@ export function ChatNotices({
           ) : null}
         </div>
       ) : null}
-      {recovery ? (
+      {recovery && showDiagnostics ? (
         <RecoveryNotice
           key={recovery.id}
           text={

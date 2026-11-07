@@ -3,8 +3,10 @@ import { test, expect, type Page } from "@playwright/test";
 const readyDialog = async (page: Page, name?: string) => {
   const dialog = page.getByRole("dialog", name ? { name } : {});
   await expect(dialog).toBeVisible();
-  // WebKit can drop a click while Ant Design's zoom transition is entering.
-  await expect(dialog).not.toHaveClass(/(?:^|\s)ant-zoom-enter(?:\s|$)/);
+  // WebKit can drop a click during either the first appear or subsequent enter transition.
+  await expect(dialog).not.toHaveClass(
+    /(?:^|\s)ant-zoom-(?:appear|enter)(?:-\S+)?(?:\s|$)/,
+  );
   return dialog;
 };
 
@@ -14,6 +16,7 @@ const mount = async (
     locale?: string;
     platformId?: number;
     restoring?: boolean;
+    contentMaxWidth?: number | string;
     conversationContract?: "json-v2" | "query-v1";
   } = {},
 ) => {
@@ -89,6 +92,175 @@ const login = async (page: Page, beforeSelect?: () => Promise<void>) => {
 };
 
 export function registerManagerUiTests() {
+  test("Manager generated text: expands only model text and preserves history/live identity", async ({
+    page,
+  }) => {
+    await mount(page, { platformId: 17 });
+    await login(page);
+    await expect(page.locator("textarea:not([aria-hidden])")).toBeEnabled();
+    const origin =
+      process.env["TF_CHAT_MANAGER_ORIGIN"] ?? "https://localhost:4312";
+    await page.evaluate(async (origin) => {
+      await fetch(`${origin}/__test/ui-options`, {
+        method: "POST",
+        body: JSON.stringify({ generatedTextEvents: true }),
+      });
+    }, origin);
+    await page.getByRole("button", { name: "历史对话", exact: true }).click();
+    await page
+      .getByRole("list")
+      .getByText("Manager browser fixture", { exact: true })
+      .click();
+    const bodies = page.locator("[data-chat-generated-text]");
+    await expect(bodies).toHaveCount(1);
+    await expect(bodies.locator("strong")).toHaveText("找到文件了");
+    await expect(bodies.first()).toContainText("长段落验收结束");
+    await expect(bodies.first().locator("code")).toContainText(
+      "model_output_line",
+    );
+    await expect(
+      page.getByText("Persisted private reply", { exact: true }),
+    ).toBeVisible();
+    await expect(page.locator("[data-chat-event-row]").first()).toBeVisible();
+    await page.evaluate(async (origin) => {
+      await fetch(`${origin}/__test/generated-text`, { method: "POST" });
+    }, origin);
+    await page.getByRole("log").evaluate((el) => {
+      el.scrollTop = 0;
+    });
+    await expect(bodies).toHaveCount(2);
+    await expect(bodies.filter({ hasText: "继续核对" })).toHaveCount(1);
+    for (const width of [320, 380, 760]) {
+      await page.locator("#word-pane").evaluate((el, width) => {
+        (el as HTMLElement).style.width = `${width}px`;
+      }, width);
+      const overflow = await bodies
+        .filter({ hasText: "长段落验收结束" })
+        .evaluate((el) => el.scrollWidth - el.clientWidth);
+      expect(overflow).toBeLessThanOrEqual(1);
+    }
+    await page.screenshot({
+      path: test.info().outputPath("generated-text-mixed.png"),
+    });
+    await page.getByRole("button", { name: "历史对话", exact: true }).click();
+    await page.getByRole("button", { name: "返回对话", exact: false }).click();
+    await page.getByRole("log").evaluate((el) => {
+      el.scrollTop = 0;
+    });
+    await expect(bodies).toHaveCount(2);
+  });
+  test("Manager content width: welcome and conversation follow the host without losing drafts", async ({
+    page,
+  }) => {
+    await mount(page, { platformId: 17 });
+    await login(page);
+    const input = page.locator("textarea:not([aria-hidden])");
+    const content = page.locator("[data-chat-compact-content]");
+    await expect(input).toBeEnabled();
+    const widths = [320, 380, 480, 760, 1024];
+    let connections = 0;
+    page.on("request", (request) => {
+      if (request.url().endsWith("/connection-info")) connections++;
+    });
+    const resizeAndCheck = async (draft: string) => {
+      for (const width of widths) {
+        await page.locator("#word-pane").evaluate((el, width) => {
+          (el as HTMLElement).style.width = `${width}px`;
+        }, width);
+        await expect
+          .poll(async () => Math.round((await content.boundingBox())!.width))
+          .toBe(width);
+        const bounds = await input.boundingBox();
+        expect(bounds!.width).toBeGreaterThan(width - 160);
+        expect(
+          (await page.locator("[data-chat-composer]").boundingBox())!.width,
+        ).toBeGreaterThan(width - 60);
+        await expect(input).toHaveValue(draft);
+        const overflow = await content.evaluate(
+          (el) => el.scrollWidth - el.clientWidth,
+        );
+        expect(overflow).toBeLessThanOrEqual(1);
+      }
+    };
+    await input.fill("welcome draft");
+    await resizeAndCheck("welcome draft");
+    await page.getByRole("button", { name: "历史对话", exact: true }).click();
+    await page
+      .getByRole("list")
+      .getByText("Manager browser fixture", { exact: true })
+      .click();
+    await expect(
+      page.getByText("Persisted private reply", { exact: true }),
+    ).toBeVisible();
+    await input.fill("conversation draft");
+    await resizeAndCheck("conversation draft");
+    await page.screenshot({
+      path: test.info().outputPath("manager-full-width-1024.png"),
+    });
+    expect(connections).toBe(0);
+  });
+  test("Manager content width: configurable limits are responsive and do not reconnect", async ({
+    page,
+  }) => {
+    await mount(page, { platformId: 17, contentMaxWidth: 680 });
+    await login(page);
+    const input = page.locator("textarea:not([aria-hidden])");
+    const content = page.locator("[data-chat-compact-content]");
+    await expect(input).toBeEnabled();
+    let connections = 0;
+    page.on("request", (request) => {
+      if (request.url().endsWith("/connection-info")) connections++;
+    });
+    const checkLimit = async (limit: number) => {
+      for (const width of [320, 760, 1024]) {
+        await page.locator("#word-pane").evaluate((el, width) => {
+          (el as HTMLElement).style.width = `${width}px`;
+        }, width);
+        await expect
+          .poll(async () => Math.round((await content.boundingBox())!.width))
+          .toBe(Math.min(width, limit));
+        const box = (await content.boundingBox())!;
+        const pane = (await page.locator("#word-pane").boundingBox())!;
+        expect(
+          Math.abs(box.x + box.width / 2 - pane.x - pane.width / 2),
+        ).toBeLessThanOrEqual(1);
+        await expect(input).toHaveValue("retained draft");
+      }
+    };
+    await input.fill("retained draft");
+    await checkLimit(680);
+    await page.evaluate(() => {
+      (
+        window as unknown as { uiTest: { render(input: unknown): void } }
+      ).uiTest.render({ contentMaxWidth: "52rem" });
+    });
+    await checkLimit(832);
+    await page.evaluate(() => {
+      (
+        window as unknown as { uiTest: { render(input: unknown): void } }
+      ).uiTest.render({ contentMaxWidth: undefined });
+    });
+    await checkLimit(Infinity);
+    await page.getByRole("button", { name: "历史对话", exact: true }).click();
+    await page
+      .getByRole("list")
+      .getByText("Manager browser fixture", { exact: true })
+      .click();
+    await expect(
+      page.getByText("Persisted private reply", { exact: true }),
+    ).toBeVisible();
+    await input.fill("retained draft");
+    await page.evaluate(() => {
+      (
+        window as unknown as { uiTest: { render(input: unknown): void } }
+      ).uiTest.render({ contentMaxWidth: 680 });
+    });
+    await checkLimit(680);
+    await page.screenshot({
+      path: test.info().outputPath("manager-limited-width-1024.png"),
+    });
+    expect(connections).toBe(0);
+  });
   test("compact chat toolbar uses icons and an inline menu while context stays read-only", async ({
     page,
   }) => {
@@ -889,20 +1061,26 @@ export function registerManagerUiTests() {
       .getByRole("button", { name: "Browser round trip actions", exact: true })
       .click();
     await page.getByRole("menuitem", { name: "重命名" }).click();
-    await page
+    const renameDialog = await readyDialog(page);
+    await renameDialog
       .getByRole("textbox", { name: "对话名称" })
       .fill("已重命名的会话");
     const renamed = page.waitForResponse(
       (response) => response.request().method() === "PATCH",
     );
-    await page.getByRole("button", { name: "保存", exact: true }).click();
+    await renameDialog
+      .getByRole("button", { name: "保存", exact: true })
+      .click();
     expect((await renamed).status()).toBe(200);
     await expect(page.getByRole("dialog")).not.toBeVisible();
     await page
       .getByRole("button", { name: "已重命名的会话 actions", exact: true })
       .click();
     await page.getByRole("menuitem", { name: "删除对话" }).click();
-    await page.getByRole("button", { name: "删除", exact: true }).click();
+    const deleteDialog = await readyDialog(page);
+    await deleteDialog
+      .getByRole("button", { name: "删除", exact: true })
+      .click();
     await expect(page.getByRole("dialog")).not.toBeVisible();
     await expect(
       page.getByText("已重命名的会话", { exact: true }),
@@ -915,7 +1093,10 @@ export function registerManagerUiTests() {
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).not.toBeVisible();
     await page.getByRole("button", { name: "退出登录", exact: true }).click();
-    await page.getByRole("button", { name: "确认", exact: true }).click();
+    const logoutDialog = await readyDialog(page);
+    await logoutDialog
+      .getByRole("button", { name: "确认", exact: true })
+      .click();
     await expect(
       page.getByRole("button", { name: "登录", exact: true }),
     ).toBeVisible();

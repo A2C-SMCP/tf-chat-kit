@@ -256,6 +256,7 @@ describe("@turingfocus/chat-ui-antd shell", () => {
         ChatProvider,
         { client },
         createElement(ChatWorkspace, {
+          conversationViewProps: { debug: true },
           getDeadlineAt: deadlineAt,
           labels: { lifecycleStatus: { recovering: "Custom recovering…" } },
         }),

@@ -1,8 +1,8 @@
-import { Tag, Typography, theme } from "antd";
+import { Tag, Typography } from "antd";
 
 import type { MessageRole, Run, RunStatus } from "@turingfocus/chat-protocol";
 import {
-  ChatMessageContent,
+  defaultChatRendererRegistry,
   type ChatRenderer,
   type ChatRendererRegistry,
 } from "@turingfocus/chat-ui-antd";
@@ -49,36 +49,21 @@ export const formatPlaygroundTimestamp = (timestamp: number): string => {
   }).format(date);
 };
 
-const PlaygroundMessageRenderer: ChatRenderer = ({ formatTimestamp, item }) => {
+const BaseMessageRenderer = defaultChatRendererRegistry["message"]!;
+const PlaygroundMessageRenderer: ChatRenderer = (props) => {
+  const { item } = props;
   if (item.kind !== "message") return null;
-  const { token } = theme.useToken();
-  const isUser = item.role === "user";
   return (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: isUser ? "flex-end" : "flex-start",
+    <BaseMessageRenderer
+      {...props}
+      item={{
+        ...item,
+        author: {
+          ...item.author,
+          displayName: item.author?.displayName ?? roleLabels[item.role],
+        },
       }}
-    >
-      <div
-        style={{
-          background: isUser ? token.colorPrimaryBg : token.colorFillQuaternary,
-          borderRadius: token.borderRadiusLG,
-          maxWidth: "min(48rem, 85%)",
-          padding: `${token.paddingXS}px ${token.paddingSM}px`,
-          wordBreak: "break-word",
-        }}
-      >
-        <Typography.Text
-          style={{ display: "block", fontSize: token.fontSizeSM }}
-          type="secondary"
-        >
-          {item.author?.displayName ?? roleLabels[item.role]} ·{" "}
-          {formatTimestamp(item.createdAt)}
-        </Typography.Text>
-        <ChatMessageContent message={item} />
-      </div>
-    </div>
+    />
   );
 };
 

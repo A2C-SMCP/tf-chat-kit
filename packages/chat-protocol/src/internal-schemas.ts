@@ -212,6 +212,9 @@ const agentEventStatusParser = z.enum([
 ]);
 
 const agentEventTransitionParser: z.ZodType<AgentEventTransition> = z.object({
+  generatedTexts: z
+    .array(z.string().transform(sanitizeDiagnosticText))
+    .optional(),
   failure: z
     .object({
       message: z

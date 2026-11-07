@@ -120,6 +120,7 @@ export const messageDtoSchema = z.looseObject({
 });
 
 export const eventDtoSchema = z.looseObject({
+  generatedTexts: z.array(z.string()).nullable().optional().catch(undefined),
   content: z.unknown().optional(),
   conversationId: identifierSchema,
   createTimestamp: z.number().finite().nonnegative(),

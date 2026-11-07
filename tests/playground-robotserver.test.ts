@@ -1431,6 +1431,7 @@ describe("RobotServer deadline presentation", () => {
   });
 
   it("reports the joining phase and a sanitized trace when a join is never acknowledged", async () => {
+    vi.useFakeTimers();
     const socket = new NoAckSocket();
     const warnings = vi
       .spyOn(console, "warn")
@@ -1465,7 +1466,14 @@ describe("RobotServer deadline presentation", () => {
     });
 
     try {
-      await session.start();
+      const starting = session.start();
+      await vi.waitFor(() =>
+        expect(socket.emitted.map(([eventName]) => eventName)).toContain(
+          "join_conversation",
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(60_001);
+      await starting;
       expect(socket.emitted.map(([eventName]) => eventName)).toContain(
         "join_conversation",
       );
@@ -1492,8 +1500,13 @@ describe("RobotServer deadline presentation", () => {
       expect(JSON.stringify(traces)).not.toContain("bearer-secret");
     } finally {
       warnings.mockRestore();
-      await session.dispose();
+      try {
+        const disposing = session.dispose();
+        await vi.runAllTimersAsync();
+        await disposing;
+      } finally {
+        vi.useRealTimers();
+      }
     }
-    // The join intentionally waits out the real local request deadline.
-  }, 20_000);
+  });
 });

@@ -1,4 +1,8 @@
-import { AgentEventRenderer, ToolEventRenderer } from "./event-renderers.js";
+import {
+  AgentEventRenderer,
+  EventTime,
+  ToolEventRenderer,
+} from "./event-renderers.js";
 import { Alert, Button, Typography } from "antd";
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import {
@@ -78,7 +82,15 @@ export const ConversationFailureCard = (
         description={
           <>
             <Typography.Text type="secondary">
-              {formatTimestamp(item.createdAt)} ·{" "}
+              {props.displayMode === "timeline" ? (
+                <EventTime
+                  timestamp={item.createdAt}
+                  formatTimestamp={formatTimestamp}
+                />
+              ) : (
+                formatTimestamp(item.createdAt)
+              )}{" "}
+              ·{" "}
               {failure.source === "history"
                 ? labels.failureHistory
                 : labels.failureRealtime}

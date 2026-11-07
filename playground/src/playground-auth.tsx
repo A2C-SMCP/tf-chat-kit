@@ -1,4 +1,13 @@
-import { Alert, Button, Input, Radio, Space, Tag, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Input,
+  Radio,
+  Space,
+  Steps,
+  Tag,
+  Typography,
+} from "antd";
 import {
   AccountSelectionPanel,
   AuthStatus,
@@ -21,9 +30,15 @@ import { ManagerIntegrationError } from "../../packages/chat-auth/src/manager.js
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 /** The Manager deployment used by the local playground in the common case. */
-export const TEST_MANAGER_BASE_URL = "https://rest.test.turingfocus.cn";
 export const STAGING_MANAGER_BASE_URL = "https://api-staging.turingfocus.cn";
+export const TEST_MANAGER_BASE_URL = "https://rest.test.turingfocus.cn";
 export const PRODUCTION_MANAGER_BASE_URL = "https://api.turingfocus.cn";
+
+const loginSteps = [
+  { title: "登录账号" },
+  { title: "选择组织" },
+  { title: "进入机器人" },
+];
 
 const playgroundAccounts = [
   {
@@ -307,7 +322,7 @@ const PlaygroundAuthGateContent = ({
   readonly client: AuthClient;
   readonly onLogout: () => void;
   readonly onRealLogin: (
-    environment: "test" | "staging" | "production" | "custom",
+    environment: "staging" | "test" | "production" | "custom",
     baseUrl: string,
     identifier: string,
     password: string,
@@ -331,7 +346,7 @@ const PlaygroundAuthGateContent = ({
   const [robotId, setRobotId] = useState(selectedRobotId);
   const [loginMode, setLoginMode] = useState<"mock" | "real">("mock");
   const [realEnvironment, setRealEnvironment] = useState<
-    "test" | "staging" | "production" | "custom"
+    "staging" | "test" | "production" | "custom"
   >("test");
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [realIdentifier, setRealIdentifier] = useState("");
@@ -348,11 +363,12 @@ const PlaygroundAuthGateContent = ({
     return (
       <div className="playground-host-shell">
         <section className="playground-auth-panel" aria-label="Playground 登录">
+          <Steps current={0} items={loginSteps} size="small" />
           <Typography.Title level={3}>身份与目录</Typography.Title>
           <Typography.Paragraph type="secondary">
             身份数据与 ChatKit 聊天后端相互独立。Mock
-            身份使用本地内存数据；真实身份可连接 test Manager、staging
-            Manager、正式 Manager 或自定义 Manager 环境。
+            身份使用本地内存数据；真实身份可连接 staging、test、正式 Manager
+            或自定义 Manager 环境。
           </Typography.Paragraph>
           <Radio.Group
             block
@@ -390,20 +406,20 @@ const PlaygroundAuthGateContent = ({
                   onChange={(event) => setRealEnvironment(event.target.value)}
                   optionType="button"
                   options={[
-                    { label: "test", value: "test" },
                     { label: "staging", value: "staging" },
+                    { label: "test", value: "test" },
                     { label: "正式", value: "production" },
                     { label: "自定义", value: "custom" },
                   ]}
                   value={realEnvironment}
                 />
-                {realEnvironment === "test" ? (
-                  <Typography.Text type="secondary">
-                    {TEST_MANAGER_BASE_URL}
-                  </Typography.Text>
-                ) : realEnvironment === "staging" ? (
+                {realEnvironment === "staging" ? (
                   <Typography.Text type="secondary">
                     {STAGING_MANAGER_BASE_URL}
+                  </Typography.Text>
+                ) : realEnvironment === "test" ? (
+                  <Typography.Text type="secondary">
+                    {TEST_MANAGER_BASE_URL}
                   </Typography.Text>
                 ) : realEnvironment === "production" ? (
                   <Typography.Text type="secondary">
@@ -438,10 +454,10 @@ const PlaygroundAuthGateContent = ({
                       setRealSubmitting(true);
                       void onRealLogin(
                         realEnvironment,
-                        realEnvironment === "test"
-                          ? TEST_MANAGER_BASE_URL
-                          : realEnvironment === "staging"
-                            ? STAGING_MANAGER_BASE_URL
+                        realEnvironment === "staging"
+                          ? STAGING_MANAGER_BASE_URL
+                          : realEnvironment === "test"
+                            ? TEST_MANAGER_BASE_URL
                             : realEnvironment === "production"
                               ? PRODUCTION_MANAGER_BASE_URL
                               : customBaseUrl,
@@ -476,7 +492,11 @@ const PlaygroundAuthGateContent = ({
     return (
       <div className="playground-host-shell">
         <section className="playground-auth-panel" aria-label="选择组织">
+          <Steps current={1} items={loginSteps} size="small" />
           <Typography.Title level={3}>选择组织</Typography.Title>
+          <Typography.Paragraph type="secondary">
+            账号验证成功。请选择要进入的组织，随后会加载该组织的机器人。
+          </Typography.Paragraph>
           <AccountSelectionPanel labels={{ accountSelection: "选择组织" }} />
         </section>
       </div>
@@ -530,7 +550,7 @@ export const PlaygroundAuthGate = ({
   readonly client: AuthClient;
   readonly onLogout: () => void;
   readonly onRealLogin: (
-    environment: "test" | "staging" | "production" | "custom",
+    environment: "staging" | "test" | "production" | "custom",
     baseUrl: string,
     identifier: string,
     password: string,
@@ -546,22 +566,31 @@ export const PlaygroundAuthGate = ({
       ) => Promise<readonly PlaygroundRobotDescriptor[]>)
     | undefined;
   readonly robotId: string;
-}): ReactNode => (
-  <>
-    <AuthProvider client={client}>
-      <PlaygroundAuthGateContent
-        client={client}
-        onLogout={onLogout}
-        onRealLogin={onRealLogin}
-        onSelectionReset={onSelectionReset}
-        onSelectionChange={onSelectionChange}
-        loadRobots={loadRobots}
-        robotId={robotId}
-      />
-    </AuthProvider>
-    {children}
-  </>
-);
+}): ReactNode => {
+  const status = useAuthSelectorFromClient(
+    client,
+    (snapshot) => snapshot.status,
+  );
+  const showChat = ["authenticated", "refreshing", "switching"].includes(
+    status,
+  );
+  return (
+    <>
+      <AuthProvider client={client}>
+        <PlaygroundAuthGateContent
+          client={client}
+          onLogout={onLogout}
+          onRealLogin={onRealLogin}
+          onSelectionReset={onSelectionReset}
+          onSelectionChange={onSelectionChange}
+          loadRobots={loadRobots}
+          robotId={robotId}
+        />
+      </AuthProvider>
+      {showChat ? children : null}
+    </>
+  );
+};
 
 const useAuthSelectorFromClient = <T,>(
   client: AuthClient,

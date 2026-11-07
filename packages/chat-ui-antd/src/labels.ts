@@ -48,6 +48,8 @@ export const defaultChatUiLabels: ChatUiLabels = Object.freeze({
     "This replaces the draft text, references and attachments. Review and send it yourself.",
   overwriteFailureDraftConfirm: "Replace draft",
   expandFailure: "Show more",
+  expandIntermediateMessage: "Show more",
+  collapseIntermediateMessage: "Show less",
 
   cacheSyncing: "Showing cached conversation. Syncing latest updates…",
   cacheStale: "Showing older cached content. Syncing latest updates…",

@@ -95,6 +95,8 @@ export interface ChatUiLabels {
   readonly overwriteFailureDraftDescription?: ReactNode;
   readonly overwriteFailureDraftConfirm?: ReactNode;
   readonly expandFailure?: ReactNode;
+  readonly expandIntermediateMessage?: ReactNode;
+  readonly collapseIntermediateMessage?: ReactNode;
 
   readonly diagnostics?: string;
   readonly copyDiagnostic?: string;

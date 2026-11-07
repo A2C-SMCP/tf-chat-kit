@@ -45,6 +45,9 @@ export interface ChatCompactAction {
   readonly onSelect: (trigger: HTMLElement) => void;
 }
 export interface ChatCompactWorkspaceProps {
+  readonly debug?: boolean | undefined;
+  /** Show Auto / Split / Modal controls; defaults to true, independently of debug. */
+  readonly showEventDetailModeSelector?: boolean | undefined;
   readonly locale?: "zh-CN" | "en-US" | undefined;
   readonly getDeadlineAt: () => number;
   readonly header?: ReactNode;
@@ -84,6 +87,8 @@ function CompactMenuContent({
 
 /** Single-column, opt-in UI. Conversation state and commands remain in Runtime. */
 export function ChatCompactWorkspace({
+  debug = false,
+  showEventDetailModeSelector = true,
   locale = "zh-CN",
   getDeadlineAt,
   header,
@@ -538,7 +543,17 @@ export function ChatCompactWorkspace({
           )}
         </div>
       ) : (
-        <>
+        <div
+          data-chat-compact-content="true"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            flex: 1,
+            minHeight: 0,
+            minWidth: 0,
+            width: "100%",
+          }}
+        >
           {error ? (
             <Alert role="alert" type="error" message={errorText(error)} />
           ) : null}
@@ -615,6 +630,8 @@ export function ChatCompactWorkspace({
             </div>
           ) : (
             <ChatConversationView
+              debug={debug}
+              showEventDetailModeSelector={showEventDetailModeSelector}
               presentation="compact"
               defaultEventDetailMode="modal"
               labels={labels}
@@ -635,7 +652,7 @@ export function ChatCompactWorkspace({
               ? "AI 生成内容，请核实后使用"
               : "Check AI-generated content before using it."}
           </span>
-        </>
+        </div>
       )}
       <Modal
         getContainer={getPopupContainer ?? false}

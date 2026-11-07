@@ -200,12 +200,15 @@ const httpServer = createServer(async (request, response) => {
     observations.contentTypeRequests += 1;
   }
 
+  if (url.pathname === "/v1/chat/platforms") {
+    envelope(response, [{ platformId: 17, name: "验收平台" }]);
+    return;
+  }
   if (url.pathname === "/v1/chat/conversations") {
-    // Legacy deployed contract: platformId is optional. This fixture supports
-    // one explicit platform, plus the unfiltered Manager route. It does not
-    // model newer RobotServer JSON-body creation contracts.
+    // Manual connections retain query-v1; the Manager path uses explicit
+    // json-v2 creation and the platform returned by the catalog above.
     const platformId = url.searchParams.get("platformId");
-    if (platformId !== null && platformId !== "platform-e2e") {
+    if (platformId !== null && !["platform-e2e", "17"].includes(platformId)) {
       error(response, 422, "Unsupported fixture platformId");
       return;
     }
@@ -217,11 +220,23 @@ const httpServer = createServer(async (request, response) => {
       return;
     }
     if (request.method === "POST") {
+      const jsonContract =
+        request.headers["content-type"]?.includes("application/json");
+      const body = jsonContract ? await readBody(request) : {};
+      if (
+        jsonContract &&
+        (body["platformId"] !== 17 ||
+          typeof body["title"] !== "string" ||
+          url.searchParams.has("title"))
+      ) {
+        error(response, 422, "JSON title and actual platformId required");
+        return;
+      }
       const id = String(++sequence);
       const conversation = {
         conversationId: Number(id),
         description: null,
-        title: url.searchParams.get("title") ?? "Untitled",
+        title: body["title"] ?? url.searchParams.get("title") ?? "Untitled",
         updateTimestamp: Date.now(),
       };
       conversations.set(id, conversation);

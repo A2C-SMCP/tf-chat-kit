@@ -1,6 +1,8 @@
 import type { ChatUiLabelOverrides } from "@turingfocus/chat-ui-antd";
 
 export const playgroundChatLabels: ChatUiLabelOverrides = Object.freeze({
+  expandIntermediateMessage: "展开全文",
+  collapseIntermediateMessage: "收起",
   resource: {
     screenshot: "浏览器截图",
     generatedFile: "生成的文件",

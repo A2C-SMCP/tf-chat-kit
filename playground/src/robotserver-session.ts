@@ -16,6 +16,7 @@ import {
   createTFRobotChatGateway,
   type TFRobotAttachmentUploader,
   type TFRobotGatewayOptions,
+  type TFRobotConversationPlatform,
   type TFRobotSession,
   type TFRobotSocketFactory,
 } from "@turingfocus/chat-gateway-tfrobot";
@@ -28,7 +29,7 @@ import {
 } from "./playground-session.js";
 import { parseTFRobotTarget } from "./robotserver-target.js";
 
-const REQUEST_TIMEOUT_MS = 10_000;
+const REQUEST_TIMEOUT_MS = 60_000;
 const MAX_CREDENTIAL_CHARACTERS = 8_192;
 
 export type RobotServerAuthKind = "admin" | "bearer";
@@ -61,7 +62,9 @@ export interface RobotServerConnectionTargetConfig {
     readonly uid: string;
   };
   readonly httpBaseUrl: string;
-  readonly platformId?: string | undefined;
+  readonly platformId?: string | number | undefined;
+  readonly conversationContract?: TFRobotGatewayOptions["conversationContract"];
+  readonly platforms?: readonly TFRobotConversationPlatform[] | undefined;
   readonly socketNamespaceUrl: string;
   readonly socketPath: string;
 }
@@ -445,6 +448,7 @@ class RobotServerPlaygroundSession implements RobotServerPlaygroundSessionContra
       now: this.#now,
       onDiagnostic: (error) => this.#handleDiagnostic(error),
       serverProfile: { kind: "current-server" },
+      conversationContract: config.conversationContract,
       ...(config.platformId === undefined
         ? {}
         : { platformId: config.platformId }),
