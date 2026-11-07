@@ -21,7 +21,7 @@ import { ManagerIntegrationError } from "../../packages/chat-auth/src/manager.js
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 /** The Manager deployment used by the local playground in the common case. */
-export const TEST_MANAGER_BASE_URL = "https://api.test.turingfocus.cn";
+export const TEST_MANAGER_BASE_URL = "https://rest.test.turingfocus.cn";
 export const STAGING_MANAGER_BASE_URL = "https://api-staging.turingfocus.cn";
 export const PRODUCTION_MANAGER_BASE_URL = "https://api.turingfocus.cn";
 

@@ -220,35 +220,16 @@ pnpm check
 pnpm pack:workspace
 ```
 
-`pnpm dev:playground` 会在 `http://localhost:4311` 启动仓库私有演示应用。进入 Playground 后先选择一个独立模块：
+`pnpm dev:playground` 在 `http://localhost:4311` 启动真实环境 Playground，直接使用公共 `ManagerChatApp` 的默认界面、主题、登录、机器人选择、平台和聊天工作流，不注入自定义文案或事件渲染器。默认 Manager 为 `https://rest.test.turingfocus.cn`，可切换 staging、正式或自定义真实入口。切换环境会释放旧身份和全部连接。
 
-- **Chat Kit 调试**：不依赖 Manager 登录。默认进入 Mock ChatKit，用于验证正式 Runtime、React、Ant Design UI、Memory Gateway、会话历史、流式回复、中断、错误、断线和重连；也可以切换到 RobotServer 模式，手工填写地址、Namespace、Robot ID 与凭据，验证真实 HTTP/Socket Gateway。
-- **登录与机器人**：专注 Manager 用户登录、test（默认）/staging/正式/自定义环境、组织切换、机器人切换和登出。登录后只展示当前组织/机器人信息与一个“当前机器人快速对话”入口，不承载完整 ChatKit 能力演示。选择包含 `robotAccountId` 的 Manager 机器人后，可以一键读取 `connection-info`，按 RFC 8693 使用 Manager 用户 JWT 换取 `robot:{robotAccountId}` 的 session-profile 用户 Token，再建立一条最小 RobotServer 会话；Manager JWT 不会作为 RobotServer 凭据发送。
+页面仅保留两区：
 
-- **共享连接验收**：使用本地真实 Socket.IO 服务和正式 SDK，展示 `/chat` 与 `/remote-tool` 共用一条 WebSocket 的连接数量及标识。可操作聊天、宿主选区工具、单方释放、重新注册、断网重连和重置，无需填写凭据。后端只在本地 Vite 开发服务中提供，不操作真实机器人。
+- **Chat Kit 连接**：在默认界面登录、选择组织与机器人，再选择真实平台开始聊天。可单独断开和重新打开。会话和消息直接来自真实服务，按默认宿主行为处理，不自动创建或删除测试会话。
+- **RemoteTool 连接**：共享本页身份，独立加载真实目录、选择机器人并注册 `add(a,b)`。无须先连接聊天或选择会话。注册后可要求同一机器人调用 add，页面仅记录真实 Server 调用及结果；注销工具不影响聊天，关闭聊天不影响工具。相同机器人复用同一底层 WebSocket。
 
-真实用户模式默认使用 `https://api.test.turingfocus.cn`，仍可选择 staging、正式或自定义地址。
+RemoteTool 专用 ManagerClient 显式配置 `robotSessionScopes: ["action:execute"]`；默认聊天仍申请 `chat:read chat:send`。权限不足或其他 Provider 已注册同名 add 时展示错误，不能绕过服务端授权。凭据仅在页面和 SDK 内存使用，不读取 `.debug`，不写入浏览器存储或日志。
 
-自定义 Manager 地址仅属于本地 Playground 宿主，不改变公开 `chat-auth` 的固定环境契约。缺少 `robotAccountId` 的机器人不会提供可用的自动连接；如果 Manager 的 `connection-info` 缺失或不完整，连接时会显示明确错误，需要完整调试时请返回 **Chat Kit 调试** 使用手工 RobotServer 连接表单。
-Chat Kit 调试模块还提供会话创建/重命名/删除/切换、历史、中断、错误、断线和重连场景；新增“能力演示”入口提供工具呈现、媒体资源、Markdown、长结果导航和文档引用五组可交互示例，详见 [Playground 验收说明](tests/e2e/acceptance.md#issue-58-capability-demonstrations)。RobotServer 模式使用全中文单列表单，填写 RobotServer 服务地址、
-Namespace 与 Robot ID 后，Playground 会推导 API 域名和 Socket namespace/path，并由仅存在于本地
-Vite 开发服务中的同源代理为聊天请求注入 RobotServer 路由头。鉴权可使用管理员密码、Admin Token
-或用户 Token；管理员密码只用于调用 `/v1/auth/login` 换取短期 Admin Token，不会进入聊天会话。
-`platformId`、消息创建者与自定义直连端点位于高级设置中；未使用本地预填时所有字段默认留空。
-RobotServer 实测动作只允许重命名或删除标题以 `[tf-chat-kit playground]` 开头的测试会话，且重命名必须保留此前缀；自动化只清理本次运行准确创建的会话 ID，不会批量删除普通会话。正常结束时会在显式删除之外再次执行 best-effort 精确清理；若浏览器进程被强杀或清理期间网络不可用，远端仍可能残留，后续清理也只能按已记录的精确 ID 执行。
-
-仅在 `pnpm dev:playground` 的本地 Vite 服务中，连接表单会尝试读取仓库根目录的 `.debug` JSON
-作为内存预填值；文件不存在或为空时仍保持全部字段为空。支持的可选字段为 `serverOrigin`、
-`namespace`、`robotId`、`authKind`（`password` / `admin` / `bearer`）、`secret`、
-`connectionKind`（`standard` / `direct`）、`httpBaseUrl`、`socketNamespaceUrl`、`socketPath`、
-`platformId`、`creatorUid` 和 `creatorName`。高级直连必须同时选择 `admin` 或 `bearer`。
-`.debug` 已被 Git 忽略；开发服务按页面加载读取并严格校验，不记录内容、不写入浏览器存储，
-生产构建与公开包不会读取该文件。
-
-代理只接受同源请求、受信任的 TuringFocus API 域名或显式测试白名单；聊天路由要求恰好一种
-Token 凭据，密码登录路由只接受一个受限长度的 password 字段。代理不转发 Cookie，也不记录
-凭据。密码和 Token 只保留在当前 React 页面实例的内存中，不会写入浏览器存储、Cookie、URL、
-环境文件或诊断日志。生产构建不包含该开发代理，公共包 API 也未改变。
+Playground 不启动模拟后端，不包含 Mock 模式、演示消息或模拟调用入口。仓库中的受控 HTTP/Socket.IO 设施只用于自动化契约测试；真实集群验收步骤见 [Playground 验收说明](tests/e2e/acceptance.md)。
 
 仓库根目录的 `.nvmrc` 与 GitHub Actions 共用 Node.js 24.x。执行任何安装或门禁前先通过
 `nvm install && nvm use` 激活该主版本；错误版本会在依赖安装的 `preinstall` 或 workspace

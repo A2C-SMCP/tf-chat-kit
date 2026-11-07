@@ -1,383 +1,306 @@
-// @vitest-environment jsdom
-
 import { createServer } from "node:http";
-import { act, createElement } from "react";
-import { createRoot } from "react-dom/client";
-import { Server } from "socket.io";
-import { beforeAll, describe, expect, it, vi } from "vitest";
-import { PlaygroundApp } from "../playground/src/app.js";
-import { createRobotServerPlaygroundSession } from "../playground/src/robotserver-session.js";
-import type { PlaygroundSession } from "../playground/src/playground-session.js";
+import { Server, type Socket } from "socket.io";
+import { expect, it } from "vitest";
+import { createManagerClient } from "../packages/chat-auth/src/manager.js";
+import { createPlaygroundEnvironment } from "../playground/src/real-environment.js";
 
-beforeAll(() => {
-  Object.defineProperty(window, "matchMedia", {
-    configurable: true,
-    value: () => ({
-      matches: false,
-      addListener() {},
-      removeListener() {},
-      addEventListener() {},
-      removeEventListener() {},
-    }),
-  });
-});
-
-const conversation = (id: number, title: string) => ({
-  conversationId: id,
-  title,
-  description: null,
-  updateTimestamp: Date.now(),
-});
-
-describe("Manager quick-chat creation through real local HTTP/Socket.IO", () => {
-  it.each(["existing", "empty", "failure", "logout"] as const)(
-    "creates an independent conversation (%s)",
-    async (mode) => {
-      const business = conversation(7, "Existing business conversation");
-      const conversations = new Map<number, ReturnType<typeof conversation>>(
-        mode === "empty" ? [] : [[7, business]],
-      );
-      const deleted: string[] = [];
-      const sentTo: string[] = [];
-      const exchanges: URLSearchParams[] = [];
-      const creates: Array<{ title: string; authorized: boolean }> = [];
-      let heldReply: (() => void) | undefined;
-      const server = createServer((request, response) => {
-        let body = "";
-        request.on("data", (chunk: Buffer) => {
-          body += chunk.toString();
-        });
-        request.on("end", () => {
-          const url = new URL(request.url ?? "/", "http://localhost");
-          const reply = (data: unknown, status = 200, envelope = false) => {
-            if (response.destroyed || response.writableEnded) return;
-            response.writeHead(status, { "Content-Type": "application/json" });
-            response.end(
-              JSON.stringify(
-                envelope
-                  ? {
-                      code: status,
-                      message: status === 200 ? "Success" : "Fixture failure",
-                      data,
-                    }
-                  : data,
-              ),
-            );
-          };
-          const account = {
-            accountId: "account-real",
-            organizationId: "org-real",
-            userId: "user-real",
-            displayName: "真实组织",
-          };
-          if (
-            url.pathname.startsWith("/api/v1/") &&
-            url.pathname !== "/api/v1/oauth/token" &&
-            request.headers.authorization !== "Bearer manager-fixture"
-          ) {
-            reply({ message: "Unauthorized" }, 401);
-            return;
-          }
-          if (url.pathname === "/auth/login-by-password")
-            reply({ account, token: "manager-fixture" });
-          else if (url.pathname === "/api/v1/auth/me") reply(account);
-          else if (url.pathname === "/api/v1/accounts/my")
-            reply({ accounts: [account] });
-          else if (url.pathname === "/api/v1/digital-employees")
-            reply({
-              data: {
-                total: 1,
-                page: 1,
-                pageSize: 20,
-                items: [
-                  {
-                    id: "de-local",
-                    name: "通用",
-                    robotAccountId: "robot-account",
-                    robotId: "local-robot",
-                    status: "running",
-                    templateType: "tfrserver",
-                  },
-                ],
-              },
-            });
-          else if (url.pathname.endsWith("/connection-info"))
-            reply({
-              data: {
-                namespace: "local-ns",
-                rid: "local-robot",
-                robotType: "tfrobot",
-                socketBaseURL: "https://robot.turingfocus.cn",
-                sioPath: "/socket.io/",
-              },
-            });
-          else if (url.pathname === "/api/v1/oauth/token") {
-            exchanges.push(new URLSearchParams(body));
-            reply({ access_token: "robot-fixture", expires_in: 3_600 });
-          } else if (request.headers.authorization !== "Bearer robot-fixture")
-            reply(null, 401, true);
-          else if (
-            url.pathname === "/v1/chat/conversations" &&
-            request.method === "GET"
-          )
-            reply(
-              { conversations: [...conversations.values()], cursor: null },
-              200,
-              true,
-            );
-          else if (
-            url.pathname === "/v1/chat/conversations" &&
-            request.method === "POST"
-          ) {
-            const title = url.searchParams.get("title") ?? "";
-            creates.push({
-              title,
-              authorized:
-                request.headers.authorization === "Bearer robot-fixture",
-            });
-            if (mode === "failure" && creates.length === 1) {
-              reply(null, 503, true);
-              return;
-            }
-            const created = conversation(42, title);
-            const complete = () => {
-              conversations.set(42, created);
-              reply(created, 200, true);
-            };
-            if (mode === "logout") heldReply = complete;
-            else complete();
-          } else if (
-            url.pathname.endsWith("/messages") &&
-            request.method === "GET"
-          )
-            reply({ messages: [], events: [], cursor: null }, 200, true);
-          else if (url.pathname.endsWith("/status"))
-            reply({ working: false, taskId: null }, 200, true);
-          else if (
-            url.pathname.endsWith("/messages") &&
-            request.method === "POST"
-          ) {
-            sentTo.push(url.pathname.split("/").at(-2) ?? "");
-            reply({ taskId: "local-run" }, 200, true);
-          } else if (request.method === "DELETE") {
-            const id = url.pathname.split("/").filter(Boolean).at(-1) ?? "";
-            deleted.push(id);
-            conversations.delete(Number(id));
-            reply(
-              { conversationId: Number(id), message: "deleted" },
-              200,
-              true,
-            );
-          } else reply(null, 404, true);
-        });
-      });
-      const sockets = new Server(server, { transports: ["websocket"] });
-      const socketTokens: unknown[] = [];
-      sockets
-        .of("/chat")
-        .use((socket, next) => {
-          if (socket.handshake.auth["token"] !== "robot-fixture")
-            next(new Error("Unauthorized"));
-          else next();
-        })
-        .on("connection", (socket) => {
-          socketTokens.push(socket.handshake.auth["token"]);
-          socket.on(
-            "join_conversation",
-            (_input, acknowledge: (value: unknown) => void) =>
-              acknowledge({ accepted: true }),
-          );
-        });
-      await new Promise<void>((resolve) =>
-        server.listen(0, "127.0.0.1", resolve),
-      );
-      const address = server.address();
-      if (address === null || typeof address === "string")
-        throw new Error("Missing fixture port");
-      const origin = `http://127.0.0.1:${address.port}`;
-      const nativeFetch = globalThis.fetch;
-      // Forward Manager URLs to real TCP facilities; never fabricate fetch responses.
-      vi.stubGlobal(
-        "fetch",
-        (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-          const url = new URL(
-            typeof input === "string"
-              ? input
-              : input instanceof URL
-                ? input.href
-                : input.url,
-          );
-          if (url.hostname === "api.test.turingfocus.cn") {
-            const rewritten = `${origin}${url.pathname}${url.search}`;
-            return nativeFetch(
-              typeof input === "string" || input instanceof URL
-                ? rewritten
-                : new Request(rewritten, input),
-              init,
-            );
-          }
-          return nativeFetch(input, init);
-        },
-      );
-      const sessions: PlaygroundSession[] = [];
-      const container = document.createElement("div");
-      document.body.append(container);
-      const root = createRoot(container);
-      const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
-      Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
-      const click = async (text: string) => {
-        const button = [
-          ...document.querySelectorAll<HTMLButtonElement>("button"),
-        ].find(
-          (candidate) =>
-            candidate.textContent?.includes(text) ||
-            candidate.getAttribute("aria-label") === text,
-        );
-        expect(button, `Missing button ${text}`).toBeDefined();
-        await act(async () => {
-          button!.click();
-          await Promise.resolve();
-        });
+async function fixture() {
+  const scopes: string[] = [];
+  let hold: (() => void) | undefined;
+  let delay = false;
+  const account = {
+    accountId: "account",
+    userId: "user",
+    organizationId: "org",
+  };
+  const http = createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk: Buffer) => {
+      body += chunk.toString();
+    });
+    req.on("end", () => {
+      const path = new URL(req.url!, "http://fixture.invalid").pathname;
+      const reply = (data: unknown) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(data));
       };
-      try {
-        await act(async () =>
-          root.render(
-            createElement(PlaygroundApp, {
-              createRobotServerSession: (config) => {
-                expect(config.httpBaseUrl).toBe(
-                  "https://robot.turingfocus.cn/c/tfrobot/local-ns/local-robot",
-                );
-                expect(config.credential).toBeUndefined();
-                expect(config.sessionProvider).toBeDefined();
-                const session = createRobotServerPlaygroundSession(
-                  {
-                    ...config,
-                    httpBaseUrl: origin,
-                    socketNamespaceUrl: `${origin}/chat`,
-                    socketPath: "/socket.io",
-                  },
-                  { fetch: nativeFetch },
-                );
-                sessions.push(session);
-                return session;
-              },
-            }),
-          ),
-        );
-        await click("进入登录与机器人");
-        const realMode = [...container.querySelectorAll("label")].find(
-          (label) => label.textContent === "真实用户模式",
-        );
-        expect(realMode).toBeDefined();
-        await act(async () => {
-          realMode!.click();
+      if (path === "/auth/login-by-password")
+        reply({ account, token: "manager" });
+      else if (
+        path !== "/api/v1/oauth/token" &&
+        req.headers.authorization !== "Bearer manager"
+      ) {
+        res.writeHead(401);
+        res.end();
+      } else if (path === "/api/v1/auth/me") reply(account);
+      else if (path === "/api/v1/digital-employees")
+        reply({
+          items: [
+            {
+              id: "robot",
+              robotId: "robot-a",
+              robotAccountId: "robot-account",
+              status: "running",
+              templateType: "tfrserver",
+            },
+          ],
+          page: 1,
+          pageSize: 20,
+          total: 1,
         });
-        await act(async () => {
-          for (const [label, value] of [
-            ["用户账号", "local-user"],
-            ["用户密码", "transient-fixture"],
-          ]) {
-            const input = container.querySelector<HTMLInputElement>(
-              `input[aria-label="${label}"]`,
-            )!;
-            Object.getOwnPropertyDescriptor(
-              HTMLInputElement.prototype,
-              "value",
-            )!.set!.call(input, value);
-            input.dispatchEvent(new Event("input", { bubbles: true }));
-          }
+      else if (path.endsWith("/connection-info"))
+        reply({
+          socketBaseURL: origin,
+          namespace: "tenant",
+          rid: "robot-a",
+          robotType: "tfrobot",
+          sioPath: "/socket.io/",
         });
-        await click("用户登录");
-        await vi.waitFor(
-          () => expect(sessions.at(-1)?.getState().listLoading).toBe(false),
-          { timeout: 8_000 },
-        );
-        expect(sessions).toHaveLength(1);
-        await vi.waitFor(() =>
-          expect(container.textContent).toContain(
-            mode === "empty" ? "已加载 0 个会话" : business.title,
-          ),
-        );
-        expect(exchanges).toHaveLength(1);
-        expect(exchanges[0]?.get("subject_token")).toBe("manager-fixture");
-        expect(exchanges[0]?.get("audience")).toBe("robot:robot-account");
-        await click("新建会话");
-        expect(
-          document.querySelector('[role="dialog"]')?.textContent,
-        ).toContain("Playground");
-        await click("确认新建");
-        await vi.waitFor(() => expect(creates).toHaveLength(1));
-        if (mode === "failure") {
-          await vi.waitFor(() =>
-            expect(sessions[0]?.getState().contentState.kind).toBe("error"),
-          );
-          expect(container.textContent).toContain(
-            sessions[0]!.getState().status,
-          );
-          expect(document.querySelector('[role="dialog"]')).not.toBeNull();
-          await click("确认新建");
-        }
-        if (mode === "logout") {
-          await click("退出登录");
-          heldReply?.();
-          await vi.waitFor(() => expect(sessions[0]?.disposed).toBe(true));
-          expect(container.textContent).not.toContain(
-            "正在查看「[tf-chat-kit playground]",
-          );
-        } else {
-          await vi.waitFor(
-            () =>
-              expect(sessions[0]?.getState().selectedConversationId).toBe("42"),
-            { timeout: 8_000 },
-          );
-          await vi.waitFor(() =>
-            expect(container.textContent).toContain(
-              `正在查看「${creates.at(-1)?.title}」`,
-            ),
-          );
-          expect(socketTokens.length).toBeGreaterThan(0);
-          expect(socketTokens.every((token) => token === "robot-fixture")).toBe(
-            true,
-          );
-        }
-        expect(
-          creates.every(
-            (entry) =>
-              entry.authorized &&
-              entry.title.startsWith("[tf-chat-kit playground] "),
-          ),
-        ).toBe(true);
-        expect(sentTo).toEqual([]);
-        expect(container.innerHTML).not.toContain("robot-fixture");
-        expect(container.innerHTML).not.toContain("manager-fixture");
-      } finally {
-        heldReply?.();
-        try {
-          await act(async () => root.unmount());
-          await Promise.all(sessions.map((session) => session.dispose()));
-          await vi.waitFor(
-            () =>
-              expect(sessions.every((session) => session.client.disposed)).toBe(
-                true,
-              ),
-            { timeout: 8_000 },
-          );
-        } finally {
-          container.remove();
-          if (previousAct === undefined)
-            Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT");
-          else Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct);
-          vi.unstubAllGlobals();
-          await new Promise<void>((resolve) => sockets.close(() => resolve()));
-          server.closeAllConnections();
-          if (server.listening)
-            await new Promise<void>((resolve) => server.close(() => resolve()));
-        }
+      else if (path === "/api/v1/oauth/token") {
+        const form = new URLSearchParams(body);
+        expect(form.get("audience")).toBe("robot:robot-account");
+        const scope = form.get("scope")!;
+        scopes.push(scope);
+        const finish = () =>
+          reply({
+            access_token: scope === "action:execute" ? "tools" : "chat",
+            expires_in: 3600,
+          });
+        if (delay) hold = finish;
+        else finish();
+      } else {
+        res.writeHead(404);
+        res.end();
       }
-      // Logout revokes all sessions immediately: cleanup cannot retain a credential for DELETE.
-      expect(deleted).toEqual(mode === "logout" ? [] : ["42"]);
-      if (mode !== "empty") expect(conversations.get(7)).toEqual(business);
-    },
-    20_000,
+    });
+  });
+  const io = new Server(http, {
+    path: "/c/tfrobot/tenant/robot-a/socket.io",
+    transports: ["websocket"],
+  });
+  const chatSockets = new Set<Socket>();
+  let toolSocket: Socket | undefined;
+  io.of("/chat").use((socket, next) =>
+    next(
+      socket.handshake.auth["token"] === "chat"
+        ? undefined
+        : new Error("forbidden"),
+    ),
   );
+  io.of("/chat").on("connection", (socket) => {
+    chatSockets.add(socket);
+    socket.on("disconnect", () => chatSockets.delete(socket));
+  });
+  io.of("/remote-tool").use((socket, next) =>
+    next(
+      socket.handshake.auth["token"] === "tools"
+        ? undefined
+        : new Error("forbidden"),
+    ),
+  );
+  io.of("/remote-tool").on("connection", (socket) => {
+    socket.on(
+      "register",
+      (
+        input: { tools: { toolName: string }[] },
+        ack: (value: unknown) => void,
+      ) => {
+        expect(input.tools.map((tool) => tool.toolName)).toEqual(["add"]);
+        toolSocket = socket;
+        ack({
+          providerId: socket.id,
+          registeredToolNames: ["add"],
+          error: null,
+        });
+      },
+    );
+  });
+  await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
+  const address = http.address();
+  if (!address || typeof address === "string") throw Error("No fixture port");
+  const origin = `http://127.0.0.1:${address.port}`;
+  const env = createPlaygroundEnvironment(origin);
+  await env.auth.login({ identifier: "fixture", password: "fixture" });
+  const directory = await env.toolManager.refresh();
+  const robot = directory.items[0]!;
+  const waitForTool = () =>
+    new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        stop();
+        reject(Error("Tool did not register"));
+      }, 3000);
+      const stop = env.tools.subscribe(() => {
+        if (env.tools.getSnapshot().status === "ready") {
+          clearTimeout(timeout);
+          stop();
+          resolve();
+        }
+      });
+      if (env.tools.getSnapshot().status === "ready") {
+        clearTimeout(timeout);
+        stop();
+        resolve();
+      }
+    });
+  const invoke = (params: unknown) =>
+    toolSocket!.timeout(2000).emitWithAck("remote_tool_invoke", {
+      providerId: toolSocket!.id,
+      requestId: crypto.randomUUID(),
+      toolName: "add",
+      params,
+    });
+  return {
+    env,
+    origin,
+    robot,
+    scopes,
+    io,
+    chatSockets,
+    invoke,
+    waitForTool,
+    delay: () => {
+      delay = true;
+    },
+    release: () => hold?.(),
+    close: async () => {
+      await env.dispose();
+      await new Promise<void>((resolve) => io.close(() => resolve()));
+      http.closeAllConnections();
+      await new Promise<void>((resolve) => http.close(() => resolve()));
+    },
+  };
+}
+
+it("requests immutable explicit tool scopes while preserving default chat sessions", async () => {
+  const f = await fixture();
+  try {
+    const customScopes = ["action:execute"];
+    const manager = createManagerClient({
+      auth: f.env.auth,
+      baseUrl: f.origin,
+      routing: { allowedOrigins: [f.origin], http: { kind: "routed-server" } },
+      robotSessionScopes: customScopes,
+    });
+    customScopes.push("robot:admin");
+    const connection = await manager.connect(f.robot);
+    await connection.sessionProvider.getSession();
+    expect(f.scopes).toEqual(["action:execute"]);
+    connection.dispose();
+    manager.dispose();
+    const chat = await f.env.manager.connect(f.robot);
+    chat.dispose();
+    expect(f.scopes).toEqual(["action:execute", "chat:read chat:send"]);
+    for (const scopes of [[], ["chat:read action:execute"], [""]])
+      expect(() =>
+        createManagerClient({
+          auth: f.env.auth,
+          baseUrl: f.origin,
+          routing: {
+            allowedOrigins: [f.origin],
+            http: { kind: "routed-server" },
+          },
+          robotSessionScopes: scopes,
+        }),
+      ).toThrow("Invalid Robot session scopes");
+  } finally {
+    await f.close();
+  }
+});
+
+it("registers add before chat and shares a real WebSocket while each namespace is released independently", async () => {
+  const f = await fixture();
+  try {
+    const ready = f.waitForTool();
+    await f.env.tools.start(f.robot);
+    await ready;
+    expect(f.io.engine.clientsCount).toBe(1);
+    expect(f.chatSockets.size).toBe(0);
+    expect(await f.invoke({ a: 12, b: 30 })).toMatchObject({
+      success: true,
+      resultForLlm: "42",
+      origin: { a: 12, b: 30, sum: 42 },
+    });
+    expect(await f.invoke({ a: "12", b: 30 })).toMatchObject({
+      success: false,
+      error: "invalid-parameters",
+    });
+    expect(
+      await f.invoke({ a: Number.MAX_VALUE, b: Number.MAX_VALUE }),
+    ).toMatchObject({ success: false, error: "invalid-parameters" });
+    expect(f.env.tools.getSnapshot().calls).toEqual([
+      { a: 12, b: 30, sum: 42 },
+    ]);
+    const connection = await f.env.manager.connect(f.robot);
+    const socket = f.env.chat.socketFactory({
+      namespaceUrl: connection.target.socketNamespaceUrl,
+      path: connection.target.socketPath,
+      getAuth: async () => ({
+        token: (await connection.sessionProvider.getSession()).token,
+      }),
+    });
+    await new Promise<void>((resolve) => {
+      socket.on("connect", () => resolve());
+      socket.connect();
+    });
+    expect(f.chatSockets.size).toBe(1);
+    expect(f.io.engine.clientsCount).toBe(1);
+    const toolRemains = f.waitForTool();
+    socket.disconnect();
+    connection.dispose();
+    await toolRemains;
+    expect(await f.invoke({ a: -1, b: 0.5 })).toMatchObject({
+      success: true,
+      resultForLlm: "-0.5",
+    });
+    f.env.tools.stop();
+    expect(f.env.tools.getSnapshot()).toMatchObject({
+      status: "idle",
+      calls: [],
+    });
+  } finally {
+    await f.close();
+  }
+});
+
+it("cancels a pending exchange without a late tool registration", async () => {
+  const f = await fixture();
+  try {
+    f.delay();
+    const work = f.env.tools.start(f.robot);
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(Error("No exchange")), 2000);
+      const original = f.scopes.push.bind(f.scopes);
+      f.scopes.push = (...values) => {
+        const n = original(...values);
+        clearTimeout(timeout);
+        resolve();
+        return n;
+      };
+    });
+    f.env.tools.stop();
+    f.release();
+    await work;
+    expect(f.env.tools.getSnapshot().status).toBe("idle");
+    expect(f.io.engine.clientsCount).toBe(0);
+  } finally {
+    await f.close();
+  }
+});
+
+it("clears tool registration and call data immediately on logout", async () => {
+  const f = await fixture();
+  try {
+    const ready = f.waitForTool();
+    await f.env.tools.start(f.robot);
+    await ready;
+    await f.invoke({ a: 1, b: 2 });
+    await f.env.auth.logout();
+    expect(f.env.tools.getSnapshot()).toMatchObject({
+      status: "idle",
+      calls: [],
+    });
+    expect(f.env.toolManager.getSnapshot().items).toEqual([]);
+  } finally {
+    await f.close();
+  }
 });

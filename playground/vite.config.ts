@@ -3,31 +3,34 @@ import { fileURLToPath } from "node:url";
 
 import { defineConfig } from "vite";
 
-import { createSharedSocketDemoPlugin } from "./shared-socket-server.js";
-import { createRobotServerProxyPlugin } from "./robotserver-proxy.js";
-
 const workspaceRoot = fileURLToPath(new URL("..", import.meta.url));
 const packageSource = (directory: string): string =>
   path.join(workspaceRoot, "packages", directory, "src", "index.ts");
 
-export default defineConfig(({ command }) => ({
-  define: {
-    __TF_CHAT_PLAYGROUND_ALLOWED_SERVER_ORIGINS__: JSON.stringify(
-      process.env["TF_CHAT_PLAYGROUND_ALLOWED_SERVER_ORIGINS"] ?? "",
-    ),
-    __TF_CHAT_PLAYGROUND_DEBUG_PREFILL_ENABLED__: JSON.stringify(
-      command === "serve",
-    ),
-  },
-  plugins: [
-    createSharedSocketDemoPlugin(),
-    createRobotServerProxyPlugin({
-      debugPrefillFilePath: path.join(workspaceRoot, ".debug"),
-    }),
-  ],
+export default defineConfig({
   root: fileURLToPath(new URL(".", import.meta.url)),
   resolve: {
     alias: {
+      "@turingfocus/chat-kit/manager-antd": path.join(
+        workspaceRoot,
+        "packages/chat-kit/src/manager-antd.tsx",
+      ),
+      "@turingfocus/chat-kit/auth/manager": path.join(
+        workspaceRoot,
+        "packages/chat-kit/src/auth-manager.ts",
+      ),
+      "@turingfocus/chat-kit/auth/tfrobot": path.join(
+        workspaceRoot,
+        "packages/chat-kit/src/auth-tfrobot.ts",
+      ),
+      "@turingfocus/chat-kit/auth": path.join(
+        workspaceRoot,
+        "packages/chat-kit/src/auth.ts",
+      ),
+      "@turingfocus/chat-kit/headless": path.join(
+        workspaceRoot,
+        "packages/chat-kit/src/headless.ts",
+      ),
       "@turingfocus/chat-gateway-tfrobot": packageSource(
         "chat-gateway-tfrobot",
       ),
@@ -43,4 +46,4 @@ export default defineConfig(({ command }) => ({
     port: 4311,
     strictPort: true,
   },
-}));
+});

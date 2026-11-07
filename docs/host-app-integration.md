@@ -683,6 +683,15 @@ Chat Kit 负责：
 
 ## 12. 仓库内可参考实现
 
+Playground 通过 `ManagerChatApp` 的默认配置直接展示宿主完整界面，真实环境接入示例见
+`playground/src/app.tsx` 与 `playground/src/real-environment.ts`。它不在页面中启动模拟后端。
+
+Manager 默认 Robot session scope 为 `chat:read chat:send`。宿主注册 RemoteTool 时应为工具
+创建独立 ManagerClient，显式配置 `robotSessionScopes: ["action:execute"]`，再使用该客户端
+`connect(robot)` 返回的 SessionProvider。该配置只申请权限，是否授予仍由服务端决定；
+不应把工具权限自动并入聊天客户端。两个客户端可共享 AuthClient，并通过同一显式
+`createTFRobotSocketConnection` 在相同 Server origin/socketPath 上复用物理连接。
+
 - [Playground 的真实 TFRobotServer 会话装配](../playground/src/robotserver-session.ts)
 - [Playground 的 Runtime + React + Ant Design 页面](../playground/src/app.tsx)
 - [宿主认证与会话边界 ADR](./adr/006-auth-and-session.md)

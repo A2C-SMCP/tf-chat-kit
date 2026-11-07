@@ -97,7 +97,7 @@ microtask、drain 或固定 sleep 都不是远端完成证明。这与 Python �
 
 ## Playground 追加验收
 
-用户追加要求在 Playground 验收，并将真实登录默认环境设为 test。现新增首页「共享连接验收」模块及仅在 Vite 开发服务运行的隔离本地 Socket.IO 设施，真实调用 SDK；同时增加 test 预设（`https://api.test.turingfocus.cn`），保留 staging、正式、自定义。
+用户追加要求在 Playground 验收，并将真实登录默认环境设为 test。现新增首页「共享连接验收」模块及仅在 Vite 开发服务运行的隔离本地 Socket.IO 设施，真实调用 SDK；同时增加 test 预设（`https://rest.test.turingfocus.cn`），保留 staging、正式、自定义。
 
 - 共享连接 Chromium 3 项通过：真实单条 WebSocket、两个 namespace 同 Engine.IO ID、聊天及宿主工具回传、独立释放和重入、物理断网恢复、375px、多窗口隔离、重置删除失败时仍关闭真实连接并清空状态。
 - Manager Chromium 4 项通过：默认 test、staging 切换登录、目录错误重试、test Manager 换票接入本地 HTTP/Socket.IO；日志 `/tmp/tfck-167-manager-browser.log`。
@@ -107,3 +107,17 @@ microtask、drain 或固定 sleep 都不是远端完成证明。这与 Python �
 - 隔离复审 `/root/review_playground_final` APPROVE，无阻塞；重置状态清理及 UTF-8 分块解码建议已修复并验证，环境说明及场景数量文案已同步。
 
 开发服务运行在 `http://localhost:4311`。本地演示不操作真实机器人；未自动使用用户凭据，真实 test 集群账号与机器人由用户验收。未提交、推送或发布。
+
+## 真实环境 Playground 重做
+
+上述本地演示已按用户后续要求退役。当前入口直接渲染公共 ManagerChatApp 默认 UI，旁边是独立 RemoteTool 连接与 add 工具；默认地址更正为 https://rest.test.turingfocus.cn，移除 Mock 入口、演示后端和自定义聊天页面。ManagerClient 可选 robotSessionScopes 用于工具显式申请 action:execute，聊天默认权限不变。
+
+- 真实本地 HTTP/Socket.IO 集成 4 项通过：scope 默认值及复制、add 注册与实际 ACK、共享连接、参数与溢出校验、注销/在途取消/登出清理。
+- Chromium 4 项通过：默认宿主 UI 和多宽度、工具先连、聊天先连、真实工具回传、单方注销/释放、环境切换和权限拒绝；日志 `/tmp/tfck-real-playground-browser.log`。
+- test Manager 入口经真实浏览器 OPTIONS 验证返回 204；未使用真实账号密码，不将该结果描述为真实登录或机器人 LLM 调用通过。
+- 首轮全量回归发现旧 StrictMode 用例在 Node Socket.IO 延后处理 DISCONNECT 时偶发额外重建连接。测试现等待服务端 namespace disconnect 事件后再加载替换客户端，保留严格单连接及工具持续可用断言，无固定延时或轮询。更新后共享连接 19 项与本轮集成 4 项共 23 项通过；日志 `/tmp/tfck-real-playground-final-targeted.log`。
+- 创建者信息使用真实账号 displayName 或 userId，匿名拒绝发送；更新后 Chromium 4 项再次通过，日志 `/tmp/tfck-real-playground-browser-final.log`。
+- 最终完整 `pnpm check` 退出 0：91 文件、1628 用例，以及 workspace、Changesets、依赖边界、Lint、格式、类型、Playground 构建和独立打包消费者全部通过；日志 `/tmp/tfck-real-playground-check-final.log`。
+- 构建产物中未发现旧演示欢迎语、Mock ChatKit、旧演示事件或 `/__shared-socket-demo` 入口。最终隔离复审 `/root/review_real_playground_final` APPROVE，无剩余问题。
+
+本节记录本轮重做提交前的验证结果；用户可在运行中的 Playground 登录真实 test 集群验收。

@@ -368,6 +368,8 @@ export interface CreateManagerClientOptions {
   readonly fetch?: typeof globalThis.fetch | undefined;
   readonly now?: (() => number) | undefined;
   readonly timeoutMs?: number | undefined;
+  /** Scopes explicitly requested for Robot sessions; defaults to chat:read/chat:send. */
+  readonly robotSessionScopes?: readonly string[] | undefined;
   readonly onDiagnostic?: ((diagnostic: ManagerDiagnostic) => void) | undefined;
 }
 const statusCode = (status: number): ManagerErrorCode =>
@@ -430,6 +432,7 @@ export class ManagerClient {
   readonly #now: () => number;
   readonly #base: string;
   readonly #timeout: number;
+  readonly #robotSessionScope: string;
   readonly #unsubscribe: () => void;
   readonly #unsubscribeDispose: (() => void) | undefined;
   readonly #listeners = new Set<(snapshot: ManagerDirectorySnapshot) => void>();
@@ -447,6 +450,18 @@ export class ManagerClient {
   #directoryController: AbortController | undefined;
   #disposed = false;
   constructor(options: CreateManagerClientOptions) {
+    const scopes = options.robotSessionScopes ?? ["chat:read", "chat:send"];
+    if (
+      scopes.length === 0 ||
+      scopes.length > 32 ||
+      scopes.some(
+        (scope) =>
+          typeof scope !== "string" ||
+          !/^[A-Za-z0-9:_.*-]{1,128}$/u.test(scope),
+      )
+    )
+      throw new TypeError("Invalid Robot session scopes");
+    this.#robotSessionScope = [...new Set(scopes)].join(" ");
     this.#options = options;
     this.#base = safeUrl(options.baseUrl).toString().replace(/\/$/u, "");
     const transport = options.fetch;
@@ -852,7 +867,7 @@ export class ManagerClient {
             ["subject_token", manager.token],
             ["subject_token_type", "urn:ietf:params:oauth:token-type:jwt"],
             ["audience", `robot:${robotAccountId}`],
-            ["scope", "chat:read chat:send"],
+            ["scope", this.#robotSessionScope],
             ["token_profile", "session"],
           ]),
         },

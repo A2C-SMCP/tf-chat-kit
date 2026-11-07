@@ -579,6 +579,14 @@ it("preserves tools through real React StrictMode replay, replacement and unmoun
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
   try {
     for (const key of ["first", "replacement"]) {
+      // Node Socket.IO defers DISCONNECT handling. Observe namespace release
+      // before re-entering it; the Python Server probe covers immediate reuse.
+      const retiring = f.chats.at(-1);
+      const released = retiring?.connected
+        ? new Promise<void>((resolve) =>
+            retiring.once("disconnect", () => resolve()),
+          )
+        : Promise.resolve();
       await act(async () => {
         root.render(
           createElement(
@@ -594,6 +602,7 @@ it("preserves tools through real React StrictMode replay, replacement and unmoun
           ),
         );
       });
+      await bounded(released, "Node chat namespace release");
       const current = clients.at(-1)!;
       expect(
         (await current.loadConversation({ ...deadline(), conversationId: "1" }))

@@ -8,6 +8,14 @@ import { PACKAGE_POLICY } from "./scripts/workspace-policy.mjs";
 const workspaceRoot = fileURLToPath(new URL(".", import.meta.url));
 
 export const workspaceSourceAliases = {
+  "@turingfocus/chat-kit/headless": path.join(
+    workspaceRoot,
+    "packages/chat-kit/src/headless.ts",
+  ),
+  "@turingfocus/chat-auth/tfrobot": path.join(
+    workspaceRoot,
+    "packages/chat-auth/src/tfrobot.ts",
+  ),
   "@turingfocus/chat-auth/react": path.join(
     workspaceRoot,
     "packages/chat-auth/src/react.ts",

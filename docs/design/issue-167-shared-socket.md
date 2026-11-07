@@ -120,6 +120,6 @@ pnpm check
 ## 用户追加的 Playground 验收（2026-11-06）
 
 用户要求「需要在playground中增加 效果 我要验收」，并要求真实登录默认增加 test 集群，主要连接 test 机器人。
-本轮只扩展私有 Playground：新增首页共享连接验收模块，开发服务提供隔离的本地 HTTP/Socket.IO 设施，页面通过正式 SDK 展示真实连接数量、聊天与宿主工具、独立释放和恢复；不改公共 SDK 或真实 Server。真实登录增加 test 预设并默认指向 `https://api.test.turingfocus.cn`，仍保留 staging/正式/自定义。公共 AuthClient 的环境枚举不变，由 Playground 以独立 transport 地址映射到 staging 语义。
+此处记录第一版演示方案，现已由[真实环境 Playground 方案](issue-167-real-playground.md)替代：默认 UI 和真实机器人双区接入，移除本地演示后端，并显式申请工具权限。
 
 验证包含真实浏览器的共享连接/业务闭环、375px、多窗口隔离，以及默认 test 和 staging 切换；具体操作见 `tests/e2e/acceptance.md`。真实 test 账号登录由用户验收，不自动使用页面凭据。
