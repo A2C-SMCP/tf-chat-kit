@@ -1,4 +1,14 @@
 import { expect, test } from "@playwright/test";
+import path from "node:path";
+
+const entry = `/@fs/${path.resolve("tests/e2e/fixtures/session-diagnostics.ts")}`;
+type Fixture = typeof import("./fixtures/session-diagnostics.js");
+
+test.afterEach(async ({ page }) => {
+  await page.evaluate(async (entry) => {
+    await ((await import(/* @vite-ignore */ entry)) as Fixture).dispose();
+  }, entry);
+});
 
 test("session diagnostics remain keyboard accessible, copyable and inside the panel", async ({
   page,
@@ -6,12 +16,19 @@ test("session diagnostics remain keyboard accessible, copyable and inside the pa
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto("/");
-  await page.getByRole("button", { name: /进入 Chat Kit/ }).click();
-  await expect(page.getByText("欢迎使用本地 Chat Kit 调试台。")).toBeVisible();
-  await page.getByLabel("开发诊断").check();
-  await page.getByRole("button", { name: "服务端错误", exact: true }).click();
-  await page.getByRole("button", { name: "服务端错误", exact: true }).click();
-  const notices = page.locator('[data-chat-notices="true"]');
+  await page.evaluate(async (entry) => {
+    await ((await import(/* @vite-ignore */ entry)) as Fixture).mount();
+  }, entry);
+  const workspace = page.locator("#diagnostics-workspace");
+  await expect(
+    workspace.locator('textarea[aria-label="Message"]'),
+  ).toBeVisible();
+  await page.evaluate(async (entry) => {
+    const fixture = (await import(/* @vite-ignore */ entry)) as Fixture;
+    fixture.emitError();
+    fixture.emitError();
+  }, entry);
+  const notices = workspace.locator('[data-chat-notices="true"]');
   await expect(notices.locator(".ant-alert")).toHaveCount(1);
   const diagnostics = notices.getByRole("button", { name: /Diagnostics/ });
   await diagnostics.focus();
@@ -28,9 +45,12 @@ test("session diagnostics remain keyboard accessible, copyable and inside the pa
   expect(copied).not.toContain("欢迎使用");
   await page.keyboard.press("Escape");
   await expect(diagnostics).toBeFocused();
-  const input = page.getByRole("textbox", { name: "消息输入" });
+  const input = workspace.getByRole("textbox", {
+    name: "Message",
+    exact: true,
+  });
   // The diagnostic panel does not become a timeline item or cover the composer.
-  await expect(page.locator("[data-chat-event-layout]")).toBeVisible();
+  await expect(workspace.locator("[data-chat-event-layout]")).toBeVisible();
   if (await input.count()) await expect(input).toBeVisible();
   await page.screenshot({
     path: "test-results/issue-82-diagnostics.png",
