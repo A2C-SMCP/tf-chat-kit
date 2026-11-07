@@ -39,6 +39,9 @@ let authorMismatch = false;
 let serverMessageIds = false;
 let holdMessageEcho = false;
 let conversationFailures = false;
+let denyTools = false;
+/** @type {string[]} */
+const exchangedScopes = [];
 /** @type {Array<() => void>} */
 const heldMessageEchoes = [];
 /** @type {Map<number, import("../packages/chat-gateway-tfrobot/src/dto.js").MessageDto[]>} */
@@ -83,6 +86,54 @@ const server = createListener((req, res) => {
     body += chunk.toString();
   });
   req.on("end", () => {
+    if (url.pathname === "/__test/remote-state") {
+      reply({
+        engines: sockets.reduce(
+          (count, io) => count + io.engine.clientsCount,
+          0,
+        ),
+        chat: sockets.reduce(
+          (count, io) => count + io.of("/chat").sockets.size,
+          0,
+        ),
+        tools: sockets.reduce(
+          (count, io) =>
+            count +
+            [...io.of("/remote-tool").sockets.values()].filter(
+              (socket) => socket.data.registered,
+            ).length,
+          0,
+        ),
+        scopes: exchangedScopes,
+      });
+      return;
+    }
+    if (url.pathname === "/__test/tool-permission") {
+      denyTools = JSON.parse(body).denied === true;
+      reply({});
+      return;
+    }
+    if (url.pathname === "/__test/remote-invoke") {
+      const tool = sockets
+        .flatMap((io) => [...io.of("/remote-tool").sockets.values()])
+        .find((socket) => socket.data.registered);
+      if (!tool) {
+        reply({}, 409);
+        return;
+      }
+      const params = JSON.parse(body);
+      void tool
+        .timeout(2000)
+        .emitWithAck("remote_tool_invoke", {
+          providerId: tool.id,
+          requestId: randomUUID(),
+          toolName: "add",
+          params,
+        })
+        .then((value) => reply(value))
+        .catch(() => reply({}, 504));
+      return;
+    }
     if (url.pathname === "/__test/ui-options") {
       const input = JSON.parse(body);
       if (input.generatedTextEvents !== undefined)
@@ -156,6 +207,8 @@ const server = createListener((req, res) => {
       return;
     }
     if (url.pathname === "/auth/login-by-password") {
+      denyTools = false;
+      exchangedScopes.length = 0;
       directoryStatus = 200;
       chatStatus = 200;
       generatedTextEvents = false;
@@ -318,6 +371,12 @@ const server = createListener((req, res) => {
     }
     if (isExchange) {
       const form = new URLSearchParams(body);
+      const scope = form.get("scope") ?? "";
+      exchangedScopes.push(scope);
+      if (scope === "action:execute" && denyTools) {
+        reply({}, 403);
+        return;
+      }
       if (
         form.get("subject_token") !== "manager-browser" ||
         !["robot:account-a", "robot:account-b"].includes(
@@ -328,7 +387,8 @@ const server = createListener((req, res) => {
         return;
       }
       reply({
-        access_token: "robot-browser",
+        access_token:
+          scope === "action:execute" ? "tool-browser" : "robot-browser",
         token_type: "Bearer",
         issued_token_type: "urn:ietf:params:oauth:token-type:jwt",
         expires_in: 40,
@@ -574,6 +634,35 @@ const sockets = [
     socket.on("join_conversation", async (input, ack) => {
       await socket.join(String(input.conversation_id));
       ack();
+    });
+  });
+  io.of("/remote-tool").use((socket, next) =>
+    next(
+      socket.handshake.auth["token"] === "tool-browser"
+        ? undefined
+        : new Error("Forbidden"),
+    ),
+  );
+  io.of("/remote-tool").on("connection", (socket) => {
+    socket.on("register", (input, reply) => {
+      const conflict = [...io.of("/remote-tool").sockets.values()].some(
+        (other) => other !== socket && other.data.registered,
+      );
+      if (conflict) {
+        reply({ error: "tool name conflicts" });
+        return;
+      }
+      socket.data.registered = true;
+      reply({
+        providerId: socket.id,
+        registeredToolNames: input.tools.map(
+          (/** @type {{toolName: string}} */ tool) => tool.toolName,
+        ),
+        error: null,
+      });
+    });
+    socket.on("revoke", () => {
+      socket.data.registered = false;
     });
   });
   return io;

@@ -32,3 +32,4 @@
 | [015](015-default-manager-ui.md) | 可选完整 Manager 聊天 UI 与紧凑默认体验 | Accepted |
 
 | [016](016-server-message-identity-and-outgoing-lifecycle.md) | 服务端消息身份与发送生命周期 | Accepted |
+| [017](017-shared-socket-connection.md) | 可选的跨 namespace 共享连接上下文 | Accepted |

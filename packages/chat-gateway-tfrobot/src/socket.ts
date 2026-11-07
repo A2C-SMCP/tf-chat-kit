@@ -1,3 +1,8 @@
+import {
+  adaptSocketIoSocket,
+  ACK_TIMEOUT,
+  SocketConnectionDisposedError,
+} from "./socket-adapter.js";
 import { safeDiagnosticError } from "@turingfocus/chat-protocol";
 import { io } from "socket.io-client";
 
@@ -327,73 +332,25 @@ export const authOf = (session: TFRobotSession): TFRobotSocketAuth => {
   return auth;
 };
 
-// Private callback metadata keeps the narrow injected Socket API unchanged.
-// The production adapter uses the same deadline as the Gateway's join timer.
-const ACK_TIMEOUT = Symbol("TFRobot ACK timeout");
-type TimedAcknowledgement = ((...args: unknown[]) => void) & {
-  readonly [ACK_TIMEOUT]: number;
-};
-
-/** Internal adapter metadata; lets all namespace owners bound native ACK retention. */
-export const withSocketAckTimeout = (
-  callback: (...args: unknown[]) => void,
-  timeoutMs: number,
-): ((...args: unknown[]) => void) =>
-  Object.assign(callback, { [ACK_TIMEOUT]: timeoutMs });
+export { withSocketAckTimeout } from "./socket-adapter.js";
 
 export const createSocketIoFactoryWith =
   (connect: typeof io): TFRobotSocketFactory =>
-  ({ getAuth, namespaceUrl, path }) => {
-    const socket = connect(namespaceUrl, {
-      autoConnect: false,
-      forceNew: true,
-      path,
-      reconnection: true,
-      transports: ["websocket"],
-      auth(callback) {
-        void getAuth()
-          .then(callback)
-          .catch(() => callback({}));
-      },
-    });
-    return {
-      get connected() {
-        return socket.connected;
-      },
-      get active() {
-        return socket.active;
-      },
-      connect: () => {
-        socket.connect();
-      },
-      disconnect: () => {
-        socket.disconnect();
-      },
-      on: (event, listener) => socket.on(event, listener),
-      off: (event, listener) => socket.off(event, listener),
-      onAny: (listener) => socket.onAny(listener),
-      offAny: (listener) => socket.offAny(listener),
-      emit: (event, ...args) => {
-        const callback = args.at(-1);
-        const timeout =
-          typeof callback === "function"
-            ? (callback as Partial<TimedAcknowledgement>)[ACK_TIMEOUT]
-            : undefined;
-        if (timeout === undefined) return socket.emit(event, ...args);
-        return socket
-          .timeout(timeout)
-          .emit(
-            event,
-            ...args.slice(0, -1),
-            (error: Error | null, ...values: unknown[]) => {
-              // Gateway timers/disconnect handlers own failure reporting. Strip
-              // Socket.IO's error-first prefix so an empty Server ACK stays empty.
-              if (error === null) (callback as TimedAcknowledgement)(...values);
-            },
-          );
-      },
-    };
-  };
+  ({ getAuth, namespaceUrl, path }) =>
+    adaptSocketIoSocket(
+      connect(namespaceUrl, {
+        autoConnect: false,
+        forceNew: true,
+        path,
+        reconnection: true,
+        transports: ["websocket"],
+        auth(callback) {
+          void getAuth()
+            .then(callback)
+            .catch(() => callback({}));
+        },
+      }),
+    );
 
 export const createSocketIoFactory = createSocketIoFactoryWith(io);
 
@@ -756,6 +713,7 @@ export class TFRobotSocketClient {
     let currentServerSession: TFRobotSession | undefined = initialSession;
     let authenticationFailure: unknown;
     const connectionAbort = new AbortController();
+    let authenticationAbort = new AbortController();
     let socket: SocketLease;
     try {
       socket = this.#transports.acquire(
@@ -764,6 +722,10 @@ export class TFRobotSocketClient {
           namespaceUrl: this.#namespaceUrl,
           path: this.#path,
           getAuth: async () => {
+            authenticationAbort.abort();
+            authenticationAbort = new AbortController();
+            const authenticationSignal = authenticationAbort.signal;
+            authenticationFailure = undefined;
             if (connectionAbort.signal.aborted) {
               throw new Error("TFRobot Socket session refresh was cancelled");
             }
@@ -777,9 +739,11 @@ export class TFRobotSocketClient {
               {
                 deadlineAt: this.#now() + RECONNECT_AUTH_TIMEOUT_MS,
                 now: this.#now,
-                signal: connectionAbort.signal,
+                signal: authenticationSignal,
               },
             );
+            if (authenticationSignal.aborted || connectionAbort.signal.aborted)
+              throw new Error("TFRobot Socket session refresh was superseded");
             if (reconnectSession.kind === "value") {
               currentServerSession = reconnectSession.value;
               const reconnectAuth = authOf(reconnectSession.value);
@@ -1745,6 +1709,24 @@ export class TFRobotSocketClient {
                   credentialValues,
                 );
       authenticationFailure = undefined;
+      if (
+        reason instanceof SocketConnectionDisposedError &&
+        settleEstablishment === undefined
+      ) {
+        active.terminal = true;
+        active.acceptingEvents = false;
+        joinPending = false;
+        pendingRealtimeActions.length = 0;
+        authenticationAbort.abort();
+        connectionAbort.abort();
+        if (joinTimeout !== undefined) {
+          clearTimeout(joinTimeout);
+          joinTimeout = undefined;
+        }
+        lifecycle("offline");
+        report({ ...error, retryable: false }, "connection");
+        return;
+      }
       if (error.code === "authentication" || error.code === "authorization") {
         void this.#invalidateSession(
           error,
@@ -1776,6 +1758,9 @@ export class TFRobotSocketClient {
       );
     });
     add("disconnect", (reason) => {
+      authenticationAbort.abort();
+      currentServerSession = undefined;
+      authenticationFailure = undefined;
       if (reason === "io client disconnect") return;
       if (active.terminal) return;
       active.acceptingEvents = false;
@@ -1904,6 +1889,7 @@ export class TFRobotSocketClient {
       }
     }
     const cleanup = (): void => {
+      authenticationAbort.abort();
       connectionAbort.abort();
       if (joinTimeout !== undefined) {
         clearTimeout(joinTimeout);

@@ -1,1084 +1,187 @@
-import {
-  expect,
-  test,
-  type APIRequestContext,
-  type Page,
-} from "@playwright/test";
-import { io as connectSocket } from "socket.io-client";
-
-import { PLAYGROUND_EVENT_DETAIL_SPLIT_RATIO_STORAGE_KEY } from "../../playground/src/playground-layout-preferences.js";
-
-const ROBOTSERVER = "http://localhost:4310";
-const PLAYGROUND_ORIGIN = `http://localhost:${
-  process.env["TF_CHAT_PLAYGROUND_PORT"] ?? "4311"
-}`;
-const ORIGIN_HEADERS = { Origin: PLAYGROUND_ORIGIN };
-
-interface MockState {
-  readonly conversations: readonly string[];
-  readonly observations: {
-    readonly activeSockets: number;
-    readonly adminRequests: number;
-    readonly bearerRequests: number;
-    readonly contentTypeRequests: number;
-    readonly corsPreflights: number;
-    readonly interrupts: number;
-    readonly invalidOrigins: number;
-    readonly routedRequests: number;
-    readonly joins: number;
-    readonly passwordLogins: number;
-    readonly rejectedRest: { readonly missing: number; readonly wrong: number };
-    readonly rejectedSockets: {
-      readonly missing: number;
-      readonly wrong: number;
-    };
-    readonly socketConnections: number;
-    readonly socketDisconnections: number;
-  };
-}
-
-const stateOf = async (request: APIRequestContext): Promise<MockState> =>
-  (await (
-    await request.get(`${ROBOTSERVER}/__test/state`)
-  ).json()) as MockState;
-
-const fillConnection = async (
-  page: Page,
-  auth: "admin" | "bearer" | "password",
-  credential: string,
-) => {
-  await enterChatKit(page);
-  await page.getByRole("button", { name: "RobotServer 模式" }).click();
-  await page.getByLabel("RobotServer 服务地址").fill(ROBOTSERVER);
-  await page.getByLabel("Namespace").fill("e2e-ns");
-  await page.getByLabel("Robot ID").fill("e2e-robot");
-  await page.locator("summary", { hasText: "高级设置" }).click();
-  await page.getByLabel("platformId").fill("platform-e2e");
-  if (auth === "admin") {
-    await page.getByText("Admin Token", { exact: true }).click();
-  } else if (auth === "bearer") {
-    await page.getByText("用户 Token", { exact: true }).click();
-  }
-  await page
-    .locator(
-      `input[aria-label="${
-        auth === "bearer"
-          ? "用户 Token"
-          : auth === "admin"
-            ? "Admin Token"
-            : "管理员密码"
-      }"]`,
-    )
-    .fill(credential);
-  await page.getByRole("button", { name: "连接 RobotServer" }).click();
-  await page.getByLabel("开发诊断").check();
-};
-
-const enterChatKit = async (page: Page) => {
-  const entry = page.locator("article.playground-module-card").first();
-  if (await entry.count()) {
-    await entry.click();
-  }
-  await expect(
-    page.getByRole("heading", { name: "Chat Kit 调试台" }),
-  ).toBeVisible();
-  // These workbench scenarios deliberately exercise developer controls.
-  await page.getByLabel("开发诊断").check();
-};
-
-const enterManager = async (page: Page) => {
-  const entry = page.locator("article.playground-module-card").nth(1);
-  if (await entry.count()) {
-    await entry.click();
-  }
-  await expect(page.getByRole("heading", { name: "身份与目录" })).toBeVisible();
-};
-
-const loginPlayground = async (page: Page) => {
-  await enterManager(page);
-  await page.getByText("Mock 模式", { exact: true }).click();
-  await page.getByLabel("Email or phone").fill("demo-user");
-  await page.getByLabel("Password", { exact: true }).fill("demo-password");
-  await page.locator('button[type="submit"]').click();
-  await expect(
-    page.locator('select[aria-label="选择组织"] option[value="org-alpha"]'),
-  ).toBeAttached();
-};
-
-const socketRejection = async (auth: Record<string, string>) =>
-  new Promise<number | undefined>((resolve, reject) => {
-    const socket = connectSocket(`${ROBOTSERVER}/chat`, {
-      auth,
-      extraHeaders: ORIGIN_HEADERS,
-      path: "/c/tfrobot/e2e-ns/e2e-robot/socket.io",
-      reconnection: false,
-      transports: ["websocket"],
-    });
-    let settled = false;
-    const finish = (complete: () => void) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      socket.disconnect();
-      complete();
-    };
-    const timeout = setTimeout(
-      () =>
-        finish(() =>
-          reject(new Error("Socket authentication did not settle in time")),
-        ),
-      2_000,
-    );
-    socket.once("connect", () => {
-      finish(() =>
-        reject(new Error("Invalid Socket credentials were accepted")),
-      );
-    });
-    socket.once(
-      "connect_error",
-      (reason: Error & { data?: { status?: number } }) => {
-        finish(() => resolve(reason.data?.status));
-      },
-    );
-  });
-
-const composerSendButton = (page: Page) =>
-  page
-    .locator('[data-chat-composer=""]')
-    .getByRole("button", { name: /发\s*送(?:中)?$/ });
-
-const installManagerRoute = async (
-  page: Page,
-  origin: string,
-  options: {
-    readonly connectable?: boolean | undefined;
-    readonly accountSelection?: boolean | undefined;
-    readonly onTokenExchange?: ((body: URLSearchParams) => void) | undefined;
-  } = {},
-) => {
-  await page.route(`${origin}/**`, async (route) => {
-    const url = new URL(route.request().url());
-    const path = url.pathname;
-    if (path === "/auth/login-by-password") {
-      const body = route.request().postDataJSON() as {
-        phone?: string;
-        email?: string;
-        password?: string;
-      };
-      expect(body.phone).toBe("real-user");
-      expect(body.email).toBeUndefined();
-      expect(body.password).toBe("real-password");
-      if (options.accountSelection) {
-        await route.fulfill({
-          json: {
-            tempToken: "temporary-selection-fixture",
-            accounts: [
-              { accountId: "account-real", displayName: "验收测试组织" },
-              { accountId: "account-other", displayName: "其他组织" },
-            ],
-          },
-        });
-        return;
-      }
-    }
-    if (path === "/auth/login-by-password" || path === "/auth/select-account") {
-      if (path === "/auth/select-account") {
-        expect(route.request().postDataJSON()).toEqual({
-          tempToken: "temporary-selection-fixture",
-          accountId: "account-real",
-        });
-      }
-      await route.fulfill({
-        json: {
-          token: "manager-user-token",
-          account: {
-            userId: "user-real",
-            accountId: "account-real",
-            organizationId: "org-real",
-            displayName: "真实组织",
-          },
-        },
-      });
-      return;
-    }
-    if (path === "/api/v1/accounts/my") {
-      await route.fulfill({
-        json: {
-          accounts: [
-            {
-              userId: "user-real",
-              accountId: "account-real",
-              organizationId: "org-real",
-              displayName: "真实组织",
-            },
-          ],
-        },
-      });
-      return;
-    }
-    if (path === "/api/v1/auth/me") {
-      expect(route.request().headers()["authorization"]).toBe(
-        "Bearer manager-user-token",
-      );
-      await route.fulfill({
-        json: {
-          userId: "user-real",
-          accountId: "account-real",
-          organizationId: "org-real",
-          displayName: "真实组织",
-        },
-      });
-      return;
-    }
-    if (path === "/api/v1/oauth/token") {
-      options.onTokenExchange?.(
-        new URLSearchParams(route.request().postData() ?? ""),
-      );
-      await route.fulfill({
-        json: { access_token: "bearer-good", expires_in: 3_600 },
-      });
-      return;
-    }
-    if (path.endsWith("/connection-info")) {
-      await route.fulfill({
-        json: {
-          data: {
-            namespace: "e2e-ns",
-            rid: "e2e-robot",
-            robotType: "tfrobot",
-            socketBaseURL: ROBOTSERVER,
-            sioPath: "/socket.io/",
-          },
-        },
-      });
-      return;
-    }
-    expect(route.request().headers()["authorization"]).toBe(
-      "Bearer manager-user-token",
-    );
-    await route.fulfill({
-      json: {
-        data: {
-          total: 1,
-          page: 1,
-          pageSize: 20,
-          items: [
-            options.connectable === true
-              ? {
-                  id: "de-e2e",
-                  name: "通用",
-                  robotAccountId: "one-person-org-3:000001",
-                  robotId: "e2e-robot",
-                  status: "running",
-                  templateType: "tfrserver",
-                }
-              : { robotId: "robot-real" },
-          ],
-        },
-      },
-    });
-  });
-};
-
-test("真实用户模式的 Token Exchange 走浏览器 fetch 并建立当前机器人会话", async ({
-  page,
-  request,
-}) => {
-  const exchanges: URLSearchParams[] = [];
-  const conversationRequests: URL[] = [];
-  page.on("request", (request) => {
-    const url = new URL(request.url());
-    if (url.pathname.endsWith("/v1/chat/conversations")) {
-      conversationRequests.push(url);
-    }
-  });
-  await installManagerRoute(page, "https://api-staging.turingfocus.cn", {
-    connectable: true,
-    onTokenExchange: (body) => exchanges.push(body),
-  });
+import { test, expect, type Page } from "@playwright/test";
+const MANAGER = "http://127.0.0.1:4312";
+const chat = (page: Page) =>
+  page.getByRole("region", { name: "Chat Kit 连接", exact: true });
+const tools = (page: Page) =>
+  page.getByRole("region", { name: "RemoteTool 连接", exact: true });
+const state = async (page: Page) =>
+  (await page.request.get(`${MANAGER}/__test/remote-state`)).json();
+async function environment(page: Page) {
   await page.goto("/");
-  await enterManager(page);
-  await page.getByText("真实用户模式", { exact: true }).click();
-  await page.getByLabel("用户账号").fill("real-user");
-  await page.getByLabel("用户密码").fill("real-password");
-  await page.getByRole("button", { name: "用户登录" }).click();
-  await page.getByRole("button", { name: /✧ 通用/ }).click();
-  await page.getByRole("button", { name: "使用这个机器人" }).click();
-  await page.getByRole("button", { name: /验收平台/ }).click();
-  await page.getByRole("button", { name: "开始对话", exact: true }).click();
-
+  await page
+    .getByRole("combobox", { name: "Manager 环境", exact: true })
+    .press("ArrowDown");
+  await page.getByText("自定义", { exact: true }).click();
+  await page.getByLabel("自定义 Manager 地址").fill(MANAGER);
+  await page.getByRole("button", { name: "应用环境", exact: true }).click();
+  await chat(page).getByLabel("账号", { exact: true }).fill("fixture");
+  await chat(page).getByLabel("密码", { exact: true }).fill("fixture");
+  await chat(page).getByRole("button", { name: "登录", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "连接当前机器人并开始对话" }),
-  ).toHaveCount(0);
-  await expect(page.locator("[data-chat-compact-workspace]")).toBeVisible();
+    chat(page).getByRole("button", { name: /legacy/ }),
+  ).toBeVisible();
+}
+async function register(page: Page) {
+  await tools(page)
+    .getByRole("button", { name: "加载机器人", exact: true })
+    .click();
+  await tools(page)
+    .getByRole("combobox", { name: "RemoteTool 机器人", exact: true })
+    .press("ArrowDown");
+  await page.getByTitle("legacy", { exact: true }).last().click();
+  await tools(page)
+    .getByRole("button", { name: "注册 add", exact: true })
+    .click();
+  await expect(tools(page).getByText("已注册", { exact: true })).toBeVisible();
+}
+async function connectChat(page: Page) {
+  await chat(page)
+    .getByRole("button", { name: /legacy/ })
+    .click();
+  await chat(page)
+    .getByRole("button", { name: "使用这个机器人", exact: true })
+    .click();
+  await chat(page)
+    .getByRole("button", { name: /Word fixture/ })
+    .click();
+  await chat(page)
+    .getByRole("button", { name: "开始对话", exact: true })
+    .click();
   await expect(
-    page.getByRole("button", { name: /Diagnostics|帮助与诊断/ }),
-  ).toHaveCount(0);
-  await expect(page.getByRole("radiogroup", { name: "详情显示" })).toHaveCount(
+    chat(page).getByRole("button", { name: "发送", exact: true }),
+  ).toBeVisible();
+  await chat(page)
+    .locator("textarea:not([aria-hidden])")
+    .fill("Browser round trip");
+  await chat(page).getByRole("button", { name: "发送", exact: true }).click();
+  await expect(
+    chat(page).getByText("Direct browser reply", { exact: true }),
+  ).toBeVisible();
+}
+test("default host UI uses test Manager and exposes no Mock or local simulation", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(
+    page.getByText("当前 Manager：https://rest.test.turingfocus.cn", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(chat(page).getByText("欢迎回来", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Mock 模式|共享连接验收|本地演示/)).toHaveCount(
     0,
   );
-  await expect(page.getByText(/Manager exchange failed/u)).toHaveCount(0);
-
-  expect(exchanges.length).toBeGreaterThanOrEqual(1);
-  expect(exchanges[0]?.get("grant_type")).toBe(
-    "urn:ietf:params:oauth:grant-type:token-exchange",
-  );
-  expect(exchanges[0]?.get("subject_token")).toBe("manager-user-token");
-  expect(exchanges[0]?.get("audience")).toBe("robot:one-person-org-3:000001");
-  expect(exchanges[0]?.get("scope")).toBe("chat:read chat:send");
-  expect(exchanges[0]?.get("token_profile")).toBe("session");
-
-  await page.getByRole("button", { name: "历史对话", exact: true }).click();
-  await expect(
-    page.getByText("RobotServer fixture conversation").first(),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "← 返回对话" }).click();
-  await page
-    .getByRole("textbox", { name: "消息", exact: true })
-    .fill("Manager browser message");
-  await composerSendButton(page).click();
-  await expect(
-    page.getByText("RobotServer streamed: Manager browser message"),
-  ).toBeVisible();
-  await expect(page.getByText("运行中", { exact: true })).toBeHidden();
-  expect(conversationRequests.length).toBeGreaterThanOrEqual(2);
-  expect(
-    conversationRequests.every(
-      (url) =>
-        url.origin === ROBOTSERVER &&
-        url.pathname === "/c/tfrobot/e2e-ns/e2e-robot/v1/chat/conversations",
-    ),
-  ).toBe(true);
-  expect(
-    conversationRequests.every((url) => !url.searchParams.has("title")),
-  ).toBe(true);
-  const beforeLogout = await stateOf(request);
-  expect(beforeLogout.conversations).toHaveLength(2);
-  expect(beforeLogout.observations.joins).toBeGreaterThanOrEqual(1);
-  expect(beforeLogout.observations.bearerRequests).toBeGreaterThan(0);
-  expect(beforeLogout.observations.adminRequests).toBe(0);
-
-  // Detail mode is a normal product control and remains available with debug off.
-  const detailMode = page.getByRole("radiogroup", { name: "详情显示" });
-  await expect(detailMode).toBeVisible();
-  await detailMode.getByText("双栏", { exact: true }).click();
-  await expect(page.locator("[data-chat-event-layout]")).toHaveAttribute(
-    "data-chat-event-layout",
-    "split",
-  );
-  await detailMode.getByText("弹窗", { exact: true }).click();
-  await expect(page.locator("[data-chat-event-layout]")).toHaveAttribute(
-    "data-chat-event-layout",
-    "modal",
-  );
-  await detailMode.getByText("自动", { exact: true }).click();
-  // Turning on developer UI is explicit and does not reconnect or drop the draft.
-  await page
-    .getByRole("textbox", { name: "消息", exact: true })
-    .fill("retained debug draft");
-  const socketsBefore = (await stateOf(request)).observations.socketConnections;
-  await page.getByLabel("开发诊断").check();
-  await expect(
-    page.getByRole("button", { name: /Diagnostics|帮助与诊断/ }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("textbox", { name: "消息", exact: true }),
-  ).toHaveValue("retained debug draft");
-  expect((await stateOf(request)).observations.socketConnections).toBe(
-    socketsBefore,
-  );
-  await page.getByLabel("开发诊断").uncheck();
-  await page.getByRole("button", { name: "账号与设置" }).click();
-  await page.getByRole("button", { name: "退出登录" }).click();
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "确认", exact: true })
-    .click();
-  // Revoked identities cannot retain a token solely to delete fixture conversations.
-  expect((await stateOf(request)).conversations).toEqual(
-    beforeLogout.conversations,
-  );
-  await expect
-    .poll(async () => (await stateOf(request)).observations.activeSockets)
-    .toBe(0);
-  const browserState = await page.evaluate(() => ({
-    cookie: document.cookie,
-    dom: document.documentElement.outerHTML,
-    local: Object.values(localStorage),
-    session: Object.values(sessionStorage),
-    url: location.href,
-  }));
-  expect(JSON.stringify(browserState)).not.toContain("bearer-good");
-  expect(JSON.stringify(browserState)).not.toContain("manager-user-token");
-});
-
-test.beforeEach(async ({ request }) => {
-  await request.post(`${ROBOTSERVER}/__test/reset`);
-});
-
-test("Manager 目录失败显示安全诊断并可原地重试", async ({ page }) => {
-  await installManagerRoute(page, "https://api-staging.turingfocus.cn", {
-    connectable: true,
-  });
-  let unavailable = true;
-  await page.route("**/api/v1/digital-employees?*", async (route) => {
-    if (unavailable)
-      await route.fulfill({
-        status: 503,
-        json: { message: "private server detail" },
-      });
-    else await route.fallback();
-  });
-  await page.goto("/");
-  await enterManager(page);
-  await page.getByText("真实用户模式", { exact: true }).click();
-  await page.getByLabel("用户账号").fill("real-user");
-  await page.getByLabel("用户密码").fill("real-password");
-  await page.getByRole("button", { name: "用户登录" }).click();
-  await expect(page.getByRole("alert")).toContainText("操作未完成");
-  await expect(page.locator("body")).not.toContainText("private server detail");
-  unavailable = false;
-  await page.getByRole("button", { name: "重试" }).click();
-  await expect(page.getByRole("button", { name: /✧ 通用/ })).toBeVisible();
-  await expect(page.getByRole("alert")).toHaveCount(0);
-});
-
-for (const unavailable of [
-  {
-    status: "stopped",
-    templateType: "tfrserver",
-    message: "当前未运行",
-  },
-  {
-    status: "running",
-    templateType: "other",
-    message: "暂不支持此类型",
-  },
-]) {
-  test(`Manager 机器人资格原因准确：${unavailable.status}/${unavailable.templateType}`, async ({
-    page,
-  }) => {
-    await installManagerRoute(page, "https://api-staging.turingfocus.cn");
-    await page.route("**/api/v1/digital-employees?*", (route) =>
-      route.fulfill({
-        json: {
-          data: {
-            total: 1,
-            page: 1,
-            pageSize: 20,
-            items: [
-              {
-                id: "uat-unavailable",
-                name: "UAT unavailable",
-                robotId: "unavailable",
-                robotAccountId: "account-present",
-                status: unavailable.status,
-                templateType: unavailable.templateType,
-              },
-            ],
-          },
-        },
-      }),
-    );
-    await page.goto("/");
-    await enterManager(page);
-    await page.getByText("真实用户模式", { exact: true }).click();
-    await page.getByLabel("用户账号").fill("real-user");
-    await page.getByLabel("用户密码").fill("real-password");
-    await page.getByRole("button", { name: "用户登录" }).click();
-    await expect(
-      page.getByRole("button", { name: new RegExp(unavailable.message) }),
-    ).toBeVisible();
-    await expect(page.getByText(/当前机器人缺少 robotAccountId/u)).toHaveCount(
-      0,
-    );
-  });
-}
-test("legacy fixture accepts omitted platformId while retaining authentication and routing checks", async ({
-  request,
-}) => {
-  const headers = {
-    ...ORIGIN_HEADERS,
-    Authorization: "Bearer bearer-good",
-    "X-TF-Namespace": "e2e-ns",
-    "X-TF-RobotId": "e2e-robot",
-    "X-TF-RobotType": "tfrobot",
-  };
-  const endpoint = `${ROBOTSERVER}/v1/chat/conversations`;
-  expect((await request.get(endpoint, { headers })).status()).toBe(200);
-  expect(
-    (
-      await request.get(`${endpoint}?platformId=platform-e2e`, { headers })
-    ).status(),
-  ).toBe(200);
-  expect(
-    (
-      await request.get(`${endpoint}?platformId=unsupported`, { headers })
-    ).status(),
-  ).toBe(422);
-  expect(
-    (await request.get(endpoint, { headers: ORIGIN_HEADERS })).status(),
-  ).toBe(401);
-  expect(
-    (
-      await request.get(endpoint, {
-        headers: { ...ORIGIN_HEADERS, Authorization: "Bearer bearer-good" },
-      })
-    ).status(),
-  ).toBe(422);
-  const created = await request.post(`${endpoint}?title=contract-test`, {
-    headers,
-  });
-  expect(created.status()).toBe(200);
-  const payload = (await created.json()) as {
-    data: { conversationId: number };
-  };
-  const conversationId = payload.data.conversationId;
-  expect(
-    (
-      await request.post(`${endpoint}?title=rejected&platformId=unsupported`, {
-        headers,
-      })
-    ).status(),
-  ).toBe(422);
-  expect((await stateOf(request)).conversations).toEqual([
-    "RobotServer fixture conversation",
-    "contract-test",
-  ]);
-  expect(
-    (
-      await request.delete(`${endpoint}/${conversationId}`, { headers })
-    ).status(),
-  ).toBe(200);
-  expect((await stateOf(request)).conversations).toEqual([
-    "RobotServer fixture conversation",
-  ]);
-});
-
-test("真实用户模式默认选择 staging 环境，也支持切换自定义地址", async ({
-  page,
-}) => {
-  await page.goto("/");
-  await enterManager(page);
-  await expect(
-    page.getByRole("heading", { name: "Chat Kit 调试台" }),
-  ).toHaveCount(0);
-  await page.getByText("真实用户模式", { exact: true }).click();
-  await expect(page.getByText("staging", { exact: true })).toBeVisible();
-  await page.getByText("test", { exact: true }).click();
-  await expect(
-    page.getByText("https://rest.test.turingfocus.cn", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText("正式", { exact: true })).toBeVisible();
-  await expect(page.getByText("自定义", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("自定义 Manager API 地址")).toBeHidden();
-  await page.getByText("正式", { exact: true }).click();
-  await expect(
-    page.getByText("https://api.turingfocus.cn", { exact: true }),
-  ).toBeVisible();
-  await page.getByText("自定义", { exact: true }).click();
-  await expect(page.getByLabel("自定义 Manager API 地址")).toBeVisible();
-});
-
-for (const [environment, origin] of [
-  ["staging", "https://api-staging.turingfocus.cn"],
-  ["test", "https://rest.test.turingfocus.cn"],
-] as const) {
-  test(`真实用户模式可以直接使用 ${environment} Manager 登录`, async ({
-    page,
-  }) => {
-    await installManagerRoute(page, origin);
-    await page.goto("/");
-    await enterManager(page);
-    await page.getByText("真实用户模式", { exact: true }).click();
-    await page.getByText(environment, { exact: true }).click();
-    await page.getByLabel("用户账号").fill("real-user");
-    await page.getByLabel("用户密码").fill("real-password");
-    await page.getByRole("button", { name: "用户登录" }).click();
-    await expect(page.getByText(/当前工作组织:.*org-real/)).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: /robot-real/ }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("heading", { name: "今天和谁一起工作？" }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("heading", { name: "Chat Kit 调试台" }),
-    ).toHaveCount(0);
-  });
-}
-
-test("test 登录后组织选择清晰可见，并可继续进入机器人目录", async ({
-  page,
-}) => {
-  await installManagerRoute(page, "https://rest.test.turingfocus.cn", {
-    accountSelection: true,
-  });
-  await page.goto("/");
-  await enterManager(page);
-  await page.getByText("真实用户模式", { exact: true }).click();
-  await page.getByText("test", { exact: true }).click();
-  await page.getByLabel("用户账号").fill("real-user");
-  await page.getByLabel("用户密码").fill("real-password");
-  await page.getByRole("button", { name: "用户登录" }).click();
-  await expect(
-    page.getByRole("heading", { name: "选择工作组织" }),
-  ).toBeVisible();
-  const choice = page.getByRole("button", { name: /验收测试组织/ });
-  await expect(choice).toBeVisible();
-  expect((await choice.boundingBox())!.width).toBeGreaterThan(300);
-  await choice.click();
-  await page.getByRole("button", { name: "进入组织" }).click();
-  await expect(
-    page.getByRole("heading", { name: "今天和谁一起工作？" }),
-  ).toBeVisible();
-  await expect(page.getByRole("button", { name: /robot-real/ })).toBeVisible();
-});
-
-test("真实用户模式使用 Manager 账号并加载组织与机器人目录", async ({
-  page,
-}) => {
-  await installManagerRoute(page, "https://manager.example.com");
-  await page.goto("/");
-  await enterManager(page);
-  await page.getByText("真实用户模式", { exact: true }).click();
-  await page.getByText("自定义", { exact: true }).click();
-  await page
-    .getByLabel("自定义 Manager API 地址")
-    .fill("https://manager.example.com");
-  await page.getByLabel("用户账号").fill("real-user");
-  await page.getByLabel("用户密码").fill("real-password");
-  await page.getByRole("button", { name: "用户登录" }).click();
-  await expect(page.getByText(/当前工作组织:.*org-real/)).toBeVisible();
-  await expect(page.getByRole("button", { name: /robot-real/ })).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "今天和谁一起工作？" }),
-  ).toBeVisible();
-});
-
-test("Mock ChatKit does not require login and the identity toolbar can log out", async ({
-  page,
-}) => {
-  await page.goto("/");
-  await enterChatKit(page);
-  await expect(page.getByText("欢迎使用本地 Chat Kit 调试台。")).toBeVisible();
-
-  await page.getByRole("button", { name: "返回 Playground" }).click();
-  await loginPlayground(page);
-  await expect(page.getByRole("button", { name: "退出登录" })).toBeVisible();
-  await page.getByRole("button", { name: "退出登录" }).click();
-  await expect(page.getByRole("heading", { name: "身份与目录" })).toBeVisible();
-});
-
-test("Mock mode renders and exercises the formal Runtime scenarios", async ({
-  page,
-}) => {
-  await page.goto("/");
-  await enterChatKit(page);
-  await expect(page.getByText("本地私有应用 · 内存网关")).toBeVisible();
-  await expect(page.getByText("欢迎使用本地 Chat Kit 调试台。")).toBeVisible();
-  const conversationList = page.locator('aside[aria-label="会话列表"]');
-  await expect(conversationList).toBeHidden();
-  const eventLayout = page.locator("[data-chat-event-layout]");
-  const splitHandle = page.getByRole("separator", {
-    name: "调整事件详情双栏宽度",
-  });
-  const mockEvent = page.locator(
-    '[data-chat-event-trigger="playground-agent-event"]',
-  );
-  await expect(eventLayout).toHaveAttribute("data-chat-event-layout", "split");
-  await expect(splitHandle).toHaveAttribute("aria-valuenow", "56");
-  await splitHandle.scrollIntoViewIfNeeded();
-  const layoutBox = await eventLayout.boundingBox();
-  const handleBox = await splitHandle.boundingBox();
-  if (layoutBox === null || handleBox === null) {
-    throw new Error("Event detail split layout is not measurable");
-  }
-  await page.mouse.move(
-    handleBox.x + handleBox.width / 2,
-    handleBox.y + handleBox.height / 2,
-  );
-  await page.mouse.down();
-  await page.mouse.move(
-    layoutBox.x + layoutBox.width * 0.7,
-    handleBox.y + handleBox.height / 2,
-  );
-  await page.mouse.up();
-  await expect(splitHandle).toHaveAttribute("aria-valuenow", "70");
-  expect(
-    await page.evaluate(
-      (storageKey) => globalThis.localStorage.getItem(storageKey),
-      PLAYGROUND_EVENT_DETAIL_SPLIT_RATIO_STORAGE_KEY,
-    ),
-  ).toBe("0.7");
-  await page.reload();
-  await enterChatKit(page);
-  await expect(splitHandle).toHaveAttribute("aria-valuenow", "70");
-  await mockEvent.click();
-  await expect(page.locator('aside[aria-label="事件详情"]')).toContainText(
-    "执行计划已生成。",
-  );
-  await page.locator(".ant-segmented-item", { hasText: "弹窗" }).click();
-  const eventDialog = page.getByRole("dialog", { name: "事件详情" });
-  await expect(eventDialog).toContainText("执行计划已生成。");
-  await page.keyboard.press("Escape");
-  await expect(eventDialog).toBeHidden();
-  await expect(mockEvent).toBeFocused();
-  await page.locator(".ant-segmented-item", { hasText: "自动" }).click();
-  await page.setViewportSize({ height: 900, width: 600 });
-  await expect(eventLayout).toHaveAttribute("data-chat-event-layout", "modal");
-  expect(
-    await page
-      .locator(".chat-stage")
-      .evaluate((element) => element.scrollWidth <= element.clientWidth),
-  ).toBe(true);
-  await page.setViewportSize({ height: 900, width: 1280 });
-  await expect(eventLayout).toHaveAttribute("data-chat-event-layout", "split");
-
-  await page.getByRole("button", { name: "新建会话" }).click();
-  const createConversationDialog = page.getByRole("dialog", {
-    name: "新建会话",
-  });
-  await createConversationDialog
-    .getByLabel("新会话标题")
-    .fill("Browser conversation");
-  await createConversationDialog
-    .getByRole("button", { name: "确认新建" })
-    .click();
-  await expect(
-    page
-      .locator(".chat-stage > section > main > header")
-      .getByText("Browser conversation"),
-  ).toBeVisible();
-  await page
-    .getByRole("textbox", { name: "消息", exact: true })
-    .fill("Browser mock message");
-  await composerSendButton(page).click();
-  await expect(page.getByText("Browser mock message")).toBeVisible();
-  await expect(
-    page.getByText("流式输出完成，正式 Runtime 已应用每次更新。"),
-  ).toBeVisible();
-
-  await expect(page.getByRole("button", { name: "中断当前任务" })).toBeHidden();
-  await page.getByRole("button", { name: "流式回复" }).click();
-  await expect(page.getByText("正在思考…")).toBeVisible();
-  const interruptButton = page.getByRole("button", {
-    name: "中断当前任务",
-  });
-  await expect(interruptButton).toBeVisible();
-  await expect(
-    page.locator('[data-chat-composer=""]').getByRole("button", {
-      name: "中断当前任务",
-    }),
-  ).toBeVisible();
-  await interruptButton.click();
-  await expect(page.getByText("当前任务已中断。")).toBeVisible();
-  await expect(interruptButton).toBeHidden();
-  await page.getByRole("button", { name: "服务端错误" }).click();
-  const notices = page.locator('[data-chat-notices="true"]');
-  await expect(notices.locator(".ant-alert")).toHaveCount(1);
-  await expect(notices.locator(".ant-alert")).toContainText("server");
-
-  await page.getByRole("button", { name: "历史会话" }).click();
-  const conversationMenu = page.getByRole("menu");
-  await expect(conversationMenu.getByRole("menuitem").first()).toContainText(
-    "Browser conversation",
-  );
-  await conversationMenu.getByRole("menuitem", { name: "示例会话" }).click();
-  await expect(conversationList).toBeHidden();
-  await expect(page.getByText("欢迎使用本地 Chat Kit 调试台。")).toBeVisible();
-  await page.getByRole("button", { name: "断开连接" }).click();
-  await expect(page.locator(".playground-hero .ant-tag")).toHaveText("已断开");
-  await page.getByRole("button", { name: "重新连接" }).click();
-  await expect(page.locator(".playground-hero .ant-tag")).toHaveText("已连接");
-});
-
-test("the approximate server rejects missing and wrong REST and Socket credentials", async ({
-  request,
-}) => {
-  const missingRest = await request.get(
-    `${ROBOTSERVER}/v1/chat/conversations`,
-    {
-      headers: ORIGIN_HEADERS,
-      params: { platformId: "platform-e2e" },
-    },
-  );
-  expect(missingRest.status()).toBe(401);
-  const wrongRest = await request.get(`${ROBOTSERVER}/v1/chat/conversations`, {
-    headers: { ...ORIGIN_HEADERS, Authorization: "Bearer wrong" },
-    params: { platformId: "platform-e2e" },
-  });
-  expect(wrongRest.status()).toBe(403);
-  await expect(socketRejection({})).resolves.toBe(401);
-  await expect(socketRejection({ token: "wrong" })).resolves.toBe(403);
-
-  await expect
-    .poll(async () => (await stateOf(request)).observations)
-    .toMatchObject({
-      rejectedRest: { missing: 1, wrong: 1 },
-      rejectedSockets: { missing: 1, wrong: 1 },
-    });
-});
-
-test("Bearer mode covers create, send, stream, interrupt, reconnect, CORS and disposal", async ({
-  page,
-  request,
-}) => {
-  const secret = "bearer-good";
-  const consoleMessages: string[] = [];
-  page.on("console", (message) => consoleMessages.push(message.text()));
-  await page.goto("/");
-  await fillConnection(page, "bearer", secret);
-  await expect(page.getByText("本地私有应用 · TFROBOT 网关")).toBeVisible();
-  await expect(
-    page.getByText("RobotServer fixture conversation").first(),
-  ).toBeVisible();
-  await page.locator(".ant-segmented-item", { hasText: "双栏" }).click();
-  const robotServerEvent = page.locator(
-    '[data-chat-event-trigger="playground-event-1"]',
-  );
-  await robotServerEvent.click();
-  await expect(page.locator('aside[aria-label="事件详情"]')).toContainText(
-    "RobotServer 正式事件详情",
-  );
-  await page.locator(".ant-segmented-item", { hasText: "弹窗" }).click();
-  await expect(page.getByRole("dialog", { name: "事件详情" })).toContainText(
-    "RobotServer 正式事件详情",
-  );
-  await page.keyboard.press("Escape");
-
-  await page.getByRole("button", { name: "新建会话" }).click();
-  await page
-    .getByRole("dialog", { name: "新建会话" })
-    .getByRole("button", { name: "确认新建" })
-    .click();
-  await expect(
-    page
-      .locator(".chat-stage > section > main > header")
-      .getByText(
-        /^\[tf-chat-kit playground\] \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/u,
+  const sizes = await chat(page)
+    .locator(".ant-input,.ant-input-affix-wrapper")
+    .evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height));
+  expect(sizes.slice(0, 2)).toEqual([40, 40]);
+  for (const width of [375, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth - innerWidth,
       ),
-  ).toBeVisible();
-  const messageInput = page.getByRole("textbox", { name: "消息", exact: true });
-  const sendButton = composerSendButton(page);
-  await messageInput.fill("Browser real message");
-  await sendButton.click();
-  await expect(
-    page.getByText("RobotServer streamed: Browser real message"),
-  ).toBeVisible();
-  await expect(page.getByText("运行中", { exact: true })).toBeVisible();
-  await expect(page.getByText("运行中", { exact: true })).toBeHidden();
-  await expect(messageInput).toHaveValue("");
-  await expect(sendButton).not.toHaveClass(/ant-btn-loading/u);
-
-  await messageInput.fill("Interrupt this answer");
-  await expect(sendButton).toBeEnabled();
-  await sendButton.click();
-  await expect(page.getByText("运行中", { exact: true })).toBeVisible();
-  const interruptButton = page.getByRole("button", {
-    name: "中断当前任务",
+    ).toBeLessThanOrEqual(1);
+  }
+});
+test("tool first: real registration and add dispatch share one socket with default chat and survive independent disposal", async ({
+  page,
+}) => {
+  await environment(page);
+  await register(page);
+  expect(await state(page)).toMatchObject({ engines: 1, chat: 0, tools: 1 });
+  const invocation = await page.request.post(
+    `${MANAGER}/__test/remote-invoke`,
+    { data: { a: 12, b: 30 } },
+  );
+  expect(await invocation.json()).toMatchObject({
+    success: true,
+    resultForLlm: "42",
   });
   await expect(
-    page.locator('[data-chat-composer=""]').getByRole("button", {
-      name: "中断当前任务",
-    }),
-  ).toBeVisible();
-  await interruptButton.click();
-  await expect(interruptButton).toBeHidden();
-  await expect
-    .poll(async () => (await stateOf(request)).observations.interrupts)
-    .toBe(1);
-  await page.getByRole("button", { name: "重连 REST 与 Socket" }).click();
-  await expect(page.locator(".playground-hero .ant-tag")).toHaveText("已连接");
-  await page.getByRole("button", { name: "重命名测试会话" }).click();
-  const renameDialog = page.getByRole("dialog", { name: "重命名测试会话" });
-  const renameInput = renameDialog.getByLabel("测试会话标题");
-  const renamedTitle = `${await renameInput.inputValue()} renamed`;
-  await renameInput.fill(renamedTitle);
-  await renameDialog.getByRole("button", { name: "确认重命名" }).click();
-  await expect(
-    page
-      .locator(".chat-stage > section > main > header")
-      .getByText(renamedTitle),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "删除测试会话" }).click();
-  const deleteDialog = page.getByRole("dialog", { name: "删除测试会话" });
-  await deleteDialog.getByRole("button", { name: "确认删除" }).click();
-  await expect(page.getByText("尚未选择会话")).toBeVisible();
-
-  const browserState = await page.evaluate(() => ({
-    cookie: document.cookie,
-    dom: document.documentElement.outerHTML,
-    local: Object.values(localStorage),
-    session: Object.values(sessionStorage),
-    url: location.href,
-  }));
-  expect(JSON.stringify(browserState)).not.toContain(secret);
-  expect(consoleMessages.join("\n")).not.toContain(secret);
-
-  // Conversation changes and rejoining reuse this client's transport.
-  expect((await stateOf(request)).observations.socketConnections).toBe(1);
-  await page.getByRole("button", { name: "Mock 模式" }).click();
-  await expect(page.getByText("本地私有应用 · 内存网关")).toBeVisible();
-  await expect(page.getByText("本地私有应用 · 内存网关")).toBeVisible();
-  await expect
-    .poll(async () => (await stateOf(request)).observations.activeSockets)
-    .toBe(0);
-  const switchedBrowserState = await page.evaluate(() => ({
-    cookie: document.cookie,
-    dom: document.documentElement.outerHTML,
-    local: Object.values(localStorage),
-    session: Object.values(sessionStorage),
-    url: location.href,
-  }));
-  expect(JSON.stringify(switchedBrowserState)).not.toContain(secret);
-  expect(consoleMessages.join("\n")).not.toContain(secret);
-
-  await fillConnection(page, "bearer", secret);
-  await expect(page.getByText("本地私有应用 · TFROBOT 网关")).toBeVisible();
-  await page.reload();
-  await enterChatKit(page);
-  await expect(page.getByText("本地私有应用 · 内存网关")).toBeVisible();
-  await expect(page.getByLabel("用户 Token")).toHaveCount(0);
-  await expect
-    .poll(async () => (await stateOf(request)).observations.activeSockets)
-    .toBe(0);
-
-  const reloadedBrowserState = await page.evaluate(() => ({
-    cookie: document.cookie,
-    dom: document.documentElement.outerHTML,
-    local: Object.values(localStorage),
-    session: Object.values(sessionStorage),
-    url: location.href,
-  }));
-  expect(JSON.stringify(reloadedBrowserState)).not.toContain(secret);
-  expect(consoleMessages.join("\n")).not.toContain(secret);
-
-  const state = await stateOf(request);
+    tools(page).getByRole("list", { name: "add 调用记录" }),
+  ).toContainText("add(12, 30) = 42");
+  await connectChat(page);
+  expect(await state(page)).toMatchObject({ engines: 1, chat: 1, tools: 1 });
+  await chat(page)
+    .getByRole("button", { name: "断开 Chat Kit", exact: true })
+    .click();
+  await expect(tools(page).getByText("已注册", { exact: true })).toBeVisible();
   expect(
-    state.conversations.some((title) =>
-      title.startsWith("[tf-chat-kit playground]"),
-    ),
-  ).toBe(false);
-  expect(state.observations).toMatchObject({
-    activeSockets: 0,
-    adminRequests: 0,
-    conversationDeletes: 1,
-    conversationRenames: 1,
-    interrupts: 1,
-    invalidOrigins: 0,
-  });
-  expect(state.observations.bearerRequests).toBeGreaterThan(0);
-  expect(state.observations.contentTypeRequests).toBeGreaterThan(0);
-  expect(state.observations.corsPreflights).toBe(0);
-  expect(state.observations.joins).toBeGreaterThanOrEqual(3);
-  expect(state.observations.routedRequests).toBeGreaterThan(0);
-  expect(state.observations.socketConnections).toBeGreaterThan(0);
-  expect(state.observations.socketDisconnections).toBe(
-    state.observations.socketConnections,
+    (
+      await page.request.post(`${MANAGER}/__test/remote-invoke`, {
+        data: { a: 1, b: 2 },
+      })
+    ).ok(),
+  ).toBe(true);
+  await tools(page)
+    .getByRole("button", { name: "注销 RemoteTool", exact: true })
+    .click();
+  await expect(tools(page).getByText("未注册", { exact: true })).toBeVisible();
+  expect((await state(page)).scopes).toEqual(
+    expect.arrayContaining(["action:execute", "chat:read chat:send"]),
   );
 });
-
-test("Admin Token mode forwards admin_key to REST and Socket without Bearer fallback", async ({
+test("chat first: revoking and re-registering tools does not interrupt chat", async ({
   page,
-  request,
 }) => {
-  await page.goto("/");
-  await fillConnection(page, "admin", "admin-good");
-  await expect(page.locator(".playground-hero .ant-tag")).toHaveText("已连接");
-  const state = await stateOf(request);
-  expect(state.observations.adminRequests).toBeGreaterThan(0);
-  expect(state.observations.bearerRequests).toBe(0);
-  expect(state.observations.socketConnections).toBeGreaterThan(0);
-});
-
-test("管理员密码模式换取短期 Admin Token 后连接 REST 与 Socket", async ({
-  page,
-  request,
-}) => {
-  const password = "password-good";
-  await page.goto("/");
-  await fillConnection(page, "password", password);
-  await expect(page.locator(".playground-hero .ant-tag")).toHaveText("已连接");
+  await environment(page);
+  await connectChat(page);
+  await register(page);
+  expect(await state(page)).toMatchObject({ engines: 1, chat: 1, tools: 1 });
+  await tools(page)
+    .getByRole("button", { name: "注销 RemoteTool", exact: true })
+    .click();
+  await expect(tools(page).getByText("未注册", { exact: true })).toBeVisible();
+  await chat(page)
+    .locator("textarea:not([aria-hidden])")
+    .fill("UI long text: after tool revocation");
+  const sent = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/messages(?:\?|$)/u.test(response.url()),
+  );
+  await chat(page).getByRole("button", { name: "发送", exact: true }).click();
+  expect((await sent).ok()).toBe(true);
   await expect(
-    page.getByText("RobotServer fixture conversation").first(),
+    chat(page).getByText("Direct browser reply", { exact: true }),
   ).toBeVisible();
-  const browserState = await page.evaluate(() => ({
-    cookie: document.cookie,
-    dom: document.documentElement.outerHTML,
-    local: Object.values(localStorage),
-    session: Object.values(sessionStorage),
-    url: location.href,
-  }));
-  expect(JSON.stringify(browserState)).not.toContain(password);
-  const state = await stateOf(request);
-  expect(state.observations.passwordLogins).toBe(1);
-  expect(state.observations.adminRequests).toBeGreaterThan(0);
-  expect(state.observations.socketConnections).toBeGreaterThan(0);
+  await tools(page)
+    .getByRole("button", { name: "注册 add", exact: true })
+    .click();
+  await expect(tools(page).getByText("已注册", { exact: true })).toBeVisible();
+  expect(await state(page)).toMatchObject({ engines: 1, chat: 1, tools: 1 });
+  await page
+    .getByRole("combobox", { name: "Manager 环境", exact: true })
+    .press("ArrowDown");
+  await page.getByText("staging", { exact: true }).click();
+  await expect(chat(page).getByText("欢迎回来", { exact: true })).toBeVisible();
+  await expect(tools(page).getByText("未注册", { exact: true })).toBeVisible();
 });
-
-test("中间消息按实际高度折叠，事件缩略时间简洁且 assistant 充分利用宽度", async ({
+test("explicit tool permission denial stays visible and leaves chat usable", async ({
   page,
 }) => {
-  await page.goto("/");
-  await enterChatKit(page);
-  await page.getByRole("button", { name: "过程消息与工具" }).click();
-  const progress = page.locator("[data-chat-generated-text]");
-  await expect(progress).toHaveCount(2);
-  await expect(progress.first()).not.toContainText("思考进展");
-  const viewport = progress.first().locator("[data-chat-progress-collapsed]");
-  await expect(viewport).toHaveAttribute(
-    "data-chat-progress-collapsed",
-    "true",
-  );
-  const measure = await viewport.evaluate((element) => {
-    const inner = element.firstElementChild!;
-    return {
-      height: element.getBoundingClientRect().height,
-      full: inner.getBoundingClientRect().height,
-      line: parseFloat(getComputedStyle(inner).lineHeight),
-    };
+  await environment(page);
+  await connectChat(page);
+  await page.request.post(`${MANAGER}/__test/tool-permission`, {
+    data: { denied: true },
   });
-  expect(measure.full).toBeGreaterThan(measure.line * 5);
-  expect(Math.abs(measure.height - measure.line * 3)).toBeLessThan(2);
-  const toggle = progress.first().getByRole("button", { name: "展开全文" });
-  await toggle.click();
-  await expect(viewport).toHaveAttribute(
-    "data-chat-progress-collapsed",
-    "false",
-  );
+  await tools(page)
+    .getByRole("button", { name: "加载机器人", exact: true })
+    .click();
+  await tools(page)
+    .getByRole("combobox", { name: "RemoteTool 机器人", exact: true })
+    .press("ArrowDown");
+  await page.getByTitle("legacy", { exact: true }).last().click();
+  await tools(page)
+    .getByRole("button", { name: "注册 add", exact: true })
+    .click();
   await expect(
-    progress.first().getByRole("button", { name: "收起" }),
-  ).toHaveAttribute("aria-expanded", "true");
-  await progress.first().getByRole("button", { name: "收起" }).click();
-  await expect(viewport).toHaveAttribute(
-    "data-chat-progress-collapsed",
-    "true",
-  );
+    tools(page).getByText("连接失败", { exact: true }),
+  ).toBeVisible();
+  await expect(tools(page).getByRole("alert")).toBeVisible();
   await expect(
-    progress.last().locator("[data-chat-progress-collapsed]"),
-  ).toHaveAttribute("data-chat-progress-collapsed", "false");
-  const time = progress.first().locator("span[title]").first();
-  await expect(time).toHaveText(/^\d{2}:\d{2}:\d{2}$/);
-  await expect(time).toHaveAttribute("title", /\d{4}/);
-  const tool = page.locator("[data-chat-event-row]").first();
-  await expect(tool.locator("span[title]").last()).toHaveText(
-    /^\d{2}:\d{2}:\d{2}$/,
-  );
-  const assistant = page
-    .getByRole("article")
-    .filter({ hasText: "费用汇总已完成" });
-  const width = await assistant.evaluate((element) => ({
-    available: element.getBoundingClientRect().width,
-    card: element
-      .querySelector('[data-chat-message-role="assistant"]')!
-      .getBoundingClientRect().width,
-  }));
-  expect(width.card / width.available).toBeGreaterThan(0.95);
-  expect(width.card / width.available).toBeLessThanOrEqual(1.01);
-  // A narrow host can wrap previously short text into a long intermediate message.
-  await page.setViewportSize({ width: 420, height: 900 });
-  await expect(
-    progress.first().locator("[data-chat-progress-collapsed]"),
-  ).toHaveAttribute("data-chat-progress-collapsed", "true");
+    chat(page).getByRole("button", { name: "发送", exact: true }),
+  ).toBeVisible();
+  expect(await state(page)).toMatchObject({ chat: 1, tools: 0 });
 });

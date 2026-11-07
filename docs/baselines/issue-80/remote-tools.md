@@ -51,6 +51,20 @@ Headless 通过 `askUser.getSnapshot()`、`subscribe(listener)`、`answer(conver
 
 ## 宿主工具
 
+### 与聊天共用底层连接（#167，随本次 Minor Changeset 发布）
+
+通过 Headless 入口的 `createTFRobotSocketConnection` 显式创建共享上下文，将同一个
+`connection.socketFactory` 传给聊天与 RemoteTool 客户端，即可让两个 namespace 共用一个
+Engine.IO WebSocket。完整示例见[宿主接入指南](../../host-app-integration.md#共享聊天与-remotetool-连接167)。
+
+`/chat` 和 `/remote-tool` 分别认证、连接与恢复；同名冲突和 `action:execute` 授权要求
+保持现有规则。通用工具注册不关联 conversationId。一个上下文固定宿主身份、Robot 和
+部署入口；切换身份或 Robot 时释放旧上下文。不能在同一上下文内同时创建多个独立的同名
+namespace 所有者，例如两个 RemoteTool Provider；应使用独立上下文。
+
+工具 `dispose()` 后原实例不可重启。需重新注册时，先释放旧 Provider，再用同一共享上下文
+创建新 Provider；工具清单继续采用固定 manifest。共享连接不改变超时、去重和取消规则。
+
 ```ts
 import {
   createTFRobotRemoteToolClient,
@@ -102,7 +116,7 @@ provider.dispose();
 
 `createTFRobotRemoteToolClient` 与聊天客户端分别显式持有和释放；构造不读取认证、不打开
 连接。默认使用 `baseUrl` 所在服务的 `/remote-tool` 根路径 namespace（不追加 REST 路径），可用 `socketNamespaceUrl` 指定完整地址。
-`socketPath` 默认 `/socket.io`。连接按实例独占，不使用聊天会话 Socket 或 Front 全局对象。
+`socketPath` 默认 `/socket.io`。默认连接按实例独占；显式传入共享 socketFactory 时只复用底层 Manager，各自使用 namespace Socket，不使用 Front 全局对象。
 请勿将凭证放进 URL；认证只通过 SessionProvider 的短期材料进入握手。
 
 工具清单在构造时固定，提供 1–100 个定义。替换清单时先释放旧 Provider 再创建新实例，

@@ -347,7 +347,7 @@ const PlaygroundAuthGateContent = ({
   const [loginMode, setLoginMode] = useState<"mock" | "real">("mock");
   const [realEnvironment, setRealEnvironment] = useState<
     "staging" | "test" | "production" | "custom"
-  >("staging");
+  >("test");
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [realIdentifier, setRealIdentifier] = useState("");
   const [realPassword, setRealPassword] = useState("");

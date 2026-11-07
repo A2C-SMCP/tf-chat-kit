@@ -189,3 +189,9 @@ export {
   type TFRobotConversationPlatform,
 } from "@turingfocus/chat-gateway-tfrobot";
 export type { TFRobotConversationContract } from "@turingfocus/chat-gateway-tfrobot";
+
+export {
+  createTFRobotSocketConnection,
+  type TFRobotSocketConnection,
+  type TFRobotSocketConnectionOptions,
+} from "@turingfocus/chat-gateway-tfrobot";
