@@ -232,6 +232,11 @@ export const InteractionProvider = ({
     });
   }
 
+  // Inheritance is wholesale: children keep using the parent's subscription,
+  // draft store, scope and generation. A nested provider must not create a
+  // second store, or inline and modal cards would lose each other's drafts.
+  if (client === undefined && parent !== null) return <>{children}</>;
+
   return (
     <InteractionClientContext.Provider value={value}>
       {resolved === null ? (

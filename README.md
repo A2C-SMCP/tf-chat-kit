@@ -243,8 +243,9 @@ client 并创建新实例，不得跨身份共享。使用 `ManagerChatApp` 时�
 默认 Ant Design UI 在同一时刻只展示一个活跃问询：属于当前打开会话时内联显示，否则使用全局
 Modal；其余待回答项进入浮动队列角标。倒计时以 `expiresAt` 为准；提交结果区分 `submitting`、
 `accepted`、ack 超时和连接断开。工作区显式收到非 null `interactionClient` 时渲染内联卡与队列；
-未传 client 时继承外层 `InteractionProvider` 仅用于抑制 legacy/Gateway pending，队列由宿主
-负责，避免重复渲染。注入 Interaction client 时，legacy `AskUserRemoteTool` 的 pending 项与
+未传 client 时整体继承外层 `InteractionProvider`（同一订阅、草稿 store 与 scope）以抑制
+legacy/Gateway pending，队列由宿主负责，避免重复渲染和草稿分裂。注入 Interaction client 时，
+legacy `AskUserRemoteTool` 的 pending 项与
 Gateway `pendingInteraction` 不再渲染，但已完成的历史结果仍保留；未注入时既有路径不变。
 不要在每个实例之间共享模块级 store。
 

@@ -618,7 +618,8 @@ const bundle = createTFRobotRemoteToolInteractionBundle({
 `InteractionProvider` + 自己的 `InteractionQueue`”组合，工作区的内层 Provider 会继承外层
 client 以抑制 legacy/Gateway pending，但工作区不渲染队列；队列、Modal 与 `inlineConversationId`
 由宿主统一负责。此时可通过 `conversationViewProps.interactionInline` 显式开启工作区内联，并
-仍由宿主的队列协调 `inlineConversationId`，避免同一活跃项重复展示。为兼容历史行为，
+仍由宿主的队列协调 `inlineConversationId`，避免同一活跃项重复展示；内联卡与宿主队列使用同一
+草稿 store 与 scope，内联/Modal 切换不会丢草稿。为兼容历史行为，
 `conversationViewProps.interactionInline` 默认在继承模式下关闭。
 
 `ManagerChatApp` 内置机器人/平台/账号切换。传入非 null `interactionClient` 时**必须**同时传
@@ -660,8 +661,10 @@ values 过滤，旧问题残留的选项不会提交到新问题。
 `ChatCompactWorkspace` 时传 `interactionInlineVisible={false}`，队列会自动回退到全局 Modal；
 `ManagerChatApp` 已内置该行为。
 
-`InteractionProvider` 的 `client` 为 `undefined` 时继承外层 Provider，为 `null` 时禁用该子树
-的 Interaction UI；`scope` 控制草稿隔离范围。`useInteractionQueue()` 返回 `active` / `waiting` /
+`InteractionProvider` 的 `client` 为 `undefined` 时整体继承外层 Provider：复用同一订阅、草稿
+store、`scope`、`clientGeneration`，不再创建第二套队列/草稿状态，因此内联卡片与宿主的队列 Modal
+共享输入草稿；此模式下子 Provider 自己的 `scope` 会被忽略，需要独立 scope 时必须显式传 client。
+`client` 为 `null` 时禁用该子树的 Interaction UI。`useInteractionQueue()` 返回 `active` / `waiting` /
 `connection` / `now` / `liveCount` / `clientGeneration` / `activate` / `respond` / `getDraft` /
 `setDraft`；`active`、`waiting` 与倒计时均来自 Runtime store，不要在 UI 侧重新计算 EDF 或队列
 上限。自定义卡片应把 `clientGeneration` 与本问题的 `interactionId` 一起作为 key，防止 client

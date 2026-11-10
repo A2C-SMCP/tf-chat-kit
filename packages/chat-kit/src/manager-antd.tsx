@@ -702,9 +702,7 @@ function ManagerAppBinding({
     ],
   );
   const chatIdentityKey =
-    chatIdentity === undefined
-      ? ""
-      : `${chatIdentity.accountId ?? ""}|${chatIdentity.environment ?? ""}|${chatIdentity.organizationId ?? ""}|${chatIdentity.platformId ?? ""}|${chatIdentity.robotId}|${chatIdentity.userId ?? ""}`;
+    chatIdentity === undefined ? "" : managerChatIdentityScope(chatIdentity);
   const chatIdentityRef = useRef(chatIdentity);
   chatIdentityRef.current = chatIdentity;
   const onChatIdentityChangeRef = useRef(onChatIdentityChange);

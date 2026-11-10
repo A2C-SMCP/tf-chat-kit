@@ -8,6 +8,7 @@ import {
   InteractionProvider,
   useInteractionClient,
   useInteractionQueue,
+  type InteractionDraft,
 } from "../packages/chat-react/src/index.js";
 import {
   ChatCompactWorkspace,
@@ -499,6 +500,49 @@ describe("InteractionProvider", () => {
     first.client.dispose();
     second.client.dispose();
   });
+
+  it("shares the parent draft store when a provider inherits", async () => {
+    const { client, transport } = setup();
+    await synchronize(transport);
+    await push(transport, request("shared"));
+    const subscribe = vi.spyOn(client, "subscribe");
+    const DraftProbe = () => {
+      const queue = useInteractionQueue();
+      return createElement(
+        "span",
+        { "data-testid": "draft-probe" },
+        queue.active === null
+          ? "none"
+          : JSON.stringify(queue.getDraft(queue.active.interactionId) ?? null),
+      );
+    };
+    const view = await render(
+      createElement(
+        InteractionProvider,
+        { client, scope: "identity-a" },
+        createElement(InteractionQueue, { labels: defaultChatUiLabels }),
+        createElement(
+          InteractionProvider,
+          { scope: "identity-b" },
+          createElement(DraftProbe),
+        ),
+      ),
+    );
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    const other = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Other"]',
+    )!;
+    await setValue(other, "shared draft");
+    await act(async () => {
+      transport.advanceTo(NOW + 1_000);
+      await flush();
+    });
+    expect(
+      document.querySelector('[data-testid="draft-probe"]')?.textContent,
+    ).toContain("shared draft");
+    await view.unmount();
+    client.dispose();
+  });
 });
 
 describe("InteractionCard", () => {
@@ -542,6 +586,79 @@ describe("InteractionCard", () => {
     expect(onRespond).toHaveBeenCalledWith("single", {
       status: "answered",
       selectedOptions: ["yes"],
+    });
+    await rendered.unmount();
+    client.dispose();
+  });
+
+  it("does not loop when the host holds the draft in state", async () => {
+    const { client, transport } = setup();
+    await synchronize(transport);
+    await push(transport, request("controlled"));
+    const view = client.getSnapshot().entries["controlled"]!;
+    let renders = 0;
+    const Controlled = () => {
+      renders++;
+      const [draft, setDraft] = useState<InteractionDraft>({
+        selected: [],
+        customText: "",
+      });
+      return createElement(InteractionCard, {
+        connection: "connected",
+        draft,
+        labels: defaultChatUiLabels,
+        now: client.getSnapshot().now,
+        onDraftChange: setDraft,
+        onRespond: () => true,
+        view,
+      });
+    };
+    const rendered = await render(createElement(Controlled));
+    const other = rendered.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Other"]',
+    )!;
+    await setValue(other, "controlled draft");
+    expect(
+      rendered.container.querySelector<HTMLInputElement>(
+        'input[aria-label="Other"]',
+      )?.value,
+    ).toBe("controlled draft");
+    expect(renders).toBeLessThan(10);
+    await rendered.unmount();
+    client.dispose();
+  });
+
+  it("drops draft options that are no longer offered and rewrites the draft", async () => {
+    const { client, transport } = setup();
+    await synchronize(transport);
+    await push(transport, request("stale-options"));
+    const view = client.getSnapshot().entries["stale-options"]!;
+    const onDraftChange = vi.fn();
+    const rendered = await render(
+      createElement(InteractionCard, {
+        connection: "connected",
+        draft: { selected: ["gone"], customText: "" },
+        labels: defaultChatUiLabels,
+        now: client.getSnapshot().now,
+        onDraftChange,
+        onRespond: () => true,
+        view,
+      }),
+    );
+    expect(
+      rendered.container.querySelector('input[value="yes"]'),
+    ).not.toBeNull();
+    expect(
+      rendered.container.querySelector<HTMLInputElement>('input[value="yes"]')
+        ?.checked,
+    ).toBe(false);
+    expect(rendered.container.querySelector('input[value="gone"]')).toBeNull();
+    expect(findButton(rendered.container, "Submit answers").disabled).toBe(
+      true,
+    );
+    expect(onDraftChange).toHaveBeenCalledWith({
+      selected: [],
+      customText: "",
     });
     await rendered.unmount();
     client.dispose();
@@ -1195,6 +1312,24 @@ describe("InteractionHistoryView", () => {
       rendered.container.querySelector("time")?.getAttribute("datetime"),
     ).toBe(new Date(NOW).toISOString());
     expect(rendered.container.textContent).toContain("boom");
+    await rendered.unmount();
+  });
+
+  it("omits an out-of-range answeredAt without throwing", async () => {
+    const rendered = await render(
+      createElement(InteractionHistoryView, {
+        history: {
+          kind: "interaction-history",
+          interactionId: "history-out-of-range",
+          direction: "answer",
+          status: "answered",
+          answeredAt: 1e20,
+        },
+        labels: defaultChatUiLabels,
+      }),
+    );
+    expect(rendered.container.querySelector("time")).toBeNull();
+    expect(rendered.container.textContent).not.toContain("Invalid Date");
     await rendered.unmount();
   });
 

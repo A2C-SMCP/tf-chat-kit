@@ -124,6 +124,9 @@ describe("managerChatIdentityMatches", () => {
     expect(
       managerChatIdentityScope({ ...actual, robotId: "robot-b" }),
     ).not.toBe(managerChatIdentityScope(actual));
+    expect(
+      managerChatIdentityScope({ environment: "a|b", robotId: "c" }),
+    ).not.toBe(managerChatIdentityScope({ environment: "a", robotId: "b|c" }));
   });
 
   it("limits inline visibility to the chat screen without a stale identity", () => {

@@ -9,7 +9,7 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { INTERACTION_MAX_ANSWER_CHARACTERS } from "@turingfocus/chat-protocol";
 import type {
@@ -105,17 +105,28 @@ export const InteractionCard = ({
     draft === undefined
       ? ""
       : JSON.stringify([draft.selected, draft.customText]);
-  const publishedSignature = useRef(draftSignature);
-  const lastInteractionId = useRef(view.interactionId);
-
   const options = view.options;
-  const optionValues = new Set(options.map((option) => option.value));
+  const optionValues = useMemo(
+    () => options.map((option) => option.value),
+    [options],
+  );
   // A draft can outlive the options it was typed for (server edits, retries);
   // never submit a stale value that the current question no longer offers.
-  const selected = rawSelected.filter((value) => optionValues.has(value));
+  const selected = useMemo(() => {
+    const allowed = new Set(optionValues);
+    return rawSelected.filter((value) => allowed.has(value));
+  }, [optionValues, rawSelected]);
+  const publishedSignature = useRef(
+    draft === undefined
+      ? JSON.stringify([selected, customText])
+      : draftSignature,
+  );
+  const lastInteractionId = useRef(view.interactionId);
 
   useEffect(() => {
-    publishedSignature.current = JSON.stringify([selected, customText]);
+    const signature = JSON.stringify([selected, customText]);
+    if (signature === publishedSignature.current) return;
+    publishedSignature.current = signature;
     onDraftChangeRef.current?.({ customText, selected });
   }, [customText, selected]);
   useEffect(() => {
@@ -145,7 +156,9 @@ export const InteractionCard = ({
         previous.includes(value)
           ? previous.filter((candidate) => candidate !== value)
           : [
-              ...previous.filter((candidate) => optionValues.has(candidate)),
+              ...previous.filter((candidate) =>
+                optionValues.includes(candidate),
+              ),
               value,
             ],
       );

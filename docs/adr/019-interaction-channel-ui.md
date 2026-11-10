@@ -24,8 +24,10 @@ Interaction 的宿主中存在，必须避免同一时刻渲染多套 pending �
    `AskUserInteractionRequest`。`InteractionView` 是 Runtime `InteractionEntry` 的 UI 面向
    别名，不是第二套状态模型。
 2. **实例所有权。** 每个 Provider 使用自己的 client；不得创建模块级 store 或单例。Provider
-   不创建、不释放宿主传入的 client。`interactionClient` 为 `undefined` 时继承外层 Provider，
-   为 `null` 时显式禁用，传入实例时以该实例为准。
+   不创建、不释放宿主传入的 client。`interactionClient` 为 `undefined` 时整体继承外层 Provider
+   （同一订阅、草稿 store、scope 与 `clientGeneration`，不创建第二套队列/草稿状态），为 `null`
+   时显式禁用，传入实例时以该实例为准。继承模式下子 Provider 的 `scope` 被忽略；需要独立
+   scope 时必须显式传 client。
 3. **展示分工。** 活跃项属于当前实际挂载的会话视图时，在消息区上方内联展示；属于其他会话
    或当前视图未挂载（加载、错误、history/settings、fresh 等）时使用全局 Modal；其余 live 项
    进入浮动队列角标。`inlineConversationId` 只在会话视图实际渲染时传入，避免 Modal 被抑制
@@ -40,20 +42,24 @@ Interaction 的宿主中存在，必须避免同一时刻渲染多套 pending �
    协商，不是 UI 双轨渲染的理由。
 5. **默认 UI 的队列所有权。** `ChatWorkspace` / `ChatCompactWorkspace` 只在宿主显式传入
    非 null client 时渲染 Interaction 队列与内联卡片。未传 client（`undefined`）时，工作区的
-   内层 Provider 继承外层 Provider，以抑制 legacy/Gateway pending，但工作区**不渲染队列**；
-   宿主自己的 `InteractionQueue` 继续拥有 Modal 与 `inlineConversationId`，避免同一活跃项重复
-   渲染。`null` 显式禁用该子树的 Interaction UI（包括继承）。自定义 UI 可自行使用
-   `InteractionProvider` + `InteractionQueue`；`ManagerChatApp` 只透传宿主持有的 client。
+   内层 Provider 整体继承外层 Provider（同一订阅、草稿 store、scope 与 `clientGeneration`），
+   以抑制 legacy/Gateway pending，但工作区**不渲染队列**；宿主自己的 `InteractionQueue` 继续
+   拥有 Modal 与 `inlineConversationId`，避免同一活跃项重复渲染和草稿分裂。子 Provider 在继承
+   模式下忽略自己的 `scope`；需要独立 scope 时必须显式传 client。`null` 显式禁用该子树的
+   Interaction UI（包括继承）。自定义 UI 可自行使用 `InteractionProvider` + `InteractionQueue`；
+   `ManagerChatApp` 只透传宿主持有的 client。
 6. **历史展示。** `InteractionHistory` 在现有 tool event renderer 内以只读视图展示
    direction、status、question、answer、answeredBy、answeredAt、error；未知 status 原样展示。
-   不注册新的 timeline renderer，不改变 ADR-005 的渲染器扩展边界。
+   `answeredAt` 使用仓库统一的 UTC 格式，越界/非法时间戳省略而不是抛错。不注册新的 timeline
+   renderer，不改变 ADR-005 的渲染器扩展边界。
 7. **草稿隔离与 client 代际。** 草稿默认按 client 实例隔离；`InteractionProvider.scope` 提供
    可选的宿主身份 scope：scope 变化时草稿立即失效，同一 scope 内 client 重建则保留。Provider
    向队列暴露单调递增的 `clientGeneration`，默认 UI 以 `clientGeneration + interactionId` 作为
-   卡片 key；卡片在 client 或草稿变化时重置，并按当前 `options` 过滤选中值。这样已挂载的输入区
-   不会把旧身份/旧问题的答案提交给新 client。`ManagerChatApp` 用
-   `managerChatIdentityScope(chatIdentity)` 作为 scope，并在身份切换时通过 resolver 停用旧
-   client。
+   卡片 key；卡片在 client 或草稿变化时重置，并按当前 `options` 过滤选中值，回写过滤后的草稿。
+   卡片只在草稿签名实际变化时调用 `onDraftChange`，因此宿主用 `useState` 受控持有 draft 不会
+   形成 effect 循环。这样已挂载的输入区不会把旧身份/旧问题的答案提交给新 client。
+   `ManagerChatApp` 用 `managerChatIdentityScope(chatIdentity)` 作为 scope，并在身份切换时通过
+   resolver 停用旧 client。
 8. **Manager 身份门控默认失败关闭。** `ManagerChatApp` 收到非 null `interactionClient` 时必须
    有 `interactionIdentity`（否则渲染时抛 `TypeError`）；`allowUnscopedInteractionClient` 是
    显式逃生口。身份默认逐字段精确匹配，`allowWildcardInteractionIdentity` 才允许省略字段作为
@@ -79,11 +85,13 @@ Interaction 的宿主中存在，必须避免同一时刻渲染多套 pending �
 
 ## 验证
 
-- DOM：Provider 继承/禁用/实例替换/不释放宿主 client；scope 内 client 重建保留草稿、scope
-  变化/无 scope 替换清空草稿；已挂载卡片不会把旧草稿提交给新 client；queue 投影使用 runtime
-  `activeId`/`now`/`connection`；卡片单选/多选/自由文本、ack 超时重试、连接态；legacy pending
-  抑制与已完成历史保留；inline/Modal 在 loading/fresh/history/hidden 分支的切换；Manager
-  身份门控（精确匹配、fail-closed、显式逃生口）与身份切换回调。
+- DOM：Provider 继承/禁用/实例替换/不释放宿主 client；继承时复用父级订阅与草稿 store；scope
+  内 client 重建保留草稿、scope 变化/无 scope 替换清空草稿；已挂载卡片不会把旧草稿提交给新
+  client；宿主用 `useState` 受控持有 draft 不循环；过期 option 不显示、不可提交并回写过滤值；
+  越界 `answeredAt` 不抛错；queue 投影使用 runtime `activeId`/`now`/`connection`；卡片单选/
+  多选/自由文本、ack 超时重试、连接态；legacy pending 抑制与已完成历史保留；inline/Modal 在
+  loading/fresh/history/hidden 分支的切换；Manager 身份门控（精确匹配、fail-closed、显式逃生
+  口）与身份切换回调。
 - Playwright：fake `/remote-tool` server + 两个独立 browser context，覆盖多 Tab 同收、首答
   生效、失主 `closed(answered)`、早于 connect 的帧序、重连 pending 快照、EDF/上限 10、
   超时/取消与 legacy `supportsAskUserAdapter=false`；Chromium 与 WebKit 均覆盖多 context 首答

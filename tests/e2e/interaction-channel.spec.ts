@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type APIRequestContext } from "@playwright/test";
 import { io, type Socket } from "socket.io-client";
 
 import {
@@ -34,6 +34,22 @@ const openInteractionSocket = (): {
   };
 };
 
+const emitResponse = (socket: Socket, payload: unknown): Promise<unknown> =>
+  new Promise((resolve) => {
+    socket
+      .timeout(2_000)
+      .emit("interaction_response", payload, (error: unknown, ack: unknown) =>
+        resolve(error ?? ack),
+      );
+  });
+
+const interactionState = async (
+  request: APIRequestContext,
+): Promise<{
+  readonly pending: readonly unknown[];
+  readonly responses: readonly unknown[];
+}> => (await request.get(`${MANAGER}/__test/interaction-state`)).json();
+
 test.describe("Interaction channel UI", () => {
   test.beforeEach(async ({ request }) => {
     await reset(request);
@@ -42,51 +58,62 @@ test.describe("Interaction channel UI", () => {
   test("the controlled server validates responses and never resurrects an answered item", async ({
     request,
   }) => {
+    const pendingInteraction = interaction(
+      "server-validated-1",
+      "Server validation question",
+      Date.now() + 30_000,
+    );
+    await request.post(`${MANAGER}/__test/interaction-request`, {
+      data: { interaction: pendingInteraction },
+    });
+    await request.post(`${MANAGER}/__test/interaction-options`, {
+      data: { pendingOnConnect: [pendingInteraction] },
+    });
+
     const first = openInteractionSocket();
     await first.connected;
     try {
-      const invalidAck = await new Promise<unknown>((resolve) => {
-        first.socket.timeout(2_000).emit(
-          "interaction_response",
-          {
-            protocolVersion: 1,
-            interactionId: "invalid-1",
-            status: "answered",
-            answer: 42,
-          },
-          (error: unknown, ack: unknown) => resolve(error ?? ack),
-        );
+      const invalidAnswer = await emitResponse(first.socket, {
+        protocolVersion: 1,
+        interactionId: "server-validated-1",
+        status: "answered",
+        answer: 42,
       });
-      expect(invalidAck).toMatchObject({ status: "unknown_request" });
-
-      const pendingInteraction = interaction(
-        "server-validated-1",
-        "Server validation question",
-        Date.now() + 30_000,
-      );
-      await request.post(`${MANAGER}/__test/interaction-options`, {
-        data: { pendingOnConnect: [pendingInteraction] },
-      });
-      const accepted = await new Promise<unknown>((resolve) => {
-        first.socket.timeout(2_000).emit(
-          "interaction_response",
-          {
-            protocolVersion: 1,
-            interactionId: "server-validated-1",
-            status: "answered",
-            selectedOptions: ["yes"],
-          },
-          (error: unknown, ack: unknown) => resolve(error ?? ack),
-        );
-      });
-      expect(accepted).toMatchObject({ status: "accepted" });
-      const after = await (
-        await request.get(`${MANAGER}/__test/interaction-state`)
-      ).json();
-      expect(after.responses).toEqual([
+      expect(invalidAnswer).toMatchObject({ status: "unknown_request" });
+      let state = await interactionState(request);
+      expect(state.pending).toEqual([
         expect.objectContaining({ interactionId: "server-validated-1" }),
       ]);
-      expect(after.pending).toEqual([]);
+      expect(state.responses).toEqual([]);
+
+      const oversized = await emitResponse(first.socket, {
+        protocolVersion: 1,
+        interactionId: "server-validated-1",
+        status: "answered",
+        selectedOptions: Array.from({ length: 51 }, (_, index) => `v${index}`),
+      });
+      expect(oversized).toMatchObject({ status: "unknown_request" });
+      state = await interactionState(request);
+      expect(state.pending).toEqual([
+        expect.objectContaining({ interactionId: "server-validated-1" }),
+      ]);
+      expect(state.responses).toEqual([]);
+
+      const accepted = await emitResponse(first.socket, {
+        protocolVersion: 1,
+        interactionId: "server-validated-1",
+        status: "answered",
+        selectedOptions: ["yes"],
+      });
+      expect(accepted).toMatchObject({ status: "accepted" });
+      state = await interactionState(request);
+      expect(state.responses).toEqual([
+        expect.objectContaining({
+          interactionId: "server-validated-1",
+          selectedOptions: ["yes"],
+        }),
+      ]);
+      expect(state.pending).toEqual([]);
     } finally {
       first.socket.disconnect();
     }
@@ -95,16 +122,10 @@ test.describe("Interaction channel UI", () => {
     await second.connected;
     try {
       expect(await second.pending).toMatchObject({ interactions: [] });
-      const unknownAck = await new Promise<unknown>((resolve) => {
-        second.socket.timeout(2_000).emit(
-          "interaction_response",
-          {
-            protocolVersion: 1,
-            interactionId: "missing-1",
-            status: "answered",
-          },
-          (error: unknown, ack: unknown) => resolve(error ?? ack),
-        );
+      const unknownAck = await emitResponse(second.socket, {
+        protocolVersion: 1,
+        interactionId: "missing-1",
+        status: "answered",
       });
       expect(unknownAck).toMatchObject({ status: "unknown_request" });
     } finally {
