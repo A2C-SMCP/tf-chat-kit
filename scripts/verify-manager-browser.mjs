@@ -33,18 +33,28 @@ try {
       "utf8",
     ),
   );
-  const unifiedVersions = new Set(
-    manifest.packages.map((item) => item.version),
+  const fromRegistry = process.env["TF_CHAT_PACKAGES_FROM_REGISTRY"] === "1";
+  const expectedVersions = Object.fromEntries(
+    manifest.packages.map((item) => [item.name, item.version]),
   );
-  const [unifiedVersion] = unifiedVersions;
-  if (unifiedVersions.size !== 1 || unifiedVersion === undefined) {
-    throw new Error("Packed release must use one unified package version");
+  const packageVersions = new Set(Object.values(expectedVersions));
+  const [unifiedVersion] = packageVersions;
+  if (
+    fromRegistry &&
+    (packageVersions.size !== 1 || unifiedVersion === undefined)
+  ) {
+    throw new Error(
+      "Registry verification requires one unified package version",
+    );
+  }
+  if (unifiedVersion === undefined) {
+    throw new Error("Packed release is missing package versions");
   }
   // Default: install every package from the local tarballs to verify the
-  // unified workspace state. TF_CHAT_PACKAGES_FROM_REGISTRY=1 resolves all
+  // workspace state; during migration this intentionally observes the
+  // pre-unification versions. TF_CHAT_PACKAGES_FROM_REGISTRY=1 resolves all
   // eight packages from the public Registry; only use it after the unified
   // version has been published.
-  const fromRegistry = process.env["TF_CHAT_PACKAGES_FROM_REGISTRY"] === "1";
   const packages = Object.fromEntries(
     manifest.packages.map((item) => [
       item.name,
@@ -133,10 +143,17 @@ try {
       "utf8",
     ),
   );
-  if (installedChatKit.version !== unifiedVersion)
-    throw new Error("Wrong unified chat-kit dependency version");
-  if (installedAuth.version !== unifiedVersion)
-    throw new Error("Wrong unified auth dependency version");
+  if (fromRegistry) {
+    if (installedChatKit.version !== unifiedVersion)
+      throw new Error("Wrong unified chat-kit dependency version");
+    if (installedAuth.version !== unifiedVersion)
+      throw new Error("Wrong unified auth dependency version");
+  } else {
+    if (installedChatKit.version !== expectedVersions["@turingfocus/chat-kit"])
+      throw new Error("Wrong chat-kit dependency version");
+    if (installedAuth.version !== expectedVersions["@turingfocus/chat-auth"])
+      throw new Error("Wrong auth dependency version");
+  }
   const bundle = await readFile(path.join(temporary, "dist/consumer.js"));
   const keyPath = path.join(temporary, "key.pem");
   const certPath = path.join(temporary, "cert.pem");

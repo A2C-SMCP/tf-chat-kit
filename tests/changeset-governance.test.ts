@@ -131,6 +131,22 @@ describe("changeset governance", () => {
     );
   });
 
+  it("rejects an empty release plan for pending public releases", () => {
+    expect(
+      validateChangesetCoverage({
+        changedFiles: [runtimeSource],
+        addedChangesets: [releaseChangeset],
+        pendingChangesets: [releaseChangeset],
+        pendingReleasePlan: { releases: [] },
+        isInitialWorkspaceBootstrap: false,
+      }),
+    ).toContainEqual(
+      expect.stringContaining(
+        "release plan must include the complete fixed group;",
+      ),
+    );
+  });
+
   it("rejects a single independent package release plan", () => {
     expect(
       validateChangesetCoverage({
