@@ -26,6 +26,8 @@ import {
   useChatSelector,
   useComposerDraft,
   useConversationCache,
+  useHasInteractionClient,
+  useInteractionQueue,
 } from "@turingfocus/chat-react";
 
 import {
@@ -46,6 +48,7 @@ import {
   AskUserInteractionResultView,
   type AskUserChatAboutThisRequest,
 } from "./ask-user-interaction.js";
+import { InteractionCard } from "./interaction-card.js";
 import { ChatRunStatus } from "./chat-run-status.js";
 import { ChatTimeline } from "./chat-timeline.js";
 import { resolveChatUiLabels } from "./labels.js";
@@ -57,7 +60,7 @@ import type {
   ChatRendererFailure,
   ChatRendererRegistry,
 } from "./renderer-registry.js";
-import type { ChatUiLabelOverrides } from "./types.js";
+import type { ChatUiLabelOverrides, ChatUiLabels } from "./types.js";
 import {
   useChatCommandCoordinator,
   type ChatUiCommand,
@@ -85,6 +88,8 @@ export interface ChatConversationViewProps {
   readonly defaultEventDetailSplitRatio?: number | undefined;
   readonly formatTimestamp?: ((timestamp: number) => string) | undefined;
   readonly getDeadlineAt: () => number;
+  /** Render the active interaction inline. Defaults to false; default workspaces enable it. */
+  readonly interactionInline?: boolean | undefined;
   readonly labels?: ChatUiLabelOverrides | undefined;
   readonly onCommandError?:
     ((failure: ChatUiCommandFailure) => void) | undefined;
@@ -158,6 +163,44 @@ const equalChatConversationViewSnapshot = (
     left.timeline === right.timeline &&
     left.outgoingMessages === right.outgoingMessages);
 
+const ConversationInteractionCard = ({
+  conversationId,
+  labels,
+  padding,
+}: {
+  readonly conversationId: string;
+  readonly labels: ChatUiLabels;
+  readonly padding: number;
+}) => {
+  const queue = useInteractionQueue();
+  const active = queue.active;
+  if (active === null || active.conversationId !== conversationId) return null;
+  return (
+    <div
+      aria-label={labels.interactionQueueTitle ?? String(labels.askUserLabel)}
+      role="region"
+      style={{
+        flex: "0 1 auto",
+        minHeight: 0,
+        maxHeight: "40%",
+        overflowY: "auto",
+        padding,
+      }}
+    >
+      <InteractionCard
+        connection={queue.connection}
+        draft={queue.getDraft(active.interactionId)}
+        key={active.interactionId}
+        labels={labels}
+        now={queue.now}
+        onDraftChange={(draft) => queue.setDraft(active.interactionId, draft)}
+        onRespond={queue.respond}
+        view={active}
+      />
+    </div>
+  );
+};
+
 export const ChatConversationView = ({
   showEventDetailModeSelector = true,
   presentation = "compact",
@@ -174,6 +217,7 @@ export const ChatConversationView = ({
   eventDetailSplitRatio,
   formatTimestamp,
   getDeadlineAt,
+  interactionInline = false,
   labels: labelOverrides,
   onChatAboutThis,
   onCommandError,
@@ -194,6 +238,10 @@ export const ChatConversationView = ({
     equalChatConversationViewSnapshot,
   );
   const remoteAskUser = useAskUserRemoteTool(snapshot?.conversationId ?? "");
+  const hasInteractionClient = useHasInteractionClient();
+  const visibleRemoteAskUserEntries = hasInteractionClient
+    ? remoteAskUser.entries.filter((entry) => entry.result !== undefined)
+    : remoteAskUser.entries;
   const attachmentUploader = useChatAttachmentUploader();
   const composer = useComposerDraft(snapshot?.conversationId ?? "");
   const activeRecoveryUnverified =
@@ -734,7 +782,14 @@ export const ChatConversationView = ({
               onDismiss={() => dismissFailure(failure.command)}
             />
           ))}
-        {remoteAskUser.entries.length === 0 ? null : (
+        {interactionInline && hasInteractionClient && snapshot !== null ? (
+          <ConversationInteractionCard
+            conversationId={snapshot.conversationId}
+            labels={labels}
+            padding={token.paddingXS}
+          />
+        ) : null}
+        {visibleRemoteAskUserEntries.length === 0 ? null : (
           <div
             role="region"
             aria-label={String(labels.askUserLabel)}
@@ -745,7 +800,7 @@ export const ChatConversationView = ({
               overflowY: "auto",
             }}
           >
-            {remoteAskUser.entries.map((entry) => (
+            {visibleRemoteAskUserEntries.map((entry) => (
               <div
                 key={entry.request.requestId}
                 style={{ padding: token.paddingXS }}
@@ -767,7 +822,8 @@ export const ChatConversationView = ({
             ))}
           </div>
         )}
-        {snapshot.pendingInteraction === undefined ? null : (
+        {hasInteractionClient ||
+        snapshot.pendingInteraction === undefined ? null : (
           <div style={{ padding: token.paddingXS }}>
             <AskUserInteractionCard
               key={JSON.stringify([

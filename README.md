@@ -198,6 +198,55 @@ const gateway = createTFRobotChatGateway({
 
 当部署的 Server 能为初次 join 返回访问校验 ACK，并在重连 ACK 中提供经过验证的 durable replay cursor/outbox 完整性后，宿主应删除兼容配置，回到默认 `verified`。不要把 `current-server` 当作永久降级开关或在未知 Server 上自动探测启用。
 
+## Interaction 通道（可选）
+
+TFRobotServer 的 `ask_colleague` Interaction 通道通过共享 `/remote-tool` Socket.IO 连接收发
+`interaction_*` 事件。Kit 提供可选的 React / Ant Design 接入；宿主创建并持有
+`InteractionClient`，Kit 只消费它的实例快照。
+
+```tsx
+import { createTFRobotInteractionClient } from "@turingfocus/chat-kit/headless";
+import {
+  ChatWorkspace,
+  InteractionProvider,
+  InteractionQueue,
+} from "@turingfocus/chat-kit";
+
+const interaction = createTFRobotInteractionClient({
+  baseUrl,
+  socketPath,
+  robotId,
+  sessionProvider: {
+    getSession: async () => ({ kind: "bearer", token: await getChatToken() }),
+  },
+});
+
+// 方式 A：交给默认工作区；工作区渲染全局队列与内联卡片
+<ChatWorkspace interactionClient={interaction} getDeadlineAt={getDeadlineAt} />
+
+// 方式 B：完全自定义 React UI；宿主自己挂载队列
+<InteractionProvider client={interaction}>
+  <YourConversationView />
+  <InteractionQueue labels={labels} />
+</InteractionProvider>
+```
+
+`InteractionProvider` 不创建、不释放宿主传入的 client；切换环境、账号或机器人时，宿主应释放旧
+client 并创建新实例，不得跨身份共享。使用 `ManagerChatApp` 时同时传入 `interactionIdentity`
+并在 `onChatIdentityChange` 中替换 client；身份不匹配时默认 UI 会停用 Interaction。需要与普通
+RemoteTool 共用同一个 `/remote-tool` owner 时，使用
+`createTFRobotRemoteToolInteractionBundle`，并只由 bundle 负责最终释放连接。
+
+默认 Ant Design UI 在同一时刻只展示一个活跃问询：属于当前打开会话时内联显示，否则使用全局
+Modal；其余待回答项进入浮动队列角标。倒计时以 `expiresAt` 为准；提交结果区分 `submitting`、
+`accepted`、ack 超时和连接断开。注入 `interactionClient` 时，legacy `AskUserRemoteTool` 的
+pending 项与 Gateway `pendingInteraction` 不再渲染，但已完成的历史结果仍保留；未注入时既有
+路径不变。不要在每个实例之间共享模块级 store。
+
+`supportsAskUserAdapter` 默认为 `false`；legacy adapter 只在 Bundle/传输层显式声明，宿主显式
+注册 legacy `ask_user` 时才需要开启。完整责任边界、生命周期与自定义界面接法见
+[宿主 App 接入指南](docs/host-app-integration.md#64-interaction-通道-ui170)。
+
 ## 文档
 
 - [宿主 App 接入指南](docs/host-app-integration.md)

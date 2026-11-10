@@ -22,6 +22,7 @@
 | [016](016-server-message-identity-and-outgoing-lifecycle.md) | 服务端消息身份与发送生命周期               | Accepted   |
 | [017](017-shared-socket-connection.md)                       | 可选的跨 namespace 共享连接上下文          | Accepted   |
 | [018](018-unified-version-and-release.md)                    | 八包统一版本与发布治理                     | Accepted   |
+| [019](019-interaction-channel-ui.md)                         | Interaction 通道 UI 接入与单一 pending 源  | Accepted   |
 
 ## 状态规则
 

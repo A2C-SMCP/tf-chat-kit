@@ -25,6 +25,7 @@ import type {
 } from "@turingfocus/chat-protocol";
 
 import { AskUserInteractionResultView } from "./ask-user-interaction.js";
+import { InteractionHistoryView } from "./interaction-history.js";
 import type { ChatRendererProps } from "./renderer-registry.js";
 
 import { ChatResourceView } from "./resource-content.js";
@@ -399,82 +400,99 @@ const latestToolField = <T,>(
 };
 
 const ToolTransitionContent = ({
+  labels,
   transition,
 }: {
+  readonly labels?: ChatUiLabelOverrides | undefined;
   readonly transition: ToolEventTransition;
-}) => (
-  <Space direction="vertical" size="small" style={{ width: "100%" }}>
-    {transition.error === undefined ? null : (
-      <Alert
-        message={
-          <ChatMarkdownContent>{transition.error.message}</ChatMarkdownContent>
-        }
-        showIcon
-        type="error"
-      />
-    )}
-    {transition.summary === undefined ? null : (
-      <Typography.Paragraph style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-        <ChatMarkdownContent>{transition.summary}</ChatMarkdownContent>
-      </Typography.Paragraph>
-    )}
-    {transition.toolCall === undefined ? null : (
-      <>
-        <Typography.Text strong>{transition.toolCall.name}</Typography.Text>
-        {transition.toolCall.arguments === undefined ? null : (
-          <ValueInspector
-            value={transition.toolCall.arguments}
-            label="输入参数"
-          />
-        )}
-      </>
-    )}
-    {transition.toolReturn?.presentation === undefined ? null : (
-      <ToolPresentationView presentation={transition.toolReturn.presentation} />
-    )}
-    {transition.toolReturn?.result === undefined ||
-    transition.toolReturn.presentation !== undefined ? null : (
-      <ValueInspector value={transition.toolReturn.result} label="执行结果" />
-    )}
-    {transition.toolReturn?.attachments?.map((attachment, index) => (
-      <ChatResourceView
-        key={index}
-        resource={attachment.resource}
-        kind={attachment.kind === "image" ? "image" : "file"}
-        label={
-          attachment.resource.name ??
-          `${attachment.kind} attachment ${index + 1}`
-        }
-      />
-    ))}
-    {transition.toolReturn === undefined ||
-    (transition.toolReturn.success === undefined &&
-      transition.toolReturn.done === undefined) ? null : (
-      <Typography.Text type="secondary">
-        {[
-          transition.toolReturn.success === undefined
-            ? undefined
-            : `success: ${String(transition.toolReturn.success)}`,
-          transition.toolReturn.done === undefined
-            ? undefined
-            : `done: ${String(transition.toolReturn.done)}`,
-        ]
-          .filter((value) => value !== undefined)
-          .join(" · ")}
-      </Typography.Text>
-    )}
-    {transition.interaction === undefined ? null : (
-      <AskUserInteractionResultView result={transition.interaction} />
-    )}
-  </Space>
-);
+}) => {
+  const resolvedLabels = resolveChatUiLabels(labels);
+  return (
+    <Space direction="vertical" size="small" style={{ width: "100%" }}>
+      {transition.error === undefined ? null : (
+        <Alert
+          message={
+            <ChatMarkdownContent>
+              {transition.error.message}
+            </ChatMarkdownContent>
+          }
+          showIcon
+          type="error"
+        />
+      )}
+      {transition.summary === undefined ? null : (
+        <Typography.Paragraph style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+          <ChatMarkdownContent>{transition.summary}</ChatMarkdownContent>
+        </Typography.Paragraph>
+      )}
+      {transition.toolCall === undefined ? null : (
+        <>
+          <Typography.Text strong>{transition.toolCall.name}</Typography.Text>
+          {transition.toolCall.arguments === undefined ? null : (
+            <ValueInspector
+              value={transition.toolCall.arguments}
+              label="输入参数"
+            />
+          )}
+        </>
+      )}
+      {transition.toolReturn?.presentation === undefined ? null : (
+        <ToolPresentationView
+          presentation={transition.toolReturn.presentation}
+        />
+      )}
+      {transition.toolReturn?.result === undefined ||
+      transition.toolReturn.presentation !== undefined ? null : (
+        <ValueInspector value={transition.toolReturn.result} label="执行结果" />
+      )}
+      {transition.toolReturn?.attachments?.map((attachment, index) => (
+        <ChatResourceView
+          key={index}
+          resource={attachment.resource}
+          kind={attachment.kind === "image" ? "image" : "file"}
+          label={
+            attachment.resource.name ??
+            `${attachment.kind} attachment ${index + 1}`
+          }
+        />
+      ))}
+      {transition.toolReturn === undefined ||
+      (transition.toolReturn.success === undefined &&
+        transition.toolReturn.done === undefined) ? null : (
+        <Typography.Text type="secondary">
+          {[
+            transition.toolReturn.success === undefined
+              ? undefined
+              : `success: ${String(transition.toolReturn.success)}`,
+            transition.toolReturn.done === undefined
+              ? undefined
+              : `done: ${String(transition.toolReturn.done)}`,
+          ]
+            .filter((value) => value !== undefined)
+            .join(" · ")}
+        </Typography.Text>
+      )}
+      {transition.interaction === undefined ? null : (
+        <AskUserInteractionResultView result={transition.interaction} />
+      )}
+      {transition.interactionHistory === undefined ? null : (
+        <InteractionHistoryView
+          history={transition.interactionHistory}
+          labels={resolvedLabels}
+        />
+      )}
+    </Space>
+  );
+};
 
 const ToolEventDetail = ({
   formatTimestamp,
   item,
+  labels,
 }: {
   readonly formatTimestamp: (timestamp: number) => string;
   readonly item: ToolAgentEvent;
+  readonly labels?: ChatUiLabelOverrides | undefined;
 }) => {
   const latestCall = latestToolField(item, (transition) => transition.toolCall);
   const latestReturn = latestToolField(
@@ -521,11 +539,15 @@ const ToolEventDetail = ({
         {item.transitions.length > 1 ? (
           transitionTabs(item.transitions, formatTimestamp, (transition) => (
             <ToolTransitionContent
+              labels={labels}
               transition={transition as ToolEventTransition}
             />
           ))
         ) : (
-          <ToolTransitionContent transition={item.transitions[0]!} />
+          <ToolTransitionContent
+            labels={labels}
+            transition={item.transitions[0]!}
+          />
         )}
         <Typography.Text type="secondary">
           {formatTimestamp(item.createdAt)}
@@ -576,6 +598,7 @@ export const ToolEventRenderer = ({
   displayMode = "detail",
   formatTimestamp,
   item,
+  labels,
   selected,
 }: ChatRendererProps) => {
   if (item.kind !== "agent-event" || item.eventCategory !== "tool") return null;
@@ -606,7 +629,13 @@ export const ToolEventRenderer = ({
       />
     );
   }
-  return <ToolEventDetail formatTimestamp={formatTimestamp} item={item} />;
+  return (
+    <ToolEventDetail
+      formatTimestamp={formatTimestamp}
+      item={item}
+      labels={labels}
+    />
+  );
 };
 
 export const UnknownEventRenderer = ({

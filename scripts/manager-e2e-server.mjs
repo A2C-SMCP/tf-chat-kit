@@ -50,6 +50,34 @@ let platforms = [{ platformId: 17, name: "Word fixture" }];
 let nextConversation = 43;
 /** @type {Map<number, {conversationId: number; title: string; updateTimestamp: number}>} */
 const createdConversations = new Map();
+/** @typedef {{ connections: number; disconnects: number; hellos: unknown[]; responses: unknown[]; closed: unknown[]; pending: unknown[]; earlyInteraction: Record<string, unknown> | null; pendingOnConnect: unknown[]; registerCalls: number; answered: Map<string, string> }} InteractionState */
+/** @type {InteractionState} */
+let interactionState = {
+  connections: 0,
+  disconnects: 0,
+  hellos: [],
+  responses: [],
+  closed: [],
+  pending: [],
+  earlyInteraction: null,
+  pendingOnConnect: [],
+  registerCalls: 0,
+  answered: new Map(),
+};
+const resetInteractionState = () => {
+  interactionState = {
+    connections: 0,
+    disconnects: 0,
+    hellos: [],
+    responses: [],
+    closed: [],
+    pending: [],
+    earlyInteraction: null,
+    pendingOnConnect: [],
+    registerCalls: 0,
+    answered: new Map(),
+  };
+};
 /** @type {(handler: import("node:http").RequestListener) => import("node:http").Server | import("node:https").Server} */
 const createListener =
   cert && key
@@ -106,6 +134,83 @@ const server = createListener((req, res) => {
         ),
         scopes: exchangedScopes,
       });
+      return;
+    }
+    if (url.pathname === "/__test/interaction-state") {
+      reply({
+        connections: interactionState.connections,
+        disconnects: interactionState.disconnects,
+        hellos: interactionState.hellos,
+        responses: interactionState.responses,
+        closed: interactionState.closed,
+        pending: interactionState.pending,
+        registerCalls: interactionState.registerCalls,
+      });
+      return;
+    }
+    if (url.pathname === "/__test/interaction-reset") {
+      disconnectInteractionSockets();
+      resetInteractionState();
+      reply({});
+      return;
+    }
+    if (url.pathname === "/__test/interaction-options") {
+      const input = JSON.parse(body);
+      if (input.earlyInteraction !== undefined)
+        interactionState.earlyInteraction = input.earlyInteraction;
+      if (input.pendingOnConnect !== undefined)
+        interactionState.pendingOnConnect = input.pendingOnConnect;
+      reply({});
+      return;
+    }
+    if (url.pathname === "/__test/interaction-request") {
+      const input = JSON.parse(body);
+      interactionState.pending.push(input.interaction);
+      broadcastInteraction("interaction_requested", input.interaction);
+      reply({});
+      return;
+    }
+    if (url.pathname === "/__test/interaction-requests") {
+      const input = JSON.parse(body);
+      for (const interaction of input.interactions) {
+        interactionState.pending.push(interaction);
+        broadcastInteraction("interaction_requested", interaction);
+      }
+      reply({});
+      return;
+    }
+    if (url.pathname === "/__test/interaction-pending") {
+      const input = JSON.parse(body);
+      const snapshot = {
+        protocolVersion: 1,
+        interactions: input.interactions ?? [],
+      };
+      interactionState.pending = snapshot.interactions;
+      broadcastInteraction("interaction_pending", snapshot);
+      reply({});
+      return;
+    }
+    if (url.pathname === "/__test/interaction-close") {
+      const input = JSON.parse(body);
+      const closed = {
+        protocolVersion: 1,
+        interactionId: input.interactionId,
+        terminalReason: input.terminalReason ?? "answered",
+        ...(input.answeredBy === undefined
+          ? {}
+          : { answeredBy: input.answeredBy }),
+        ...(input.answeredAt === undefined
+          ? {}
+          : { answeredAt: input.answeredAt }),
+      };
+      interactionState.closed.push(closed);
+      broadcastInteraction("interaction_closed", closed);
+      reply({});
+      return;
+    }
+    if (url.pathname === "/__test/interaction-disconnect") {
+      dropInteractionConnections();
+      reply({});
       return;
     }
     if (url.pathname === "/__test/tool-permission") {
@@ -644,7 +749,68 @@ const sockets = [
     ),
   );
   io.of("/remote-tool").on("connection", (socket) => {
+    const robotId = path.includes("robot-b") ? "robot-b" : "robot-a";
+    interactionState.connections += 1;
+    socket.emit("interaction_hello", {
+      protocolVersion: 1,
+      versions: ["interaction_v1"],
+      robotId,
+      namespace: "/remote-tool",
+    });
+    socket.emit("interaction_pending", {
+      protocolVersion: 1,
+      interactions: interactionState.pendingOnConnect,
+    });
+    if (interactionState.earlyInteraction !== null)
+      socket.emit("interaction_requested", interactionState.earlyInteraction);
+    socket.on("interaction_hello", (payload) => {
+      interactionState.hellos.push(payload);
+    });
+    socket.on("interaction_response", (payload, acknowledge) => {
+      const interactionId =
+        payload && typeof payload.interactionId === "string"
+          ? payload.interactionId
+          : "";
+      if (interactionId.length === 0) {
+        acknowledge?.({
+          protocolVersion: 1,
+          interactionId,
+          status: "unknown_request",
+        });
+        return;
+      }
+      if (interactionState.answered.has(interactionId)) {
+        acknowledge?.({
+          protocolVersion: 1,
+          interactionId,
+          status: "already_closed",
+        });
+        return;
+      }
+      interactionState.answered.set(interactionId, socket.id);
+      interactionState.responses.push(payload);
+      acknowledge?.({
+        protocolVersion: 1,
+        interactionId,
+        status: "accepted",
+      });
+      const closed = {
+        protocolVersion: 1,
+        interactionId,
+        terminalReason:
+          payload.status === "cancelled" ? "cancelled" : "answered",
+        answeredBy: socket.id,
+        answeredAt: Date.now(),
+      };
+      interactionState.closed.push(closed);
+      for (const target of interactionSockets())
+        target.emit("interaction_closed", closed);
+    });
+    socket.on("disconnect", () => {
+      interactionState.disconnects += 1;
+    });
     socket.on("register", (input, reply) => {
+      interactionState.registerCalls += 1;
       const conflict = [...io.of("/remote-tool").sockets.values()].some(
         (other) => other !== socket && other.data.registered,
       );
@@ -667,6 +833,21 @@ const sockets = [
   });
   return io;
 });
+const interactionSockets = () =>
+  sockets.flatMap((io) => [...io.of("/remote-tool").sockets.values()]);
+/**
+ * @param {string} event
+ * @param {unknown} payload
+ */
+const broadcastInteraction = (event, payload) => {
+  for (const socket of interactionSockets()) socket.emit(event, payload);
+};
+const disconnectInteractionSockets = () => {
+  for (const io of sockets) io.of("/remote-tool").disconnectSockets(true);
+};
+const dropInteractionConnections = () => {
+  for (const socket of interactionSockets()) socket.conn.close();
+};
 server.listen(4312, "127.0.0.1");
 const stop = () => {
   for (const io of sockets) void io.close();

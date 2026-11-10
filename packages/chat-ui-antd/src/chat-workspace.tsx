@@ -9,8 +9,11 @@ import {
 } from "react";
 
 import {
+  InteractionProvider,
+  useChatSelector,
   useConversationWorkspace,
   type ConversationWorkspaceBinding,
+  type InteractionClient,
   type UseConversationWorkspaceOptions,
 } from "@turingfocus/chat-react";
 
@@ -18,6 +21,7 @@ import {
   ChatConversationView,
   type ChatConversationViewProps,
 } from "./chat-conversation-view.js";
+import { InteractionQueue } from "./interaction-queue.js";
 import { ChatUiShell, type ChatUiShellProps } from "./chat-ui-shell.js";
 import { resolveChatUiLabels } from "./labels.js";
 import type {
@@ -40,6 +44,9 @@ export interface ChatWorkspaceProps {
     Omit<ChatConversationViewProps, "getDeadlineAt" | "labels"> | undefined;
   readonly formatConversationUpdatedAt?: ChatUiShellProps["formatConversationUpdatedAt"];
   readonly getDeadlineAt: () => number;
+  /** Host-owned Interaction client; appears in the inline card and global queue. */
+  readonly interactionClient?: InteractionClient | null | undefined;
+  readonly getPopupContainer?: (() => HTMLElement) | undefined;
   readonly header?: ReactNode;
   readonly initialSelection?: "first" | "none" | undefined;
   readonly labels?: ChatUiLabelOverrides | undefined;
@@ -95,6 +102,8 @@ export const ChatWorkspace = ({
   conversationViewProps,
   formatConversationUpdatedAt,
   getDeadlineAt,
+  interactionClient,
+  getPopupContainer,
   header,
   initialSelection,
   labels: labelOverrides,
@@ -158,6 +167,15 @@ export const ChatWorkspace = ({
     refresh,
     retrySelection,
   );
+  const chatConversationId = useChatSelector(
+    (snapshot) => snapshot?.conversation.id,
+  );
+  const effectiveInteractionInline =
+    conversationViewProps?.interactionInline ?? interactionClient != null;
+  const inlineConversationId =
+    contentState.kind === "ready" && effectiveInteractionInline
+      ? chatConversationId
+      : undefined;
   const create = useCallback(async () => {
     const normalizedTitle = title.trim();
     if (normalizedTitle.length === 0 || workspace.snapshot.creating) return;
@@ -218,7 +236,7 @@ export const ChatWorkspace = ({
   );
 
   return (
-    <>
+    <InteractionProvider client={interactionClient ?? null}>
       <ChatUiShell
         nonReadyContent={
           workspace.snapshot.selectionStatus === "loading" ||
@@ -316,6 +334,7 @@ export const ChatWorkspace = ({
         <ChatConversationView
           {...conversationViewProps}
           getDeadlineAt={getDeadlineAt}
+          interactionInline={effectiveInteractionInline}
           labels={labels}
         />
       </ChatUiShell>
@@ -429,6 +448,13 @@ export const ChatWorkspace = ({
           />
         </Space>
       </Modal>
-    </>
+      {interactionClient === undefined || interactionClient === null ? null : (
+        <InteractionQueue
+          getPopupContainer={getPopupContainer}
+          inlineConversationId={inlineConversationId}
+          labels={labels}
+        />
+      )}
+    </InteractionProvider>
   );
 };
