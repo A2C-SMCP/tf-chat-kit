@@ -172,6 +172,30 @@ export const isUnifiedVersionMigrationState = (versionsByName) => {
   );
 };
 
+/**
+ * The unified policy requires the fixed group to be exactly the complete
+ * public package set in PACKAGE_POLICY order. This runtime check keeps the two
+ * declarations from drifting when a public package is added or removed.
+ *
+ * @param {readonly string[]} fixedPackageNames
+ * @param {readonly string[]} publicPackageNames
+ * @returns {string[]}
+ */
+export function validateFixedGroupPolicy(
+  fixedPackageNames,
+  publicPackageNames,
+) {
+  if (
+    fixedPackageNames.length === publicPackageNames.length &&
+    fixedPackageNames.every((name, index) => name === publicPackageNames[index])
+  ) {
+    return [];
+  }
+  return [
+    "FIXED_PACKAGE_NAMES must equal the complete public package set in PACKAGE_POLICY order",
+  ];
+}
+
 /** @type {Readonly<Record<string, PackageRule>>} */
 export const PACKAGE_POLICY = Object.freeze({
   "chat-protocol": {
@@ -2338,6 +2362,12 @@ export function validateWorkspaceSnapshot(snapshot) {
   const errors = [];
   const expectedDirectories = Object.keys(PACKAGE_POLICY);
   const actualDirectories = snapshot.packages.map(({ directory }) => directory);
+  errors.push(
+    ...validateFixedGroupPolicy(
+      FIXED_PACKAGE_NAMES,
+      Object.values(PACKAGE_POLICY).map(({ name }) => name),
+    ),
+  );
 
   if (
     stableObjectJson(snapshot.changesetConfig ?? {}) !==

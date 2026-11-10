@@ -32,8 +32,9 @@ revision、`staging`/`production` 环境、HTTPS 执行记录、执行时间和 
 - release manifest 始终记录八个包；`consumerPackages` 与发布包同名同版本。
 - 新增公开包默认加入统一组；若新包尚未在 npm 存在，仍按本手册的 bootstrap 流程处理。
 - 迁移期 `check:workspace` 只放行精确的 core 七包 `0.11.0` / auth `0.12.1` 旧状态；0.13.0
-  版本提交在 `main` 生成后必须移除该过渡分支（GitHub #172）。`check:changesets` 未因迁移改动；
-  在旧基线上对已升版本输出运行会失败，这是基线问题，不是实现缺陷。
+  版本提交在 `main` 生成后必须移除该过渡分支（GitHub #172）。`check:changesets` 的入口脚本与
+  版本重放路径未改；release-plan 校验随八包 fixed group 收紧（不再允许独立包发布计划，并修复
+  空计划误接受）。在旧基线上对已升版本输出运行会失败，这是基线问题，不是实现缺陷。
 - 迁移前不得合并或发布旧的 `changeset-release/main` 分支；迁移后由 changesets/action 基于新
   config 重新生成 0.13.0 版本 PR。若旧分支先被发布，auth 0.13.0 会被提前占用，统一目标必须
   改成更高的新版本。

@@ -26,23 +26,30 @@ const origin = `https://localhost:${port}`;
 let server;
 try {
   await mkdir(output, { recursive: true });
-  /** @type {{ packages: Array<{name: string; tarball: string}> }} */
+  /** @type {{ packages: Array<{name: string; version: string; tarball: string}> }} */
   const manifest = JSON.parse(
     await readFile(
       path.join(root, ".artifacts/packages/manifest.json"),
       "utf8",
     ),
   );
+  const unifiedVersions = new Set(
+    manifest.packages.map((item) => item.version),
+  );
+  const [unifiedVersion] = unifiedVersions;
+  if (unifiedVersions.size !== 1 || unifiedVersion === undefined) {
+    throw new Error("Packed release must use one unified package version");
+  }
+  // Default: install every package from the local tarballs to verify the
+  // unified workspace state. TF_CHAT_PACKAGES_FROM_REGISTRY=1 resolves all
+  // eight packages from the public Registry; only use it after the unified
+  // version has been published.
+  const fromRegistry = process.env["TF_CHAT_PACKAGES_FROM_REGISTRY"] === "1";
   const packages = Object.fromEntries(
     manifest.packages.map((item) => [
       item.name,
       `file:${path.resolve(root, item.tarball)}`,
     ]),
-  );
-  const registryOverrides = Object.fromEntries(
-    Object.entries(packages).filter(
-      ([name]) => name !== "@turingfocus/chat-auth",
-    ),
   );
   await writeFile(
     path.join(temporary, "package.json"),
@@ -51,17 +58,14 @@ try {
       packageManager: "pnpm@10.34.5",
       type: "module",
       dependencies: {
-        "@turingfocus/chat-kit": packages["@turingfocus/chat-kit"],
+        "@turingfocus/chat-kit": fromRegistry
+          ? unifiedVersion
+          : packages["@turingfocus/chat-kit"],
         react: "18.3.1",
         "react-dom": "18.3.1",
         antd: "5.23.4",
       },
-      pnpm: {
-        overrides:
-          process.env["TF_CHAT_AUTH_FROM_REGISTRY"] === "1"
-            ? registryOverrides
-            : packages,
-      },
+      ...(fromRegistry ? {} : { pnpm: { overrides: packages } }),
     }),
   );
   await writeFile(path.join(temporary, ".npmrc"), "auto-install-peers=false\n");
@@ -97,9 +101,8 @@ try {
       },
     },
   });
-  // Check that the packed auth dependency matches the workspace's unified
-  // version. TF_CHAT_AUTH_FROM_REGISTRY=1 verifies registry resolution after
-  // that unified version has been published.
+  // Both the default tarball mode and the Registry mode must resolve the same
+  // unified version, including the auth dependency.
   const installedAuth = JSON.parse(
     await readFile(
       path.join(
@@ -124,10 +127,15 @@ try {
       );
     }),
   );
-  const sourceAuth = JSON.parse(
-    await readFile(path.join(root, "packages/chat-auth/package.json"), "utf8"),
+  const installedChatKit = JSON.parse(
+    await readFile(
+      path.join(temporary, "node_modules/@turingfocus/chat-kit/package.json"),
+      "utf8",
+    ),
   );
-  if (installedAuth.version !== sourceAuth.version)
+  if (installedChatKit.version !== unifiedVersion)
+    throw new Error("Wrong unified chat-kit dependency version");
+  if (installedAuth.version !== unifiedVersion)
     throw new Error("Wrong unified auth dependency version");
   const bundle = await readFile(path.join(temporary, "dist/consumer.js"));
   const keyPath = path.join(temporary, "key.pem");

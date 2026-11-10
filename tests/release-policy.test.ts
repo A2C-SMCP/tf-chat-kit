@@ -367,6 +367,15 @@ describe("release compatibility and manifest policy", () => {
     expect(() =>
       createReleaseManifest({ ...base, releaseGroup: "auth" }),
     ).toThrow(/retired/u);
+    expect(() =>
+      createReleaseManifest({ ...base, releaseGroup: "core" }),
+    ).toThrow(/retired/u);
+    expect(() =>
+      createReleaseManifest({
+        ...base,
+        consumerPackages: packages,
+      } as never),
+    ).toThrow(/retired release manifest options/u);
     const mixed = structuredClone(packages);
     mixed[1]!.version = "0.2.1-next.0";
     expect(() => createReleaseManifest({ ...base, packages: mixed })).toThrow(

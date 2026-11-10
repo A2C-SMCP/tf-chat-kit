@@ -39,6 +39,7 @@ owner 于 2026-11-10 决定：所有公开包（包括 auth、testing 和门面�
 - 版本号与 changelog 由固定版本的 Changesets 生成；不手工逐包改号，也不改写生成结果来凑目标版本。
 - 0.x 阶段：兼容修复升 patch，兼容新增能力升 minor；破坏性变化也升 minor，并明确标注破坏点与迁移步骤。进入 1.0 需要明确决策。
 - `check:changesets` 继续使用固定版本 Changesets CLI 在比较基线的全部 pending changeset 上重放，提交中的八包清单、八个 changelog 及 package 目录触碰文件集合必须与重放结果逐字匹配，不允许手工部分消费。
+- release-plan 校验随八包 fixed group 收紧：不再允许独立包发布计划，并修复空计划误接受；`check-changesets.mjs` 入口与版本重放路径不变。
 
 ## 一次性迁移路径
 
@@ -50,7 +51,7 @@ S6 治理 PR 只落发布治理改动，不包含 0.13.0 版本输出。原因�
 - 任一版本变化、仍为七包、auth 为 0.12.x 其他值、core/auth 角色互换或其他任何不一致都失败。
 - 该分支由正向与反向测试守护，并在 `scripts/workspace-policy.mjs` 注释中记录移除条件。
 
-**移除触发条件**：0.13.0 版本提交在 `main` 生成后移除该过渡分支；若 owner 明确决定保留，也必须在 ADR 或发布记录中写明。跟踪 GitHub #172；届时不处理则另立清理单。`check:changesets` 不因此次迁移修改。
+**移除触发条件**：0.13.0 版本提交在 `main` 生成后移除该过渡分支；若 owner 明确决定保留，也必须在 ADR 或发布记录中写明。跟踪 GitHub #172；届时不处理则另立清理单。`check:changesets` 的入口脚本与版本重放路径不改；release-plan 校验按上述收紧。
 
 迁移完成后，授权的发布流程把 develop 合入 `main`，changesets/action 基于含新 config 的 `main` 生成 0.13.0 版本 PR；该版本 PR 的重放使用同一 config，现有严格文件清单与八包输出自然匹配。若迁移前旧的 `changeset-release/main` 分支被合并或发布，auth 0.13.0 会被提前占用，统一目标须改为更高的新版本。
 

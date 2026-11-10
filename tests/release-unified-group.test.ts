@@ -94,6 +94,26 @@ describe("unified protected release", () => {
     ]);
   });
 
+  it("enforces package-level channel semantics and retires group arguments", () => {
+    const prereleasePackages = ALL_PACKAGE_NAMES.map((name) => ({
+      name,
+      version: "0.13.0-next.0",
+    }));
+    expect(() =>
+      validateReleaseGroup(prereleasePackages, "0.13.0-next.0", "latest"),
+    ).toThrow(/stable\/prerelease/);
+    const stablePackages = ALL_PACKAGE_NAMES.map((name) => ({
+      name,
+      version: "0.13.0",
+    }));
+    expect(() =>
+      validateReleaseGroup(stablePackages, "0.13.0", "next"),
+    ).toThrow(/stable\/prerelease/);
+    expect(() => releasePackageNames("core")).toThrow(
+      /does not accept a release group/,
+    );
+  });
+
   it("fails closed on retired, unknown, and duplicate manifest arguments", () => {
     expect(() => parseReleaseManifestArguments(["--group", "auth"])).toThrow(
       /retired/,
@@ -275,16 +295,26 @@ describe("unified protected release", () => {
     expect(() => validateReleaseManifestForPublish(consumers)).toThrow(
       /must match every published package/,
     );
+    const partialConsumers = structuredClone(manifest);
+    partialConsumers.consumerPackages = partialConsumers.consumerPackages.slice(
+      0,
+      -1,
+    );
+    expect(() => validateReleaseManifestForPublish(partialConsumers)).toThrow(
+      /complete unified group/,
+    );
     const legacyAuthTag = structuredClone(manifest);
     legacyAuthTag.tag = "chat-auth-v0.13.0";
     expect(() => validateReleaseManifestForPublish(legacyAuthTag)).toThrow(
       /identity fields/,
     );
-    const legacyGroup: Record<string, unknown> = structuredClone(manifest);
-    legacyGroup["releaseGroup"] = "auth";
-    expect(() => validateReleaseManifestForPublish(legacyGroup)).toThrow(
-      /retired/,
-    );
+    for (const group of ["auth", "core"] as const) {
+      const legacyGroup: Record<string, unknown> = structuredClone(manifest);
+      legacyGroup["releaseGroup"] = group;
+      expect(() => validateReleaseManifestForPublish(legacyGroup)).toThrow(
+        /retired/,
+      );
+    }
     expect(() => validateReleaseGroup(manifest.packages.slice(0, -1))).toThrow(
       /complete unified group/,
     );

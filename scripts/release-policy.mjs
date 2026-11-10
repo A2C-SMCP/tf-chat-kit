@@ -598,7 +598,15 @@ export function createReleaseManifest({
   compatibility,
   packages,
   releaseGroup = "all",
+  ...retiredOptions
 }) {
+  if (Object.keys(retiredOptions).length > 0) {
+    throw new Error(
+      `retired release manifest options: ${Object.keys(retiredOptions)
+        .sort()
+        .join(", ")}`,
+    );
+  }
   const normalizedReleaseGroup = normalizeReleaseGroup(releaseGroup);
   assertReleaseChannelAllowed(compatibility, channel);
   if (!isZeroMajorVersion(version)) {

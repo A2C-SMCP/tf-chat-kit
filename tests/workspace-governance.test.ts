@@ -12,6 +12,7 @@ import {
   UNIFIED_VERSION_MIGRATION,
   isUnifiedVersionMigrationState,
   loadWorkspaceSnapshot,
+  validateFixedGroupPolicy,
   validateWorkspaceSnapshot,
 } from "../scripts/workspace-policy.mjs";
 
@@ -54,6 +55,19 @@ describe("workspace governance", () => {
       Object.values(PACKAGE_POLICY).map(({ name }) => name),
     );
     expect(FIXED_PACKAGE_NAMES).toHaveLength(8);
+  });
+
+  it("validates the fixed group against the complete public package set at runtime", () => {
+    const publicNames = Object.values(PACKAGE_POLICY).map(({ name }) => name);
+    expect(validateFixedGroupPolicy(FIXED_PACKAGE_NAMES, publicNames)).toEqual(
+      [],
+    );
+    expect(
+      validateFixedGroupPolicy(FIXED_PACKAGE_NAMES.slice(0, -1), publicNames),
+    ).toEqual([expect.stringContaining("FIXED_PACKAGE_NAMES must equal")]);
+    expect(
+      validateFixedGroupPolicy([...FIXED_PACKAGE_NAMES].reverse(), publicNames),
+    ).toEqual([expect.stringContaining("FIXED_PACKAGE_NAMES must equal")]);
   });
 
   it("accepts only the exact one-time unified version migration state", async () => {

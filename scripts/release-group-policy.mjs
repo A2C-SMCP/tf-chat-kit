@@ -27,8 +27,16 @@ export function releaseGroup(group = "all") {
   return "all";
 }
 
-/** @returns {readonly string[]} */
-export function releasePackageNames() {
+/**
+ * @param {...unknown} retiredArguments
+ * @returns {readonly string[]}
+ */
+export function releasePackageNames(...retiredArguments) {
+  if (retiredArguments.length > 0) {
+    throw new Error(
+      "releasePackageNames does not accept a release group; all public packages form the unified group.",
+    );
+  }
   return ALL_PACKAGE_NAMES;
 }
 

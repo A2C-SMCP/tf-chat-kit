@@ -60,7 +60,7 @@ tf-chat-kit 将原 TFRobotFront 的聊天能力建设为宿主无关的公共模
 
 统一版本策略已落地：`.changeset/config.json` 与 `FIXED_PACKAGE_NAMES` 覆盖八个公开包的 fixed group，发布组统一为 `all`，新版本使用 `v<version>` 标签；历史 `chat-auth-v*` 标签保留但不再产生新 auth tag。ADR-018 记录本决策，并标记 ADR-012、ADR-014 中独立版本条款的替代关系；认证与安全边界不变。
 
-迁移采用路径 A：S6 治理 PR 不包含 0.13.0 版本输出。`check:workspace` 保留一次性过渡放行，仅精确匹配迁移前状态（core 七包 `0.11.0` / auth `0.12.1` / fixed group 恰为八包）；0.13.0 版本提交在 `main` 生成后必须移除该过渡分支，或由 owner 明确决定保留；跟踪 GitHub #172，届时不处理则另立清理单。`check:changesets` 未改动；在旧基线上对已升版本输出运行会失败，这是基线问题，不是实现缺陷。
+迁移采用路径 A：S6 治理 PR 不包含 0.13.0 版本输出。`check:workspace` 保留一次性过渡放行，仅精确匹配迁移前状态（core 七包 `0.11.0` / auth `0.12.1` / fixed group 恰为八包）；0.13.0 版本提交在 `main` 生成后必须移除该过渡分支，或由 owner 明确决定保留；跟踪 GitHub #172，届时不处理则另立清理单。`check:changesets` 的入口脚本与版本重放路径未改；其 release-plan 校验随八包 fixed group 收紧——不再允许独立包发布计划，并修复空计划误接受。在旧基线上对已升版本输出运行会失败，这是基线问题，不是实现缺陷。
 
 统一版本选择高于各包现有版本的新公共版本，不回退 auth，不覆盖已发布版本，不移动历史标签；通过 Changesets 计划验证迁移结果。历史独立版本与标签仍作为可追溯记录保留。遇到旧脚本要求 auth 独立版本，应修正实现并验证，不能跳过门禁或只改数字。
 
