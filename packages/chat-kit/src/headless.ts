@@ -146,7 +146,13 @@ export type {
 
 export {
   createTFRobotRemoteToolClient,
+  createTFRobotInteractionClient,
+  createTFRobotRemoteToolInteractionBundle,
   type TFRobotRemoteToolClientOptions,
+  type TFRobotInteractionClientOptions,
+  type TFRobotInteractionOptions,
+  type TFRobotRemoteToolInteractionOptions,
+  type TFRobotRemoteToolInteractionBundle,
 } from "./tfrobot-client.js";
 export { defineRemoteTool } from "@turingfocus/chat-protocol";
 export type {
@@ -181,6 +187,73 @@ export {
   type AskUserRemoteToolOptions,
   type AskUserRemoteToolEntry,
 } from "@turingfocus/chat-runtime";
+
+export {
+  InteractionClient,
+  createInteractionClient,
+  INTERACTION_ACK_TIMEOUT_MS,
+  INTERACTION_HELLO_FLUSH_GRACE_MS,
+  INTERACTION_QUEUE_LIMIT,
+  INTERACTION_TICK_INTERVAL_MS,
+  INTERACTION_TOMBSTONE_MS,
+  type InteractionClientOptions,
+  type InteractionClientSnapshot,
+  type InteractionEntry,
+  type InteractionResponseInput,
+  type InteractionStaleReason,
+  type InteractionStatus,
+} from "@turingfocus/chat-runtime";
+export {
+  INTERACTION_PROTOCOL_VERSION,
+  INTERACTION_VERSION,
+  INTERACTION_MAX_ANSWER_CHARACTERS,
+  INTERACTION_MAX_DISPLAY_TEXT_CHARACTERS,
+  INTERACTION_MAX_EARLY_FRAMES,
+  INTERACTION_MAX_ID_CHARACTERS,
+  INTERACTION_MAX_OPTION_DESCRIPTION_CHARACTERS,
+  INTERACTION_MAX_OPTION_LABEL_CHARACTERS,
+  INTERACTION_MAX_OPTION_VALUE_CHARACTERS,
+  INTERACTION_MAX_OPTIONS,
+  INTERACTION_MAX_PENDING_ITEMS,
+  INTERACTION_MAX_QUESTION_CHARACTERS,
+  INTERACTION_MAX_SELECTED_OPTIONS,
+  INTERACTION_MAX_TEXT_CHARACTERS,
+  INTERACTION_MAX_VERSIONS,
+  createInteractionHelloClientPayload,
+  createInteractionResponsePayload,
+  interactionAckSchema,
+  interactionClosedSchema,
+  interactionHelloClientPayloadSchema,
+  interactionHelloServerSchema,
+  interactionHistorySchema,
+  interactionPendingEnvelopeSchema,
+  interactionRequestSchema,
+  interactionResponsePayloadSchema,
+  isSupportedInteractionProtocolVersion,
+  toAskUserInteractionRequest,
+} from "@turingfocus/chat-protocol";
+export type {
+  InteractionAck,
+  InteractionAckStatus,
+  InteractionChannel,
+  InteractionClientHello,
+  InteractionClientHelloPayload,
+  InteractionClosed,
+  InteractionConnectionState,
+  InteractionHistory,
+  InteractionOption,
+  InteractionParticipant,
+  InteractionPendingSnapshot,
+  InteractionRequest,
+  InteractionResponse,
+  InteractionResponsePayload,
+  InteractionResponseStatus,
+  InteractionServerHello,
+  InteractionTarget,
+  InteractionTransport,
+  InteractionTransportAttachment,
+  InteractionTransportObserver,
+} from "@turingfocus/chat-protocol";
 
 export {
   createTFRobotPlatformClient,

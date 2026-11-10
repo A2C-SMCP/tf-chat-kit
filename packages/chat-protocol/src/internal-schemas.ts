@@ -34,6 +34,7 @@ import type {
   FileMessageContent,
   GenericAgentEvent,
   GenericAgentEventTransitionPayload,
+  InteractionHistory,
   MediaMessageContent,
   Message,
   MessageAuthor,
@@ -429,6 +430,23 @@ export const askUserInteractionResultParser: z.ZodType<AskUserInteractionResult>
     error: z.string().max(ASK_USER_MAX_TEXT_CHARACTERS).optional(),
   });
 
+const interactionHistoryTextMax = 32 * 1_024;
+const interactionHistoryAnswerMax = 64 * 1_024;
+
+export const interactionHistoryParser: z.ZodType<InteractionHistory> = z.object(
+  {
+    kind: z.literal("interaction-history"),
+    interactionId: idParser.max(1_024),
+    direction: z.enum(["ask", "answer"]),
+    status: z.string().min(1).max(interactionHistoryTextMax),
+    question: z.string().max(interactionHistoryTextMax).optional(),
+    answer: z.string().max(interactionHistoryAnswerMax).optional(),
+    answeredBy: z.string().max(interactionHistoryTextMax).optional(),
+    answeredAt: timestampParser.optional(),
+    error: z.string().max(interactionHistoryTextMax).optional(),
+  },
+);
+
 const toolEventTransitionParser: z.ZodType<ToolEventTransition> = z
   .object({
     id: idParser,
@@ -442,17 +460,19 @@ const toolEventTransitionParser: z.ZodType<ToolEventTransition> = z
     toolCall: toolCallParser.optional(),
     toolReturn: toolReturnParser.optional(),
     interaction: askUserInteractionResultParser.optional(),
+    interactionHistory: interactionHistoryParser.optional(),
   })
   .superRefine((transition, context) => {
     if (
       transition.toolCall === undefined &&
       transition.toolReturn === undefined &&
-      transition.interaction === undefined
+      transition.interaction === undefined &&
+      transition.interactionHistory === undefined
     ) {
       context.addIssue({
         code: "custom",
         message:
-          "tool transitions must preserve a tool call, tool return, or interaction",
+          "tool transitions must preserve a tool call, tool return, interaction, or interaction history",
       });
     }
   });

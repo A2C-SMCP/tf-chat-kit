@@ -83,3 +83,22 @@ export {
   type AskUserRemoteToolOptions,
   type AskUserRemoteToolEntry,
 } from "./ask-user-remote-tool.js";
+
+export {
+  InteractionClient,
+  createInteractionClient,
+  type InteractionClientOptions,
+  type InteractionClientSnapshot,
+  type InteractionEntry,
+  type InteractionResponseInput,
+  type InteractionStaleReason,
+  type InteractionStatus,
+} from "./interaction-client.js";
+export {
+  INTERACTION_ACK_TIMEOUT_MS,
+  INTERACTION_HELLO_FLUSH_GRACE_MS,
+  INTERACTION_MAX_EARLY_FRAMES,
+  INTERACTION_QUEUE_LIMIT,
+  INTERACTION_TICK_INTERVAL_MS,
+  INTERACTION_TOMBSTONE_MS,
+} from "./interaction-store.js";
