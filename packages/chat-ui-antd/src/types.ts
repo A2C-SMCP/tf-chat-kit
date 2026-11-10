@@ -126,6 +126,34 @@ export interface ChatUiLabels {
   readonly askUserSubmit: ReactNode;
   readonly askUserSubmitting: ReactNode;
   readonly askUserUnavailable: ReactNode;
+  /** Optional Interaction channel copy; omitted keys use the built-in English labels. */
+  readonly interactionQueueLabel?: string | undefined;
+  readonly interactionQueueTitle?: string | undefined;
+  readonly interactionQueueEmpty?: ReactNode | undefined;
+  readonly interactionQueueActivate?: ReactNode | undefined;
+  readonly interactionOtherOption?: string | undefined;
+  readonly interactionFreeTextPlaceholder?: string | undefined;
+  readonly interactionRemaining?: string | undefined;
+  readonly interactionDisconnected?: ReactNode | undefined;
+  readonly interactionAwaitingSnapshot?: ReactNode | undefined;
+  readonly interactionAckTimeout?: ReactNode | undefined;
+  readonly interactionAckTimeoutDescription?: ReactNode | undefined;
+  readonly interactionSubmittingNotice?: ReactNode | undefined;
+  readonly interactionAccepted?: ReactNode | undefined;
+  readonly interactionResponseFailed?: ReactNode | undefined;
+  readonly interactionFromColleague?: ReactNode | undefined;
+  readonly interactionCurrentUser?: string | undefined;
+  readonly interactionYou?: string | undefined;
+  readonly interactionColleague?: string | undefined;
+  readonly interactionRobotPrefix?: string | undefined;
+  readonly formatInteractionConversationTitle?:
+    ((conversationId: string, title: string | undefined) => string) | undefined;
+  readonly interactionHistoryTitle?: string | undefined;
+  readonly interactionHistoryAsk?: ReactNode | undefined;
+  readonly interactionHistoryAnswer?: ReactNode | undefined;
+  readonly interactionHistoryAnsweredBy?: string | undefined;
+  readonly interactionHistoryAnsweredAt?: string | undefined;
+  readonly interactionHistoryError?: string | undefined;
   readonly capabilityUnavailableDescription: ReactNode;
   readonly capabilityUnavailableTitle: ReactNode;
   readonly composerEnterHint?: string | undefined;

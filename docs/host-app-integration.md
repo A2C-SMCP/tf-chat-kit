@@ -553,6 +553,150 @@ const changeEventDetailSplitRatio = useCallback((ratio: number) => {
 
 组件自身使用 `height: 100%`，所以宿主必须给父容器一个可计算的高度或最小高度。
 
+### 6.4 Interaction 通道 UI（#170）
+
+Interaction 通道（`ask_colleague`）是 `/remote-tool` 上的通用人机交互信封。Kit 的 UI 只消费
+宿主创建的实例级 `InteractionClient`，不创建连接、不注册工具、不持有身份。
+
+#### 创建与所有权
+
+```ts
+import { createTFRobotInteractionClient } from "@turingfocus/chat-kit/headless";
+
+const interaction = createTFRobotInteractionClient({
+  baseUrl,
+  socketPath, // 与 chat / RemoteTool 相同的部署路径
+  robotId, // 当前机器人身份
+  sessionProvider, // 与 RemoteTool 相同的短期 Session
+});
+```
+
+legacy adapter 声明默认关闭（`supportsAskUserAdapter=false`），只有宿主显式注册 legacy `ask_user`
+时才需要声明支持；具体选项以最终工厂签名为准。
+
+宿主必须在环境、账号、组织或机器人变化时调用 `interaction.dispose()`，再用新身份创建新实例；
+不要在多个身份之间复用同一个 client。`InteractionProvider` / 默认工作区都不会释放宿主传入的
+client。
+
+需要同时使用普通 RemoteTool 与 Interaction、并共享同一个 `/remote-tool` owner 时，使用
+bundle 工厂；`interaction` 字段是 **Interaction 的 options**（至少 `robotId`），不是已创建的
+client：
+
+```ts
+const bundle = createTFRobotRemoteToolInteractionBundle({
+  ...transportOptions,
+  tools,
+  interaction: { robotId }, // ackTimeoutMs / expectedNamespace 等可选
+});
+// UI 使用 bundle.interaction；不要再调用 createTFRobotInteractionClient
+```
+
+由 bundle 统一释放；同时创建两个独立 client 会争用 `/remote-tool` owner。
+
+#### 接入方式
+
+方式 A（推荐）：把 client 传给默认工作区或完整 Manager UI：
+
+```tsx
+<ManagerChatApp
+  auth={auth}
+  manager={manager}
+  chat={chat}
+  interactionClient={interaction}
+  interactionIdentity={interactionIdentity}
+  onChatIdentityChange={handleChatIdentityChange}
+/>
+// 或
+<ChatWorkspace interactionClient={interaction} getDeadlineAt={getDeadlineAt} />
+// 或
+<ChatCompactWorkspace interactionClient={interaction} getDeadlineAt={getDeadlineAt} />
+```
+
+工作区会渲染 `InteractionQueue`：当前会话的活跃问询内联在消息区上方，其他会话的活跃问询使用
+全局 Modal，其余待回答项进入浮动角标。默认工作区**只在显式传入非 null `interactionClient`
+时**渲染内联卡片与队列；推荐直接把 client 传给工作区或 `ManagerChatApp`。若宿主选择“外层
+`InteractionProvider` + 自己的 `InteractionQueue`”组合，工作区的内层 Provider 会继承外层
+client 以抑制 legacy/Gateway pending，但工作区不渲染队列；队列、Modal 与 `inlineConversationId`
+由宿主统一负责。此时可通过 `conversationViewProps.interactionInline` 显式开启工作区内联，并
+仍由宿主的队列协调 `inlineConversationId`，避免同一活跃项重复展示；内联卡与宿主队列使用同一
+草稿 store 与 scope，内联/Modal 切换不会丢草稿。为兼容历史行为，
+`conversationViewProps.interactionInline` 默认在继承模式下关闭。
+
+`ManagerChatApp` 内置机器人/平台/账号切换。传入非 null `interactionClient` 时**必须**同时传
+`interactionIdentity`（创建该 client 时的环境、用户、账号、组织、机器人与平台身份）；否则
+`ManagerChatApp` 在渲染时抛出 `TypeError`。确需无身份 client 时必须显式设置
+`allowUnscopedInteractionClient`。`robotId` 必填且始终参与比较；其余字段默认也必须精确匹配，
+只有显式设置 `allowWildcardInteractionIdentity` 时才把省略字段视为通配。身份不匹配或变为
+`undefined`（登出/身份丢失）时 `onChatIdentityChange` 也会触发，宿主应释放旧 client、创建新
+client 后更新 props，默认 UI 会先停用旧 client，避免跨环境/用户/机器人串用。直接使用
+`ChatWorkspace` 的宿主自行负责同样的切换与释放。
+
+作答草稿默认按 client 实例隔离：替换 client 会丢弃草稿。若宿主在同一身份下重建 client 并希望
+保留草稿，给 `InteractionProvider` / 工作区传稳定的 `interactionScope`（可直接使用
+`managerChatIdentityScope(identity)`，从 `@turingfocus/chat-kit/manager` 或
+`@turingfocus/chat-kit/manager-antd` 导入）；scope 变化时草稿立即失效，同一 scope 内替换
+client 则保留。`ManagerChatApp` 会自动以当前身份生成 scope。草稿还会按当前问题的 option
+values 过滤，旧问题残留的选项不会提交到新问题。
+
+方式 B：自定义 UI：
+
+```tsx
+<InteractionProvider client={interaction}>
+  <ChatConversationView interactionInline getDeadlineAt={getDeadlineAt} />
+  <InteractionQueue
+    labels={labels}
+    inlineConversationId={selectedConversationId}
+  />
+</InteractionProvider>
+```
+
+`InteractionQueue` 只负责全局 Modal 与队列角标，不会自行渲染当前会话的内联卡片。
+`ChatConversationView` 默认不渲染内联卡；传入 `interactionInline` 时它才内联展示，此时队列必须
+收到匹配的 `inlineConversationId`。若不想内联，保持 `interactionInline` 默认关闭并且不要传
+`inlineConversationId`，队列会用 Modal 展示活跃项。使用自定义 timeline 时同理：要么用
+`useInteractionQueue().active` + `InteractionCard` 自己渲染并传 inline id，要么完全交给 Modal。
+默认的 `ChatWorkspace` / `ChatCompactWorkspace` 已实现这套协调逻辑，可直接复用。
+
+如果宿主会隐藏整个会话视图（例如设置面板），使用 `ChatWorkspace` 或
+`ChatCompactWorkspace` 时传 `interactionInlineVisible={false}`，队列会自动回退到全局 Modal；
+`ManagerChatApp` 已内置该行为。
+
+`InteractionProvider` 的 `client` 为 `undefined` 时整体继承外层 Provider：复用同一订阅、草稿
+store、`scope`、`clientGeneration`，不再创建第二套队列/草稿状态，因此内联卡片与宿主的队列 Modal
+共享输入草稿；此模式下子 Provider 自己的 `scope` 会被忽略，需要独立 scope 时必须显式传 client。
+`client` 为 `null` 时禁用该子树的 Interaction UI。`useInteractionQueue()` 返回 `active` / `waiting` /
+`connection` / `now` / `liveCount` / `clientGeneration` / `activate` / `respond` / `getDraft` /
+`setDraft`；`active`、`waiting` 与倒计时均来自 Runtime store，不要在 UI 侧重新计算 EDF 或队列
+上限。自定义卡片应把 `clientGeneration` 与本问题的 `interactionId` 一起作为 key，防止 client
+替换后已挂载的输入区把旧草稿提交给新 client。
+
+#### Legacy 共存
+
+未注入 Interaction client 时，现有 `AskUserRemoteTool` 与 Gateway `pendingInteraction` 路径
+保持不变。注入后，legacy 的 pending 项与 Gateway `pendingInteraction` 不再渲染，已完成的结果
+历史仍可展示；不要在同一页面同时渲染两套 pending 来源。`supportsAskUserAdapter` 只表示传输层
+是否声明 legacy adapter，不是 UI 双轨开关；默认保持 `false`，仅在宿主显式注册 legacy
+`ask_user` 时设为 `true`。
+
+#### 状态与文案
+
+- `awaiting-snapshot`：已连接、等待 `interaction_pending` 快照，输入禁用并提示正在同步；
+- `disconnected`：输入禁用并提示连接断开；
+- `submitting` / `accepted`：等待 ack / 已受理，输入禁用；
+- `staleReason=ack_timeout`：提示“回答可能未送达”，保留输入可重试；
+- 作答草稿由 Provider 按 `interactionId` 保存；ack 超时重试或内联/Modal 切换不会清空；
+- `terminalReason` 由 Runtime 写入；UI 不自行推断终态。
+
+默认文案在 `defaultChatUiLabels`，中文紧凑界面使用 `compactChatZhCN`；宿主可通过 `labels`
+覆盖 `interaction*` 可选键。`InteractionQueue` 与 `InteractionCard` 都是公开导出，可单独组合。
+
+#### 验证
+
+仓库内 DOM 测试覆盖 Provider 实例边界、单活动/等待队列投影、legacy 互斥、ack 超时与连接态；
+Playwright 使用受控 `/remote-tool` server + 两个独立 browser context 覆盖多 Tab 首答、失主
+`closed(answered)`、重连快照、EDF/上限 10、超时/取消与 legacy 不启用。真实 LLM 的
+`ask_colleague` 轮次按 #170 单独联调记录，不进入 CI/发布门禁。
+
 ## 7. 宿主自定义 UI
 
 不使用 Ant Design UI 时，通过 React hooks 读取状态：

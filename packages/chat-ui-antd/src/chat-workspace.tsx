@@ -9,8 +9,11 @@ import {
 } from "react";
 
 import {
+  InteractionProvider,
+  useChatSelector,
   useConversationWorkspace,
   type ConversationWorkspaceBinding,
+  type InteractionClient,
   type UseConversationWorkspaceOptions,
 } from "@turingfocus/chat-react";
 
@@ -18,6 +21,7 @@ import {
   ChatConversationView,
   type ChatConversationViewProps,
 } from "./chat-conversation-view.js";
+import { InteractionQueue } from "./interaction-queue.js";
 import { ChatUiShell, type ChatUiShellProps } from "./chat-ui-shell.js";
 import { resolveChatUiLabels } from "./labels.js";
 import type {
@@ -40,6 +44,21 @@ export interface ChatWorkspaceProps {
     Omit<ChatConversationViewProps, "getDeadlineAt" | "labels"> | undefined;
   readonly formatConversationUpdatedAt?: ChatUiShellProps["formatConversationUpdatedAt"];
   readonly getDeadlineAt: () => number;
+  /**
+   * Host-owned Interaction client; appears in the inline card and global queue.
+   * `undefined` inherits an outer InteractionProvider (the host then owns the
+   * queue); `null` disables Interaction UI for this workspace.
+   */
+  readonly interactionClient?: InteractionClient | null | undefined;
+  /** Draft scope; drafts are discarded when this changes. */
+  readonly interactionScope?: string | undefined;
+  /**
+   * Whether the conversation surface is visible. When false, the active
+   * interaction falls back to the global modal instead of the inline card.
+   * Defaults to true.
+   */
+  readonly interactionInlineVisible?: boolean | undefined;
+  readonly getPopupContainer?: (() => HTMLElement) | undefined;
   readonly header?: ReactNode;
   readonly initialSelection?: "first" | "none" | undefined;
   readonly labels?: ChatUiLabelOverrides | undefined;
@@ -95,6 +114,10 @@ export const ChatWorkspace = ({
   conversationViewProps,
   formatConversationUpdatedAt,
   getDeadlineAt,
+  interactionClient,
+  interactionScope,
+  interactionInlineVisible = true,
+  getPopupContainer,
   header,
   initialSelection,
   labels: labelOverrides,
@@ -158,6 +181,16 @@ export const ChatWorkspace = ({
     refresh,
     retrySelection,
   );
+  const chatConversationId = useChatSelector(
+    (snapshot) => snapshot?.conversation.id,
+  );
+  const effectiveInteractionInline =
+    interactionInlineVisible &&
+    (conversationViewProps?.interactionInline ?? interactionClient != null);
+  const inlineConversationId =
+    contentState.kind === "ready" && effectiveInteractionInline
+      ? chatConversationId
+      : undefined;
   const create = useCallback(async () => {
     const normalizedTitle = title.trim();
     if (normalizedTitle.length === 0 || workspace.snapshot.creating) return;
@@ -218,7 +251,7 @@ export const ChatWorkspace = ({
   );
 
   return (
-    <>
+    <InteractionProvider client={interactionClient} scope={interactionScope}>
       <ChatUiShell
         nonReadyContent={
           workspace.snapshot.selectionStatus === "loading" ||
@@ -316,6 +349,7 @@ export const ChatWorkspace = ({
         <ChatConversationView
           {...conversationViewProps}
           getDeadlineAt={getDeadlineAt}
+          interactionInline={effectiveInteractionInline}
           labels={labels}
         />
       </ChatUiShell>
@@ -429,6 +463,13 @@ export const ChatWorkspace = ({
           />
         </Space>
       </Modal>
-    </>
+      {interactionClient === undefined || interactionClient === null ? null : (
+        <InteractionQueue
+          getPopupContainer={getPopupContainer}
+          inlineConversationId={inlineConversationId}
+          labels={labels}
+        />
+      )}
+    </InteractionProvider>
   );
 };
