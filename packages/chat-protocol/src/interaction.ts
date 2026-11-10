@@ -36,6 +36,8 @@ export const INTERACTION_MAX_EARLY_FRAMES = 50;
 /** Defensive envelope caps; the Server sends at most 10 pending interactions. */
 export const INTERACTION_MAX_PENDING_ITEMS = 100;
 export const INTERACTION_MAX_VERSIONS = 32;
+/** Upper bound shared by the Runtime ack timer and the transport fallback. */
+export const INTERACTION_MAX_ACK_TIMEOUT_MS = 60_000;
 /** Retained name for display text; the wire caps are the specific constants. */
 export const INTERACTION_MAX_TEXT_CHARACTERS =
   INTERACTION_MAX_DISPLAY_TEXT_CHARACTERS;
@@ -177,12 +179,28 @@ export interface InteractionTransport {
   readonly clock: RemoteToolClock;
   /** Expected wire namespace, when the implementation can assert it. */
   readonly namespace?: string | undefined;
+  /**
+   * Registers synchronously; the implementation must not create a second
+   * namespace owner. Safe before the socket connects.
+   */
   attachInteraction(
     observer: InteractionTransportObserver,
   ): InteractionTransportAttachment;
   /** Optional explicit recovery after a terminal transport failure. */
   retry?(): void;
+  /**
+   * Interaction-specific forced resynchronization. The implementation must
+   * reuse its existing transport/socket (never a second namespace owner),
+   * reset early-frame/hello state and arrange a fresh hello → pending
+   * handshake. It is a no-op when disposed or when no interaction consumer is
+   * attached.
+   */
+  retryInteraction?(): void;
 }
+
+/** Socket.IO namespaces never carry a trailing slash. */
+export const normalizeInteractionNamespace = (value: string): string =>
+  value.replace(/\/+$/u, "") || "/";
 
 const optionalText = (maximum = INTERACTION_MAX_DISPLAY_TEXT_CHARACTERS) =>
   z

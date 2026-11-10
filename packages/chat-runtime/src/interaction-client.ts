@@ -1,5 +1,7 @@
 import {
+  INTERACTION_MAX_ACK_TIMEOUT_MS,
   createInteractionResponsePayload,
+  normalizeInteractionNamespace,
   type InteractionClosed,
   type InteractionPendingSnapshot,
   type InteractionRequest,
@@ -147,11 +149,17 @@ export class InteractionClient {
     this.#robotId = options.robotId;
     this.#acceptServerIdentity = options.acceptServerIdentity ?? false;
     this.#expectedNamespace =
-      options.expectedNamespace ?? options.transport.namespace;
+      options.expectedNamespace === undefined
+        ? options.transport.namespace === undefined
+          ? undefined
+          : normalizeInteractionNamespace(options.transport.namespace)
+        : normalizeInteractionNamespace(options.expectedNamespace);
+    // The transport settles an unanswered response at 60s, so a longer local
+    // timeout would be pre-empted; keep one shared upper bound.
     this.#ackTimeoutMs = positiveLimit(
       options.ackTimeoutMs,
       INTERACTION_ACK_TIMEOUT_MS,
-      600_000,
+      INTERACTION_MAX_ACK_TIMEOUT_MS,
     );
     this.#tickIntervalMs = positiveLimit(
       options.tickIntervalMs,
@@ -198,14 +206,17 @@ export class InteractionClient {
   };
 
   /**
-   * Explicit recovery after a terminal transport failure. Returns false when
-   * the transport does not implement retry; otherwise the normal connection,
-   * hello and snapshot events drive the state back.
+   * Explicit recovery after a terminal failure or identity mismatch. Prefers
+   * the interaction-specific forced resynchronization, which also re-registers
+   * an attached RemoteTool; falls back to the generic transport retry. Returns
+   * false when neither is available or the implementation throws.
    */
   retry(): boolean {
-    if (this.#disposed || this.#transport.retry === undefined) return false;
+    if (this.#disposed) return false;
+    const retry = this.#transport.retryInteraction ?? this.#transport.retry;
+    if (retry === undefined) return false;
     try {
-      this.#transport.retry();
+      retry.call(this.#transport);
       return true;
     } catch (error) {
       this.#report("interaction transport retry failed", error);
@@ -318,9 +329,10 @@ export class InteractionClient {
 
   #handleHello(hello: InteractionServerHello): void {
     if (this.#disposed) return;
+    const normalizedNamespace = normalizeInteractionNamespace(hello.namespace);
     const foreignNamespace =
       this.#expectedNamespace !== undefined &&
-      hello.namespace !== this.#expectedNamespace;
+      normalizedNamespace !== this.#expectedNamespace;
     const foreignRobot =
       !this.#acceptServerIdentity && hello.robotId !== this.#robotId;
     if (foreignNamespace || foreignRobot) {
@@ -338,7 +350,7 @@ export class InteractionClient {
       return;
     }
     this.#identityMismatch = false;
-    this.#serverHello = hello;
+    this.#serverHello = { ...hello, namespace: normalizedNamespace };
     if (
       this.#snapshotSeenSinceDisconnect ||
       this.#helloFlushTimer !== undefined
@@ -463,15 +475,16 @@ export class InteractionClient {
 
   #matchesIdentity(request: InteractionRequest): boolean {
     if (this.#identityMismatch) return false;
+    const requestNamespace = normalizeInteractionNamespace(request.namespace);
     if (this.#serverHello !== undefined)
       return (
         request.robotId === this.#serverHello.robotId &&
-        request.namespace === this.#serverHello.namespace
+        requestNamespace === this.#serverHello.namespace
       );
     return (
       request.robotId === this.#robotId &&
       (this.#expectedNamespace === undefined ||
-        request.namespace === this.#expectedNamespace)
+        requestNamespace === this.#expectedNamespace)
     );
   }
 

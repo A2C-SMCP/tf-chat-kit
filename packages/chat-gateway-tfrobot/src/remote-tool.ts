@@ -1,4 +1,5 @@
 import {
+  INTERACTION_MAX_ACK_TIMEOUT_MS,
   INTERACTION_MAX_EARLY_FRAMES,
   createInteractionHelloClientPayload,
   createInteractionResponsePayload,
@@ -8,6 +9,7 @@ import {
   interactionPendingEnvelopeSchema,
   interactionRequestSchema,
   isSupportedInteractionProtocolVersion,
+  normalizeInteractionNamespace,
   remoteToolInvocationSchema,
   type InteractionAck,
   type InteractionConnectionState,
@@ -66,8 +68,6 @@ const interactionEventNames = {
   response: "interaction_response",
   closed: "interaction_closed",
 } as const;
-
-const INTERACTION_ACK_BUDGET_MS = 60_000;
 
 type InteractionEventKind = "hello" | "pending" | "requested" | "closed";
 interface BufferedInteractionFrame {
@@ -155,7 +155,7 @@ export class TFRobotRemoteToolTransport
     if (options.socketNamespaceUrl === undefined) url.pathname = "/remote-tool";
     // Socket.IO namespaces never carry a trailing slash; the wire hello reports
     // the normalized path. Derive both from the same normalized value.
-    this.namespace = url.pathname.replace(/\/+$/u, "") || "/";
+    this.namespace = normalizeInteractionNamespace(url.pathname);
     this.#namespaceUrl = url.toString().replace(/\/+$/u, "");
   }
 
@@ -203,21 +203,7 @@ export class TFRobotRemoteToolTransport
     if (this.#disposed || this.#socket === undefined) return;
     if (!this.#remoteToolActive) {
       // Interaction-only recovery after a terminal transport failure.
-      if (this.#interactionObserver === undefined) return;
-      this.#failed = false;
-      ++this.#generation;
-      this.#abort.abort();
-      this.#abort = new AbortController();
-      if (this.#disposed) return;
-      this.#armDeadline();
-      if (this.#socket.connected) {
-        // A fresh namespace handshake is required so the Server resends
-        // interaction_hello/interaction_pending after an identity mismatch.
-        this.#socket.disconnect();
-        this.#socket.connect();
-      } else {
-        this.#socket.connect();
-      }
+      this.retryInteraction();
       return;
     }
     if (this.#ready) return;
@@ -230,6 +216,37 @@ export class TFRobotRemoteToolTransport
     this.#armDeadline();
     if (this.#socket.connected) this.#register();
     else this.#socket.connect();
+  }
+
+  /**
+   * Interaction-specific forced resynchronization. Reuses the same transport
+   * and namespace owner; resets hello/early-frame state and forces a fresh
+   * namespace handshake so the Server resends hello → pending. An attached
+   * RemoteTool consumer re-registers through the normal connect path.
+   */
+  retryInteraction(): void {
+    if (
+      this.#disposed ||
+      this.#socket === undefined ||
+      this.#interactionObserver === undefined
+    )
+      return;
+    this.#failed = false;
+    ++this.#generation;
+    this.#abort.abort();
+    this.#abort = new AbortController();
+    this.#helloSent = false;
+    this.#interactionBuffer = [];
+    this.#cancelInteractionAcks();
+    ++this.#interactionGeneration;
+    if (this.#disposed) return;
+    this.#armDeadline();
+    if (this.#socket.connected) {
+      this.#socket.disconnect();
+      this.#socket.connect();
+    } else {
+      this.#socket.connect();
+    }
   }
 
   dispose(): void {
@@ -604,7 +621,7 @@ export class TFRobotRemoteToolTransport
       // Socket.IO's ack timeout is silent; the port promises a terminal
       // callback, so settle as unknown within the same budget.
       settle(undefined);
-    }, INTERACTION_ACK_BUDGET_MS);
+    }, INTERACTION_MAX_ACK_TIMEOUT_MS);
     cancel = (): void => {
       handle();
       this.#interactionAckTimers.delete(cancel);
@@ -631,7 +648,7 @@ export class TFRobotRemoteToolTransport
               ? parsed.data
               : undefined,
           );
-        }, INTERACTION_ACK_BUDGET_MS),
+        }, INTERACTION_MAX_ACK_TIMEOUT_MS),
       );
     } catch (error) {
       cancel();

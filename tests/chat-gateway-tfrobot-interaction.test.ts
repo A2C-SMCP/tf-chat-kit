@@ -752,6 +752,50 @@ describe("TFRobot interaction transport", () => {
     transport.dispose();
   });
 
+  it("forces a shared-channel resync without a second owner", () => {
+    const { transport, sockets } = createTransport();
+    const observed = createObserver();
+    transport.attachInteraction(observed.observer);
+    const states: RemoteToolConnectionState[] = [];
+    transport.start(
+      [
+        {
+          toolName: "host_tool",
+          description: "Host operation",
+          parameters: { type: "object" },
+          tags: ["Read"],
+        },
+      ],
+      {
+        state: (state) => states.push(state),
+        invoke: () => undefined,
+      },
+    );
+    const socket = sockets[0]!;
+    expect(socket.events("register")).toHaveLength(1);
+    expect(socket.events("interaction_hello")).toHaveLength(1);
+    expect(states.at(-1)?.status).toBe("ready");
+
+    transport.retryInteraction();
+    expect(sockets).toHaveLength(1);
+    expect(socket.connected).toBe(true);
+    expect(socket.events("interaction_hello")).toHaveLength(2);
+    expect(socket.events("register")).toHaveLength(2);
+    expect(states.some((state) => state.status === "registering")).toBe(true);
+    expect(states.at(-1)?.status).toBe("ready");
+    transport.dispose();
+  });
+
+  it("no-ops retryInteraction without a consumer or after dispose", () => {
+    const { transport, sockets } = createTransport();
+    transport.connect();
+    const socket = sockets[0]!;
+    expect(() => transport.retryInteraction()).not.toThrow();
+    expect(socket.connected).toBe(true);
+    transport.dispose();
+    expect(() => transport.retryInteraction()).not.toThrow();
+  });
+
   it("normalizes a trailing slash in the expected namespace", () => {
     const { transport, sockets } = createTransport({
       socketNamespaceUrl: "https://robot.example/remote-tool/",
@@ -799,6 +843,45 @@ describe("TFRobot interaction transport", () => {
       vi.advanceTimersByTime(60_000);
       expect(onAck).not.toHaveBeenCalled();
       transport.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels the ack fallback on disconnect and dispose", () => {
+    vi.useFakeTimers();
+    try {
+      const first = createTransport();
+      const firstObserved = createObserver();
+      const firstAttachment = first.transport.attachInteraction(
+        firstObserved.observer,
+      );
+      first.transport.connect();
+      const firstSocket = first.sockets[0]!;
+      const firstAck = vi.fn();
+      firstAttachment.respond(
+        { interactionId: "interaction-1", status: "cancelled" },
+        firstAck,
+      );
+      firstSocket.disconnect();
+      vi.advanceTimersByTime(60_000);
+      expect(firstAck).not.toHaveBeenCalled();
+      first.transport.dispose();
+
+      const second = createTransport();
+      const secondObserved = createObserver();
+      const secondAttachment = second.transport.attachInteraction(
+        secondObserved.observer,
+      );
+      second.transport.connect();
+      const secondAck = vi.fn();
+      secondAttachment.respond(
+        { interactionId: "interaction-1", status: "cancelled" },
+        secondAck,
+      );
+      second.transport.dispose();
+      vi.advanceTimersByTime(60_000);
+      expect(secondAck).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }

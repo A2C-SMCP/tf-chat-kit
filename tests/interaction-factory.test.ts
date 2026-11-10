@@ -185,19 +185,44 @@ describe("interaction public factories", () => {
     expect(socket.connected).toBe(false);
   });
 
-  it("declares the legacy adapter only when the host asks for it", () => {
+  it("rejects supportsAskUserAdapter on the interaction-only factory", () => {
+    const { socketFactory } = createFixture();
+    expect(() =>
+      createTFRobotInteractionClient({
+        baseUrl: "https://robot.example/",
+        sessionProvider,
+        socketFactory,
+        robotId: "robot-1",
+        supportsAskUserAdapter: true,
+      } as never),
+    ).toThrow(/supportsAskUserAdapter/);
+  });
+
+  it("declares the legacy adapter through the Bundle only", () => {
     const { sockets, socketFactory } = createFixture();
-    const client = createTFRobotInteractionClient({
+    const bundle = createTFRobotRemoteToolInteractionBundle({
       baseUrl: "https://robot.example/",
       sessionProvider,
       socketFactory,
-      robotId: "robot-1",
       supportsAskUserAdapter: true,
+      tools: [
+        defineRemoteTool({
+          definition: {
+            toolName: "host_tool",
+            description: "Host operation",
+            parameters: { type: "object" },
+            tags: ["Read"],
+          },
+          validate: (params) => params,
+          execute: () => ({ ok: true, resultForLlm: "done" }),
+        }),
+      ],
+      interaction: { robotId: "robot-1" },
     });
     expect(sockets[0]?.events("interaction_hello")[0]).toMatchObject({
       supportsAskUserAdapter: true,
     });
-    client.dispose();
+    bundle.dispose();
   });
 
   it("shares one namespace owner and keeps both consumers independent", async () => {
@@ -223,6 +248,9 @@ describe("interaction public factories", () => {
     expect(sockets).toHaveLength(1);
     const socket = sockets[0]!;
     expect(socket.events("interaction_hello")).toHaveLength(1);
+    expect(socket.events("interaction_hello")[0]).toMatchObject({
+      supportsAskUserAdapter: false,
+    });
     expect(socket.events("register")).toHaveLength(1);
     expect(bundle.remoteTools?.getSnapshot().status).toBe("ready");
 
@@ -376,21 +404,21 @@ describe("interaction public factories", () => {
     client.dispose();
   });
 
-  it("passes expectedNamespace through the factory", async () => {
+  it("passes and normalizes expectedNamespace through the factory", async () => {
     const { sockets, socketFactory } = createFixture();
     const client = createTFRobotInteractionClient({
       baseUrl: "https://robot.example/",
       sessionProvider,
       socketFactory,
       robotId: "robot-1",
-      expectedNamespace: "/custom",
+      expectedNamespace: "/custom/",
     });
     const socket = sockets[0]!;
     socket.trigger("interaction_hello", {
       protocolVersion: 1,
       versions: ["interaction_v1"],
       robotId: "robot-1",
-      namespace: "/custom",
+      namespace: "/custom/",
     });
     socket.trigger("interaction_pending", {
       protocolVersion: 1,
@@ -399,12 +427,104 @@ describe("interaction public factories", () => {
     socket.trigger("interaction_requested", {
       ...request(),
       protocolVersion: 1,
-      namespace: "/custom",
+      namespace: "/custom/",
     });
     await flush();
     expect(client.getSnapshot().entries["interaction-1"]?.status).toBe(
       "pending",
     );
     client.dispose();
+  });
+
+  it("re-synchronizes interaction from the Bundle while RemoteTool is ready", () => {
+    const { sockets, socketFactory } = createFixture();
+    const bundle = createTFRobotRemoteToolInteractionBundle({
+      baseUrl: "https://robot.example/",
+      sessionProvider,
+      socketFactory,
+      tools: [
+        defineRemoteTool({
+          definition: {
+            toolName: "host_tool",
+            description: "Host operation",
+            parameters: { type: "object" },
+            tags: ["Read"],
+          },
+          validate: (params) => params,
+          execute: () => ({ ok: true, resultForLlm: "done" }),
+        }),
+      ],
+      interaction: { robotId: "robot-1" },
+    });
+    const socket = sockets[0]!;
+    expect(socket.events("interaction_hello")).toHaveLength(1);
+    expect(socket.events("register")).toHaveLength(1);
+    expect(bundle.remoteTools?.getSnapshot().status).toBe("ready");
+
+    expect(bundle.interaction.retry()).toBe(true);
+    expect(sockets).toHaveLength(1);
+    expect(socket.events("interaction_hello")).toHaveLength(2);
+    expect(socket.events("register")).toHaveLength(2);
+    expect(bundle.remoteTools?.getSnapshot().status).toBe("ready");
+
+    // The RemoteTool retry keeps its ready no-op semantics.
+    const emittedBefore = socket.emitted.length;
+    bundle.remoteTools!.retry();
+    expect(socket.emitted.length).toBe(emittedBefore);
+    expect(bundle.remoteTools?.getSnapshot().status).toBe("ready");
+    bundle.dispose();
+  });
+
+  it("does not double-settle across the 10s local and 60s transport budgets", async () => {
+    vi.useFakeTimers();
+    try {
+      const { sockets, socketFactory } = createFixture();
+      const client = createTFRobotInteractionClient({
+        baseUrl: "https://robot.example/",
+        sessionProvider,
+        socketFactory,
+        robotId: "robot-1",
+        ackTimeoutMs: 10_000,
+      });
+      const socket = sockets[0]!;
+      socket.trigger("interaction_hello", {
+        protocolVersion: 1,
+        versions: ["interaction_v1"],
+        robotId: "robot-1",
+        namespace: "/remote-tool",
+      });
+      socket.trigger("interaction_pending", {
+        protocolVersion: 1,
+        interactions: [],
+      });
+      socket.trigger("interaction_requested", {
+        ...request(),
+        protocolVersion: 1,
+      });
+      await flush();
+      expect(
+        client.respond("interaction-1", {
+          status: "answered",
+          answer: "yes",
+        }),
+      ).toBe(true);
+      expect(socket.events("interaction_response")).toHaveLength(1);
+
+      vi.advanceTimersByTime(10_000);
+      await flush();
+      expect(client.getSnapshot().entries["interaction-1"]).toMatchObject({
+        status: "pending",
+        staleReason: "ack_timeout",
+      });
+      vi.advanceTimersByTime(50_000);
+      await flush();
+      expect(client.getSnapshot().entries["interaction-1"]?.status).toBe(
+        "pending",
+      );
+      expect(socket.events("interaction_response")).toHaveLength(1);
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
