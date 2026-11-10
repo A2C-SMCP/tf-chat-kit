@@ -1,4 +1,5 @@
 import {
+  INTERACTION_MAX_EARLY_FRAMES,
   createInteractionHelloClientPayload,
   createInteractionResponsePayload,
   interactionAckSchema,
@@ -46,7 +47,11 @@ export interface TFRobotRemoteToolOptions {
   readonly socketFactory?: TFRobotSocketFactory;
   /** Handshake/registration budget, default 10 seconds. */
   readonly connectionTimeoutMs?: number;
-  /** Declares the legacy ask_user adapter during the dual-run window. */
+  /**
+   * Declares the legacy ask_user adapter during the dual-run window. Only
+   * effective when an interaction consumer is attached; a standalone
+   * RemoteToolClient never sends interaction_hello.
+   */
   readonly supportsAskUserAdapter?: boolean;
 }
 const record = (value: unknown): Record<string, unknown> | undefined =>
@@ -62,7 +67,6 @@ const interactionEventNames = {
   closed: "interaction_closed",
 } as const;
 
-const INTERACTION_EARLY_FRAME_LIMIT = 50;
 const INTERACTION_ACK_BUDGET_MS = 60_000;
 
 type InteractionEventKind = "hello" | "pending" | "requested" | "closed";
@@ -98,6 +102,8 @@ export class TFRobotRemoteToolTransport
       return () => clearTimeout(timer);
     },
   };
+  /** Wire namespace this transport is scoped to (e.g. /remote-tool). */
+  readonly namespace: string;
   readonly #options: TFRobotRemoteToolOptions;
   readonly #timeoutMs: number;
   readonly #namespaceUrl: string;
@@ -118,6 +124,7 @@ export class TFRobotRemoteToolTransport
   #interactionBuffer: BufferedInteractionFrame[] = [];
   #abort = new AbortController();
   #cancelDeadline: (() => void) | undefined;
+  readonly #interactionAckTimers = new Set<() => void>();
   readonly #listeners = new Map<string, TFRobotSocketListener>();
 
   constructor(options: TFRobotRemoteToolOptions) {
@@ -146,7 +153,10 @@ export class TFRobotRemoteToolTransport
         "RemoteTool URL must not contain credentials, query or fragment",
       );
     if (options.socketNamespaceUrl === undefined) url.pathname = "/remote-tool";
-    this.#namespaceUrl = url.toString().replace(/\/$/u, "");
+    // Socket.IO namespaces never carry a trailing slash; the wire hello reports
+    // the normalized path. Derive both from the same normalized value.
+    this.namespace = url.pathname.replace(/\/+$/u, "") || "/";
+    this.#namespaceUrl = url.toString().replace(/\/+$/u, "");
   }
 
   /**
@@ -190,13 +200,27 @@ export class TFRobotRemoteToolTransport
   }
 
   retry(): void {
-    if (
-      this.#disposed ||
-      this.#socket === undefined ||
-      !this.#remoteToolActive ||
-      this.#ready
-    )
+    if (this.#disposed || this.#socket === undefined) return;
+    if (!this.#remoteToolActive) {
+      // Interaction-only recovery after a terminal transport failure.
+      if (this.#interactionObserver === undefined) return;
+      this.#failed = false;
+      ++this.#generation;
+      this.#abort.abort();
+      this.#abort = new AbortController();
+      if (this.#disposed) return;
+      this.#armDeadline();
+      if (this.#socket.connected) {
+        // A fresh namespace handshake is required so the Server resends
+        // interaction_hello/interaction_pending after an identity mismatch.
+        this.#socket.disconnect();
+        this.#socket.connect();
+      } else {
+        this.#socket.connect();
+      }
       return;
+    }
+    if (this.#ready) return;
     this.#failed = false;
     ++this.#generation;
     this.#abort.abort();
@@ -274,6 +298,8 @@ export class TFRobotRemoteToolTransport
   #detachInteraction(observer: InteractionTransportObserver): void {
     if (this.#interactionObserver !== observer) return;
     this.#interactionObserver = undefined;
+    ++this.#interactionGeneration;
+    this.#cancelInteractionAcks();
     this.#interactionBuffer = [];
     this.#helloSent = false;
     this.#closeIfIdle();
@@ -375,6 +401,7 @@ export class TFRobotRemoteToolTransport
     this.#abort.abort();
     this.#abort = new AbortController();
     this.#cancelDeadline?.();
+    this.#cancelInteractionAcks();
     this.#notifyInteractionConnection("disconnected");
     // Preserve Socket.IO's own reconnection owner. Only authentication,
     // namespace rejection or registration failure requires a host retry.
@@ -414,7 +441,11 @@ export class TFRobotRemoteToolTransport
     this.#cancelDeadline?.();
     if (!isolated) {
       ++this.#interactionGeneration;
+      this.#cancelInteractionAcks();
       this.#socket?.disconnect();
+      this.#interactionObserver?.diagnostic?.(
+        `interaction transport failed: ${error}`,
+      );
     }
     if (this.#remoteToolActive)
       this.#observer?.state({ status: "error", error });
@@ -555,6 +586,30 @@ export class TFRobotRemoteToolTransport
       return false;
     }
     const interactionGeneration = this.#interactionGeneration;
+    let settled = false;
+    let cancel = (): void => undefined;
+    const settle = (ack: InteractionAck | undefined): void => {
+      if (settled) return;
+      settled = true;
+      cancel();
+      onAck(ack);
+    };
+    const handle = this.clock.schedule(() => {
+      this.#interactionAckTimers.delete(cancel);
+      if (
+        this.#disposed ||
+        interactionGeneration !== this.#interactionGeneration
+      )
+        return;
+      // Socket.IO's ack timeout is silent; the port promises a terminal
+      // callback, so settle as unknown within the same budget.
+      settle(undefined);
+    }, INTERACTION_ACK_BUDGET_MS);
+    cancel = (): void => {
+      handle();
+      this.#interactionAckTimers.delete(cancel);
+    };
+    this.#interactionAckTimers.add(cancel);
     try {
       this.#socket.emit(
         interactionEventNames.response,
@@ -566,11 +621,11 @@ export class TFRobotRemoteToolTransport
           )
             return;
           if (!supportedProtocolVersion(value)) {
-            onAck(undefined);
+            settle(undefined);
             return;
           }
           const parsed = interactionAckSchema.safeParse(value);
-          onAck(
+          settle(
             parsed.success &&
               parsed.data.interactionId === response.interactionId
               ? parsed.data
@@ -579,6 +634,7 @@ export class TFRobotRemoteToolTransport
         }, INTERACTION_ACK_BUDGET_MS),
       );
     } catch (error) {
+      cancel();
       this.#interactionObserver.diagnostic?.(
         "failed to emit interaction_response",
         error,
@@ -592,7 +648,7 @@ export class TFRobotRemoteToolTransport
     if (this.#disposed) return;
     if (this.#interactionObserver === undefined) {
       this.#interactionBuffer.push({ kind, payload });
-      while (this.#interactionBuffer.length > INTERACTION_EARLY_FRAME_LIMIT) {
+      while (this.#interactionBuffer.length > INTERACTION_MAX_EARLY_FRAMES) {
         // Control frames (hello/pending) are the synchronization anchors; drop
         // the oldest event frame first so a burst cannot erase the snapshot.
         const eventIndex = this.#interactionBuffer.findIndex(
@@ -697,6 +753,11 @@ export class TFRobotRemoteToolTransport
     }
   }
 
+  #cancelInteractionAcks(): void {
+    for (const cancel of [...this.#interactionAckTimers]) cancel();
+    this.#interactionAckTimers.clear();
+  }
+
   #closeIfIdle(): void {
     if (
       this.#disposed ||
@@ -711,6 +772,7 @@ export class TFRobotRemoteToolTransport
   #teardownSocket(): void {
     ++this.#generation;
     ++this.#interactionGeneration;
+    this.#cancelInteractionAcks();
     this.#abort.abort();
     this.#abort = new AbortController();
     this.#cancelDeadline?.();

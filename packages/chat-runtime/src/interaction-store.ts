@@ -1,20 +1,22 @@
-import type {
-  InteractionAck,
-  InteractionClosed,
-  InteractionOption,
-  InteractionParticipant,
-  InteractionPendingSnapshot,
-  InteractionRequest,
-  InteractionTarget,
-  RemoteToolClock,
+import {
+  INTERACTION_MAX_EARLY_FRAMES,
+  type InteractionAck,
+  type InteractionClosed,
+  type InteractionOption,
+  type InteractionParticipant,
+  type InteractionPendingSnapshot,
+  type InteractionRequest,
+  type InteractionTarget,
+  type RemoteToolClock,
 } from "@turingfocus/chat-protocol";
+
+export { INTERACTION_MAX_EARLY_FRAMES };
 
 export const INTERACTION_QUEUE_LIMIT = 10;
 export const INTERACTION_TOMBSTONE_MS = 60_000;
 export const INTERACTION_TICK_INTERVAL_MS = 1_000;
 export const INTERACTION_ACK_TIMEOUT_MS = 10_000;
 export const INTERACTION_HELLO_FLUSH_GRACE_MS = 250;
-export const INTERACTION_MAX_EARLY_FRAMES = 50;
 
 export type InteractionStoreConnectionState =
   "connected" | "disconnected" | "awaiting-snapshot";
@@ -23,7 +25,7 @@ export type InteractionStatus =
   "pending" | "submitting" | "accepted" | "closed";
 
 /** Local non-terminal hints; ack loss never becomes a terminal state. */
-export type InteractionStaleReason = "ack_timeout" | "already_closed";
+export type InteractionStaleReason = "ack_timeout";
 
 export interface InteractionEntry {
   readonly interactionId: string;
@@ -52,6 +54,9 @@ export interface InteractionEntry {
   /** Increments when an uncertain response becomes answerable again. */
   readonly attempt: number;
   readonly closedAt?: number | undefined;
+  /** Present when the Server's interaction_closed frame reported them. */
+  readonly answeredBy?: string | undefined;
+  readonly answeredAt?: number | undefined;
 }
 
 export interface InteractionStoreSnapshot {
@@ -257,9 +262,10 @@ export class InteractionStore {
         continue;
       }
       const expired = request.expiresAt <= now;
-      // A pending snapshot is server-authoritative. An accepted item whose
-      // closed frame was lost becomes answerable again; submitting keeps its
-      // in-flight ack ownership.
+      // A pending snapshot is server-authoritative (TFRF store semantics and
+      // ADR §7 snapshot reconciliation). An accepted item whose closed frame
+      // was lost becomes answerable again; submitting keeps its in-flight ack
+      // ownership.
       const status: InteractionStatus = expired
         ? "closed"
         : existing?.status === "accepted"
@@ -296,6 +302,12 @@ export class InteractionStore {
         terminalReason: closed.terminalReason,
         staleReason: undefined,
         closedAt: now,
+        ...(closed.answeredBy === undefined
+          ? {}
+          : { answeredBy: closed.answeredBy }),
+        ...(closed.answeredAt === undefined
+          ? {}
+          : { answeredAt: closed.answeredAt }),
       }),
     );
     this.#now = now;

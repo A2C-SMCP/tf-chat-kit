@@ -106,6 +106,7 @@ const createTransport = (
   options: {
     readonly connectionTimeoutMs?: number;
     readonly preconnected?: boolean;
+    readonly socketNamespaceUrl?: string;
   } = {},
 ) => {
   const sockets: InteractionFakeSocket[] = [];
@@ -116,6 +117,9 @@ const createTransport = (
     ...(options.connectionTimeoutMs === undefined
       ? {}
       : { connectionTimeoutMs: options.connectionTimeoutMs }),
+    ...(options.socketNamespaceUrl === undefined
+      ? {}
+      : { socketNamespaceUrl: options.socketNamespaceUrl }),
     socketFactory: (input) => {
       inputs.push(input);
       const socket = new InteractionFakeSocket();
@@ -326,21 +330,45 @@ describe("TFRobot interaction transport", () => {
       interactionId: "interaction-1",
       status: "accepted",
     });
+    // The port promises at most one terminal callback per response.
     response?.ack?.({
       protocolVersion: 2,
       interactionId: "interaction-1",
       status: "accepted",
     });
-    response?.ack?.({
-      protocolVersion: 1,
-      interactionId: "other",
-      status: "accepted",
-    });
     expect(acks).toEqual([
       { interactionId: "interaction-1", status: "accepted" },
-      undefined,
-      undefined,
     ]);
+
+    const unsupported: Array<InteractionAck | undefined> = [];
+    attachment.respond(
+      { interactionId: "interaction-1", status: "cancelled" },
+      (ack) => unsupported.push(ack),
+    );
+    socket.emitted
+      .filter((entry) => entry.event === "interaction_response")
+      .at(-1)
+      ?.ack?.({
+        protocolVersion: 2,
+        interactionId: "interaction-1",
+        status: "accepted",
+      });
+    expect(unsupported).toEqual([undefined]);
+
+    const mismatched: Array<InteractionAck | undefined> = [];
+    attachment.respond(
+      { interactionId: "interaction-1", status: "cancelled" },
+      (ack) => mismatched.push(ack),
+    );
+    socket.emitted
+      .filter((entry) => entry.event === "interaction_response")
+      .at(-1)
+      ?.ack?.({
+        protocolVersion: 1,
+        interactionId: "other",
+        status: "accepted",
+      });
+    expect(mismatched).toEqual([undefined]);
     transport.dispose();
   });
 
@@ -645,6 +673,136 @@ describe("TFRobot interaction transport", () => {
     });
     transport.dispose();
   });
+
+  it("settles a missing ack as undefined within the ack budget", () => {
+    vi.useFakeTimers();
+    try {
+      const { transport, sockets } = createTransport();
+      const observed = createObserver();
+      const attachment = transport.attachInteraction(observed.observer);
+      transport.connect();
+      const socket = sockets[0]!;
+      socket.trigger("interaction_requested", requestedPayload());
+      const onAck = vi.fn();
+      attachment.respond(
+        { interactionId: "interaction-1", status: "cancelled" },
+        onAck,
+      );
+      expect(onAck).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(60_000);
+      expect(onAck).toHaveBeenCalledTimes(1);
+      expect(onAck).toHaveBeenCalledWith(undefined);
+      transport.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels the ack fallback when the server replies", () => {
+    vi.useFakeTimers();
+    try {
+      const { transport, sockets } = createTransport();
+      const observed = createObserver();
+      const attachment = transport.attachInteraction(observed.observer);
+      transport.connect();
+      const socket = sockets[0]!;
+      const onAck = vi.fn();
+      attachment.respond(
+        { interactionId: "interaction-1", status: "cancelled" },
+        onAck,
+      );
+      const response = socket.emitted.find(
+        (entry) => entry.event === "interaction_response",
+      );
+      response?.ack?.({
+        protocolVersion: 1,
+        interactionId: "interaction-1",
+        status: "accepted",
+      });
+      vi.advanceTimersByTime(60_000);
+      expect(onAck).toHaveBeenCalledTimes(1);
+      expect(onAck).toHaveBeenCalledWith({
+        interactionId: "interaction-1",
+        status: "accepted",
+      });
+      transport.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("recovers an interaction-only transport through retry", () => {
+    const { transport, sockets } = createTransport();
+    const observed = createObserver();
+    transport.attachInteraction(observed.observer);
+    transport.connect();
+    const socket = sockets[0]!;
+    expect(transport.namespace).toBe("/remote-tool");
+    expect(socket.events("interaction_hello")).toHaveLength(1);
+    socket.trigger("connect_error", new Error("not authorized"));
+    expect(socket.connected).toBe(false);
+    transport.retry();
+    expect(socket.connected).toBe(true);
+    expect(socket.events("interaction_hello")).toHaveLength(2);
+    // A retry while connected must redo the namespace handshake so the Server
+    // resends hello/pending after an identity mismatch.
+    transport.retry();
+    expect(socket.connected).toBe(true);
+    expect(socket.events("interaction_hello")).toHaveLength(3);
+    transport.dispose();
+  });
+
+  it("normalizes a trailing slash in the expected namespace", () => {
+    const { transport, sockets } = createTransport({
+      socketNamespaceUrl: "https://robot.example/remote-tool/",
+    });
+    const observed = createObserver();
+    transport.attachInteraction(observed.observer);
+    transport.connect();
+    const socket = sockets[0]!;
+    expect(transport.namespace).toBe("/remote-tool");
+    socket.trigger("interaction_hello", {
+      protocolVersion: 1,
+      versions: ["interaction_v1"],
+      robotId: "robot-1",
+      namespace: "/remote-tool",
+    });
+    socket.trigger("interaction_requested", requestedPayload());
+    expect(observed.requests).toHaveLength(1);
+    expect(observed.connections).toEqual(["connected"]);
+    transport.dispose();
+  });
+
+  it("cancels the ack fallback when the interaction consumer detaches", () => {
+    vi.useFakeTimers();
+    try {
+      const { transport } = createTransport();
+      const observed = createObserver();
+      const attachment = transport.attachInteraction(observed.observer);
+      transport.start(
+        [
+          {
+            toolName: "host_tool",
+            description: "Host operation",
+            parameters: { type: "object" },
+            tags: ["Read"],
+          },
+        ],
+        { state: () => undefined, invoke: () => undefined },
+      );
+      const onAck = vi.fn();
+      attachment.respond(
+        { interactionId: "interaction-1", status: "cancelled" },
+        onAck,
+      );
+      attachment.detach();
+      vi.advanceTimersByTime(60_000);
+      expect(onAck).not.toHaveBeenCalled();
+      transport.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("interaction history mapping", () => {
@@ -793,7 +951,7 @@ describe("interaction history mapping", () => {
     });
     if (event.eventCategory !== "tool") return;
     expect(event.transitions[0]?.interactionHistory?.question).toHaveLength(
-      2_000,
+      3_000,
     );
   });
 

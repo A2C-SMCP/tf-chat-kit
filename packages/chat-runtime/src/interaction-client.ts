@@ -27,6 +27,19 @@ export interface InteractionClientOptions {
   readonly transport: InteractionTransport;
   /** Robot identity used for defensive filtering before the server hello. */
   readonly robotId: string;
+  /**
+   * Accept a server hello whose robotId differs from `robotId`. Defaults to
+   * false: a mismatch is fail-closed (frames are dropped until a matching
+   * hello arrives after reconnect). Enable only when the host intentionally
+   * passes a hint rather than the authoritative identity.
+   */
+  readonly acceptServerIdentity?: boolean;
+  /**
+   * Expected wire namespace. Defaults to the transport's asserted namespace.
+   * Set this explicitly when a proxy rewrites the namespace path between the
+   * client URL and the Server's hello.
+   */
+  readonly expectedNamespace?: string;
   /** Defaults to 10 seconds. */
   readonly ackTimeoutMs?: number;
   /** Defaults to 1 second. */
@@ -39,6 +52,10 @@ export interface InteractionClientOptions {
   readonly queueLimit?: number;
   /** Defaults to 60 seconds. */
   readonly tombstoneMs?: number;
+  /**
+   * Sanitized frame/terminal transport diagnostics. Terminal transport
+   * failures require recreating the client or calling retry().
+   */
   readonly onFrameError?: (message: string, error?: unknown) => void;
 }
 
@@ -81,13 +98,17 @@ const nonNegativeLimit = (
 
 /**
  * Instance-owned interaction consumer. It depends only on the Protocol
- * InteractionTransport port and never sees Socket.IO, DTOs, or namespaces.
- * Store state is private to this instance; there is no module singleton.
+ * InteractionTransport port and never sees Socket.IO APIs, event names or
+ * wire DTOs; the transport may supply an opaque expected namespace used for
+ * defensive identity filtering. Store state is private to this instance;
+ * there is no module singleton.
  */
 export class InteractionClient {
   readonly #store: InteractionStore;
   readonly #transport: InteractionTransport;
   readonly #robotId: string;
+  readonly #acceptServerIdentity: boolean;
+  readonly #expectedNamespace: string | undefined;
   readonly #attachment: InteractionTransportAttachment;
   readonly #ackTimeoutMs: number;
   readonly #tickIntervalMs: number;
@@ -101,6 +122,7 @@ export class InteractionClient {
     { readonly cancel: () => void; readonly attempt: number }
   >();
   #serverHello: InteractionServerHello | undefined;
+  #identityMismatch = false;
   #snapshotSeenSinceDisconnect = false;
   #bufferedFrames: BufferedFrame[] = [];
   #helloFlushTimer: (() => void) | undefined;
@@ -110,8 +132,22 @@ export class InteractionClient {
   constructor(options: InteractionClientOptions) {
     if (typeof options.robotId !== "string" || options.robotId.length === 0)
       throw new TypeError("InteractionClient requires a robotId");
+    if (
+      options.acceptServerIdentity !== undefined &&
+      typeof options.acceptServerIdentity !== "boolean"
+    )
+      throw new TypeError("acceptServerIdentity must be a boolean");
+    if (
+      options.expectedNamespace !== undefined &&
+      (typeof options.expectedNamespace !== "string" ||
+        options.expectedNamespace.length === 0)
+    )
+      throw new TypeError("expectedNamespace must be a non-empty string");
     this.#transport = options.transport;
     this.#robotId = options.robotId;
+    this.#acceptServerIdentity = options.acceptServerIdentity ?? false;
+    this.#expectedNamespace =
+      options.expectedNamespace ?? options.transport.namespace;
     this.#ackTimeoutMs = positiveLimit(
       options.ackTimeoutMs,
       INTERACTION_ACK_TIMEOUT_MS,
@@ -160,6 +196,22 @@ export class InteractionClient {
     if (this.#disposed) return;
     this.#store.activate(interactionId);
   };
+
+  /**
+   * Explicit recovery after a terminal transport failure. Returns false when
+   * the transport does not implement retry; otherwise the normal connection,
+   * hello and snapshot events drive the state back.
+   */
+  retry(): boolean {
+    if (this.#disposed || this.#transport.retry === undefined) return false;
+    try {
+      this.#transport.retry();
+      return true;
+    } catch (error) {
+      this.#report("interaction transport retry failed", error);
+      return false;
+    }
+  }
 
   /**
    * Answers one pending interaction. Returns false when the interaction is not
@@ -266,6 +318,26 @@ export class InteractionClient {
 
   #handleHello(hello: InteractionServerHello): void {
     if (this.#disposed) return;
+    const foreignNamespace =
+      this.#expectedNamespace !== undefined &&
+      hello.namespace !== this.#expectedNamespace;
+    const foreignRobot =
+      !this.#acceptServerIdentity && hello.robotId !== this.#robotId;
+    if (foreignNamespace || foreignRobot) {
+      // Fail closed: never adopt an identity the host did not expect. Drop the
+      // buffered frames because they belong to the rejected channel.
+      this.#identityMismatch = true;
+      this.#serverHello = undefined;
+      this.#snapshotSeenSinceDisconnect = false;
+      this.#bufferedFrames = [];
+      this.#clearHelloTimer();
+      this.#store.setConnection("disconnected");
+      this.#report(
+        `reject interaction_hello ${hello.robotId}/${hello.namespace}`,
+      );
+      return;
+    }
+    this.#identityMismatch = false;
     this.#serverHello = hello;
     if (
       this.#snapshotSeenSinceDisconnect ||
@@ -286,7 +358,7 @@ export class InteractionClient {
   }
 
   #handlePending(snapshot: InteractionPendingSnapshot): void {
-    if (this.#disposed) return;
+    if (this.#disposed || this.#identityMismatch) return;
     this.#snapshotSeenSinceDisconnect = true;
     this.#clearHelloTimer();
     if (snapshot.kind === "malformed") {
@@ -318,7 +390,7 @@ export class InteractionClient {
   }
 
   #handleRequested(request: InteractionRequest): void {
-    if (this.#disposed) return;
+    if (this.#disposed || this.#identityMismatch) return;
     if (!this.#snapshotSeenSinceDisconnect) {
       this.#bufferFrame({ kind: "requested", value: request });
       return;
@@ -334,7 +406,7 @@ export class InteractionClient {
   }
 
   #handleClosed(closed: InteractionClosed): void {
-    if (this.#disposed) return;
+    if (this.#disposed || this.#identityMismatch) return;
     if (!this.#snapshotSeenSinceDisconnect) {
       this.#bufferFrame({ kind: "closed", value: closed });
       return;
@@ -347,11 +419,17 @@ export class InteractionClient {
     if (this.#disposed) return;
     if (state === "connected") {
       this.#store.setConnection(
-        this.#snapshotSeenSinceDisconnect ? "connected" : "awaiting-snapshot",
+        this.#identityMismatch
+          ? "disconnected"
+          : this.#snapshotSeenSinceDisconnect
+            ? "connected"
+            : "awaiting-snapshot",
       );
       this.#tickAndRefresh();
       return;
     }
+    this.#identityMismatch = false;
+    this.#serverHello = undefined;
     this.#snapshotSeenSinceDisconnect = false;
     this.#bufferedFrames = [];
     this.#clearHelloTimer();
@@ -384,12 +462,17 @@ export class InteractionClient {
   }
 
   #matchesIdentity(request: InteractionRequest): boolean {
+    if (this.#identityMismatch) return false;
     if (this.#serverHello !== undefined)
       return (
         request.robotId === this.#serverHello.robotId &&
         request.namespace === this.#serverHello.namespace
       );
-    return request.robotId === this.#robotId;
+    return (
+      request.robotId === this.#robotId &&
+      (this.#expectedNamespace === undefined ||
+        request.namespace === this.#expectedNamespace)
+    );
   }
 
   #tickAndRefresh(): void {

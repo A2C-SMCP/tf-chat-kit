@@ -56,12 +56,14 @@ class MemoryInteractionTransport implements InteractionTransport {
       };
     },
   };
+  readonly namespace = "/remote-tool";
   observer: InteractionTransportObserver | undefined;
   attachment: InteractionTransportAttachment | undefined;
   readonly responses: InteractionResponse[] = [];
   readonly acks: Array<(ack: InteractionAck | undefined) => void> = [];
   respondReturn = true;
   detached = false;
+  retry = vi.fn();
 
   attachInteraction(
     observer: InteractionTransportObserver,
@@ -264,6 +266,149 @@ describe("InteractionClient state", () => {
     client.dispose();
   });
 
+  it("filters identity before the server hello, including namespace", async () => {
+    const { transport, client } = setup();
+    transport.connection("connected");
+    transport.pending({ kind: "malformed" });
+    transport.requested(request("ok"));
+    transport.requested(request("wrong-robot", { robotId: "robot-2" }));
+    transport.requested(request("wrong-namespace", { namespace: "/other" }));
+    await flush();
+    expect(Object.keys(entries(client))).toEqual(["ok"]);
+    client.dispose();
+  });
+
+  it("fails closed on a server hello with an unexpected robot", async () => {
+    const { transport, client, errors } = setup();
+    transport.connection("connected");
+    transport.hello({
+      versions: ["interaction_v1"],
+      robotId: "robot-2",
+      namespace: "/remote-tool",
+    });
+    transport.requested(request("foreign", { robotId: "robot-2" }));
+    await flush();
+    expect(client.getSnapshot().connection).toBe("disconnected");
+    expect(entries(client)).toEqual({});
+    expect(
+      errors.some((message) => message.includes("reject interaction_hello")),
+    ).toBe(true);
+    client.dispose();
+  });
+
+  it("fails closed on a server hello from a foreign namespace", async () => {
+    const { transport, client } = setup();
+    transport.connection("connected");
+    transport.hello({
+      versions: ["interaction_v1"],
+      robotId: "robot-1",
+      namespace: "/other",
+    });
+    transport.pending({ kind: "snapshot", requests: [], knownIds: [] });
+    await flush();
+    expect(client.getSnapshot().connection).toBe("disconnected");
+    expect(entries(client)).toEqual({});
+    client.dispose();
+  });
+
+  it("can opt into the server-asserted identity explicitly", async () => {
+    const { transport, client } = setup({ acceptServerIdentity: true });
+    transport.connection("connected");
+    transport.hello({
+      versions: ["interaction_v1"],
+      robotId: "robot-2",
+      namespace: "/remote-tool",
+    });
+    transport.pending({ kind: "snapshot", requests: [], knownIds: [] });
+    transport.requested(request("accepted", { robotId: "robot-2" }));
+    await flush();
+    expect(entries(client)["accepted"]?.status).toBe("pending");
+    client.dispose();
+  });
+
+  it("delegates explicit recovery to the transport and contains failures", () => {
+    const transport = new MemoryInteractionTransport();
+    const client = createInteractionClient({ transport, robotId: "robot-1" });
+    expect(client.retry()).toBe(true);
+    expect(transport.retry).toHaveBeenCalledTimes(1);
+    const failingTransport = new MemoryInteractionTransport();
+    failingTransport.retry.mockImplementation(() => {
+      throw new Error("connection disposed");
+    });
+    const errors: string[] = [];
+    const failing = createInteractionClient({
+      transport: failingTransport,
+      robotId: "robot-1",
+      onFrameError: (message) => errors.push(message),
+    });
+    expect(failing.retry()).toBe(false);
+    expect(errors.some((message) => message.includes("retry failed"))).toBe(
+      true,
+    );
+    failing.dispose();
+    client.dispose();
+    expect(client.retry()).toBe(false);
+  });
+
+  it("supports an explicit expected namespace for rewrite deployments", async () => {
+    const { transport, client } = setup({ expectedNamespace: "/custom" });
+    transport.connection("connected");
+    transport.hello({
+      versions: ["interaction_v1"],
+      robotId: "robot-1",
+      namespace: "/custom",
+    });
+    transport.pending({ kind: "snapshot", requests: [], knownIds: [] });
+    transport.requested(request("custom", { namespace: "/custom" }));
+    transport.requested(request("transport-namespace"));
+    await flush();
+    expect(entries(client)["custom"]?.status).toBe("pending");
+    expect(entries(client)["transport-namespace"]).toBeUndefined();
+    client.dispose();
+  });
+
+  it("copies closed answeredBy and answeredAt into the entry", async () => {
+    const { transport, client } = setup();
+    await synchronize(transport);
+    transport.requested(request("answered"));
+    await flush();
+    transport.closed({
+      interactionId: "answered",
+      terminalReason: "answered",
+      answeredBy: "Bob",
+      answeredAt: NOW + 123,
+    });
+    await flush();
+    expect(entries(client)["answered"]).toMatchObject({
+      status: "closed",
+      terminalReason: "answered",
+      answeredBy: "Bob",
+      answeredAt: NOW + 123,
+    });
+    client.dispose();
+  });
+
+  it("revives an accepted entry when a pending snapshot still contains it", async () => {
+    const { transport, client } = setup();
+    await synchronize(transport);
+    transport.requested(request("answer"));
+    await flush();
+    client.respond("answer", { status: "answered", answer: "yes" });
+    transport.ack({ interactionId: "answer", status: "accepted" });
+    await flush();
+    expect(entries(client)["answer"]?.status).toBe("accepted");
+
+    transport.pending({
+      kind: "snapshot",
+      requests: [request("answer")],
+      knownIds: ["answer"],
+    });
+    await flush();
+    expect(entries(client)["answer"]?.status).toBe("pending");
+    expect(entries(client)["answer"]?.staleReason).toBeUndefined();
+    client.dispose();
+  });
+
   it("enforces the live queue limit", async () => {
     const { transport, client, errors } = setup();
     await synchronize(transport);
@@ -451,6 +596,8 @@ describe("InteractionClient responses", () => {
       staleReason: "ack_timeout",
       attempt: 1,
     });
+    // Ack loss never auto-resends the response frame.
+    expect(transport.responses).toHaveLength(1);
 
     expect(client.respond("answer", { status: "cancelled" })).toBe(true);
     transport.ack({ interactionId: "answer", status: "accepted" });

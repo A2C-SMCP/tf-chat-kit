@@ -31,6 +31,11 @@ export const INTERACTION_MAX_OPTION_DESCRIPTION_CHARACTERS = 4_096;
 export const INTERACTION_MAX_OPTIONS = 50;
 export const INTERACTION_MAX_SELECTED_OPTIONS = 50;
 export const INTERACTION_MAX_DISPLAY_TEXT_CHARACTERS = 32 * 1_024;
+/** Shared upload budget for early frames before a consumer attaches. */
+export const INTERACTION_MAX_EARLY_FRAMES = 50;
+/** Defensive envelope caps; the Server sends at most 10 pending interactions. */
+export const INTERACTION_MAX_PENDING_ITEMS = 100;
+export const INTERACTION_MAX_VERSIONS = 32;
 /** Retained name for display text; the wire caps are the specific constants. */
 export const INTERACTION_MAX_TEXT_CHARACTERS =
   INTERACTION_MAX_DISPLAY_TEXT_CHARACTERS;
@@ -145,7 +150,8 @@ export interface InteractionTransportObserver {
 export interface InteractionTransportAttachment {
   /**
    * Sends one response on the shared channel. The callback receives a
-   * validated ack, or undefined when the ack was missing or invalid.
+   * validated ack, or undefined when the ack was missing, timed out or
+   * invalid. It is invoked at most once.
    */
   respond(
     response: InteractionResponse,
@@ -156,15 +162,26 @@ export interface InteractionTransportAttachment {
 }
 
 /**
+ * Alias used by the Issue text: the per-consumer channel handle is the
+ * attachment returned by attachInteraction.
+ */
+export type InteractionChannel = InteractionTransportAttachment;
+
+/**
  * Instance-scoped interaction channel consumed by Runtime. Attach may happen
  * before the socket connects; the transport buffers early frames until a
- * consumer is attached. Runtime never sees Socket.IO names or namespaces.
+ * consumer is attached. Runtime never sees Socket.IO names or namespaces;
+ * `namespace` is an opaque expected identity supplied by the implementation.
  */
 export interface InteractionTransport {
   readonly clock: RemoteToolClock;
+  /** Expected wire namespace, when the implementation can assert it. */
+  readonly namespace?: string | undefined;
   attachInteraction(
     observer: InteractionTransportObserver,
   ): InteractionTransportAttachment;
+  /** Optional explicit recovery after a terminal transport failure. */
+  retry?(): void;
 }
 
 const optionalText = (maximum = INTERACTION_MAX_DISPLAY_TEXT_CHARACTERS) =>
@@ -182,7 +199,10 @@ const optionalId = z
   .transform((value) => (value == null ? undefined : String(value)));
 
 const conversationId = z
-  .union([z.string().min(1), z.number()])
+  .union([
+    z.string().min(1).max(INTERACTION_MAX_ID_CHARACTERS),
+    z.number().finite(),
+  ])
   .transform((value) => String(value));
 
 const interactionOptionParser: z.ZodType<InteractionOption> = z.object({
@@ -239,7 +259,7 @@ export const interactionRequestSchema = createRuntimeSchema<InteractionRequest>(
 
 const interactionPendingEnvelopeWireParser = z.object({
   protocolVersion: z.number(),
-  interactions: z.array(z.unknown()),
+  interactions: z.array(z.unknown()).max(INTERACTION_MAX_PENDING_ITEMS),
 });
 
 export const interactionPendingEnvelopeSchema = createRuntimeSchema<{
@@ -252,7 +272,10 @@ export const interactionPendingEnvelopeSchema = createRuntimeSchema<{
 
 const interactionHelloServerWireParser = z.object({
   protocolVersion: z.number(),
-  versions: z.array(z.string()).default([]),
+  versions: z
+    .array(z.string().max(64))
+    .max(INTERACTION_MAX_VERSIONS)
+    .default([]),
   robotId: z.string().min(1).max(INTERACTION_MAX_ID_CHARACTERS),
   namespace: z.string().min(1).max(INTERACTION_MAX_ID_CHARACTERS),
 });
@@ -268,7 +291,7 @@ export const interactionHelloClientPayloadSchema =
   createRuntimeSchema<InteractionClientHelloPayload>(
     z.object({
       protocolVersion: z.number(),
-      versions: z.array(z.string()),
+      versions: z.array(z.string().max(64)).max(INTERACTION_MAX_VERSIONS),
       supportsAskUserAdapter: z.boolean(),
     }),
   );

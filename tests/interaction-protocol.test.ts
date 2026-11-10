@@ -94,6 +94,29 @@ describe("Interaction wire contract", () => {
         options: [{ value: "" }],
       }).success,
     ).toBe(false);
+    expect(
+      interactionRequestSchema.safeParse({
+        ...requested,
+        conversationId: "c".repeat(1_025),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("caps snapshot and hello envelopes defensively", () => {
+    expect(
+      interactionPendingEnvelopeSchema.safeParse({
+        protocolVersion: 1,
+        interactions: Array.from({ length: 101 }, () => ({})),
+      }).success,
+    ).toBe(false);
+    expect(
+      interactionHelloServerSchema.safeParse({
+        protocolVersion: 1,
+        versions: Array.from({ length: 33 }, () => "interaction_v1"),
+        robotId: "robot-1",
+        namespace: "/remote-tool",
+      }).success,
+    ).toBe(false);
   });
 
   it("recognizes only the supported protocol version", () => {

@@ -46,13 +46,25 @@ export const createTFRobotChatClient = (
 
 export interface TFRobotRemoteToolClientOptions
   extends
-    TFRobotRemoteToolOptions,
+    Omit<TFRobotRemoteToolOptions, "supportsAskUserAdapter">,
     Omit<RemoteToolClientOptions, "transport"> {}
 
-/** Explicitly owned optional provider; dispose it when the host session ends. */
+/**
+ * Explicitly owned optional provider; dispose it when the host session ends.
+ * This standalone client never sends interaction_hello, so
+ * `supportsAskUserAdapter` is not part of its options. Use
+ * createTFRobotRemoteToolInteractionBundle when interaction is needed.
+ */
 export const createTFRobotRemoteToolClient = (
   options: TFRobotRemoteToolClientOptions,
 ): RemoteToolClient => {
+  if (
+    (options as { readonly supportsAskUserAdapter?: unknown })
+      .supportsAskUserAdapter !== undefined
+  )
+    throw new TypeError(
+      "supportsAskUserAdapter requires an interaction consumer; use createTFRobotRemoteToolInteractionBundle",
+    );
   const {
     tools,
     timeoutMs,
@@ -80,12 +92,22 @@ export interface TFRobotInteractionClientOptions
 /**
  * Creates an interaction-only client. It attaches before the shared
  * `/remote-tool` socket connects and does not require any RemoteTool.
+ *
+ * When the host already owns a RemoteToolClient (or a shared socketFactory),
+ * use createTFRobotRemoteToolInteractionBundle instead. Two independent
+ * clients would each acquire the `/remote-tool` namespace and trigger
+ * "Socket namespace already has an owner".
+ *
+ * Terminal transport failures surface through onFrameError and require
+ * retry() or recreating the client.
  */
 export const createTFRobotInteractionClient = (
   options: TFRobotInteractionClientOptions,
 ): InteractionClient => {
   const {
     robotId,
+    acceptServerIdentity,
+    expectedNamespace,
     ackTimeoutMs,
     tickIntervalMs,
     helloFlushGraceMs,
@@ -99,6 +121,8 @@ export const createTFRobotInteractionClient = (
   const client = createInteractionClient({
     transport,
     robotId,
+    ...(acceptServerIdentity === undefined ? {} : { acceptServerIdentity }),
+    ...(expectedNamespace === undefined ? {} : { expectedNamespace }),
     ...(ackTimeoutMs === undefined ? {} : { ackTimeoutMs }),
     ...(tickIntervalMs === undefined ? {} : { tickIntervalMs }),
     ...(helloFlushGraceMs === undefined ? {} : { helloFlushGraceMs }),
@@ -131,7 +155,10 @@ export interface TFRobotRemoteToolInteractionBundle {
 /**
  * Creates one `/remote-tool` owner shared by RemoteTool and interaction.
  * Disposing either client only detaches that consumer; the bundle owns the
- * socket and closes it after both consumers are gone.
+ * socket and closes it after both consumers are gone. Hosts that already have
+ * a RemoteToolClient must replace it with this bundle (or otherwise share one
+ * transport); a second independent client would contend for the namespace
+ * owner and throw "Socket namespace already has an owner".
  */
 export const createTFRobotRemoteToolInteractionBundle = (
   options: TFRobotRemoteToolInteractionOptions,

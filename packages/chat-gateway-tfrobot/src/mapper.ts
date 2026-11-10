@@ -8,6 +8,11 @@ import {
   chatErrorSchema,
   chatSnapshotSchema,
   chatUpdateSchema,
+  INTERACTION_MAX_ANSWER_CHARACTERS,
+  INTERACTION_MAX_DISPLAY_TEXT_CHARACTERS,
+  INTERACTION_MAX_ID_CHARACTERS,
+  INTERACTION_MAX_OPTION_VALUE_CHARACTERS,
+  INTERACTION_MAX_QUESTION_CHARACTERS,
   compareAgentEventTransitions,
   compareTimelineItems,
   conversationSchema,
@@ -712,45 +717,52 @@ const colleagueParameters = (
   return { params: isRecord(parsed) ? parsed : {}, raw };
 };
 
-const colleagueText = (value: unknown): string | undefined => {
+const boundedText = (value: unknown, maximum: number): string | undefined =>
+  stringValue(value)?.slice(0, maximum);
+
+const colleagueText = (value: unknown, maximum: number): string | undefined => {
   if (Array.isArray(value)) {
     const values = value.flatMap((entry) => {
-      const text = displayStringValue(entry);
+      const text = boundedText(entry, INTERACTION_MAX_OPTION_VALUE_CHARACTERS);
       return text === undefined ? [] : [text];
     });
-    return values.length === 0 ? undefined : values.join("、");
+    return values.length === 0
+      ? undefined
+      : values.join("、").slice(0, maximum);
   }
-  return displayStringValue(value);
+  return boundedText(value, maximum);
 };
 
 const colleagueQuestion = (
   params: Record<string, unknown>,
   raw: unknown,
+  maximum: number,
 ): string | undefined => {
-  const direct = displayStringValue(params["question"]);
+  const direct = boundedText(params["question"], maximum);
   if (direct !== undefined) return direct;
   if (typeof raw !== "string") return undefined;
   const match = /["']?question["']?\s*[:=]\s*["']([^"']+)["']/u.exec(raw);
-  return match?.[1] === undefined ? undefined : displayStringValue(match[1]);
+  return match?.[1] === undefined ? undefined : boundedText(match[1], maximum);
 };
 
 const colleagueAnswer = (
   params: Record<string, unknown>,
   raw: unknown,
+  maximum: number,
 ): string | undefined => {
-  const direct = displayStringValue(params["answer"]);
+  const direct = boundedText(params["answer"], maximum);
   if (direct !== undefined) return direct;
   const selected = params["selected_options"] ?? params["selectedOptions"];
   if (Array.isArray(selected)) {
     const values = selected.flatMap((value) => {
-      const entry = displayStringValue(value);
+      const entry = boundedText(value, INTERACTION_MAX_OPTION_VALUE_CHARACTERS);
       return entry === undefined ? [] : [entry];
     });
-    if (values.length > 0) return values.join("、");
+    if (values.length > 0) return values.join("、").slice(0, maximum);
   }
   if (typeof raw !== "string") return undefined;
   const match = /["']?answer["']?\s*[:=]\s*["']([^"']+)["']/u.exec(raw);
-  return match?.[1] === undefined ? undefined : displayStringValue(match[1]);
+  return match?.[1] === undefined ? undefined : boundedText(match[1], maximum);
 };
 
 const mapInteractionHistory = (
@@ -766,19 +778,30 @@ const mapInteractionHistory = (
   if (direction === undefined) return undefined;
   const data = colleagueReturnData(toolReturn);
   if (data === undefined) return undefined;
-  const status = displayStringValue(data["status"]);
-  const error = displayStringValue(data["error"]);
+  const status = boundedText(
+    data["status"],
+    INTERACTION_MAX_DISPLAY_TEXT_CHARACTERS,
+  );
+  const error = boundedText(
+    data["error"],
+    INTERACTION_MAX_DISPLAY_TEXT_CHARACTERS,
+  );
   if (status === undefined && error === undefined) return undefined;
   const { params, raw } = colleagueParameters(functionCall);
-  const interactionId = (
-    displayStringValue(data["interactionId"]) ??
-    displayStringValue(toolCall?.["toolId"])
-  )?.slice(0, 1_024);
+  const interactionId =
+    boundedText(data["interactionId"], INTERACTION_MAX_ID_CHARACTERS) ??
+    boundedText(toolCall?.["toolId"], INTERACTION_MAX_ID_CHARACTERS);
   if (interactionId === undefined) return undefined;
   const question =
-    displayStringValue(data["question"]) ?? colleagueQuestion(params, raw);
-  const answer = colleagueText(data["answer"]) ?? colleagueAnswer(params, raw);
-  const answeredBy = displayStringValue(data["answeredBy"]);
+    boundedText(data["question"], INTERACTION_MAX_QUESTION_CHARACTERS) ??
+    colleagueQuestion(params, raw, INTERACTION_MAX_QUESTION_CHARACTERS);
+  const answer =
+    colleagueText(data["answer"], INTERACTION_MAX_ANSWER_CHARACTERS) ??
+    colleagueAnswer(params, raw, INTERACTION_MAX_ANSWER_CHARACTERS);
+  const answeredBy = boundedText(
+    data["answeredBy"],
+    INTERACTION_MAX_DISPLAY_TEXT_CHARACTERS,
+  );
   const parsed = interactionHistorySchema.safeParse({
     kind: "interaction-history",
     interactionId,

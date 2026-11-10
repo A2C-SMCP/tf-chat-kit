@@ -4,7 +4,9 @@ import {
   INTERACTION_MAX_QUESTION_CHARACTERS,
   createInteractionResponsePayload,
   createTFRobotInteractionClient,
+  createTFRobotRemoteToolClient,
   createTFRobotRemoteToolInteractionBundle,
+  createTFRobotSocketConnection,
   defineRemoteTool,
   type SessionProvider,
 } from "../packages/chat-kit/src/headless.js";
@@ -295,5 +297,114 @@ describe("interaction public factories", () => {
     bundle.remoteTools!.dispose();
     expect(socket.connected).toBe(false);
     bundle.dispose();
+  });
+
+  it("rejects supportsAskUserAdapter on the standalone RemoteTool client", () => {
+    expect(() =>
+      createTFRobotRemoteToolClient({
+        baseUrl: "https://robot.example/",
+        sessionProvider,
+        tools: [
+          defineRemoteTool({
+            definition: {
+              toolName: "host_tool",
+              description: "Host operation",
+              parameters: { type: "object" },
+              tags: ["Read"],
+            },
+            validate: (params) => params,
+            execute: () => ({ ok: true, resultForLlm: "done" }),
+          }),
+        ],
+        supportsAskUserAdapter: true,
+      } as never),
+    ).toThrow(/supportsAskUserAdapter/);
+  });
+
+  it("shows why a second client on a shared socketFactory is rejected", () => {
+    const connection = createTFRobotSocketConnection({
+      serverUrl: "https://robot.example",
+    });
+    try {
+      connection.socketFactory({
+        namespaceUrl: "https://robot.example/remote-tool",
+        path: "/socket.io",
+        getAuth: async () => ({}),
+      });
+      expect(() =>
+        createTFRobotInteractionClient({
+          baseUrl: "https://robot.example/",
+          sessionProvider,
+          socketFactory: connection.socketFactory,
+          robotId: "robot-1",
+        }),
+      ).toThrow("Socket namespace already has an owner");
+    } finally {
+      connection.dispose();
+    }
+  });
+
+  it("can opt into the server-asserted identity through the factory", async () => {
+    const { sockets, socketFactory } = createFixture();
+    const client = createTFRobotInteractionClient({
+      baseUrl: "https://robot.example/",
+      sessionProvider,
+      socketFactory,
+      robotId: "robot-1",
+      acceptServerIdentity: true,
+    });
+    const socket = sockets[0]!;
+    socket.trigger("interaction_hello", {
+      protocolVersion: 1,
+      versions: ["interaction_v1"],
+      robotId: "robot-2",
+      namespace: "/remote-tool",
+    });
+    socket.trigger("interaction_pending", {
+      protocolVersion: 1,
+      interactions: [],
+    });
+    socket.trigger("interaction_requested", {
+      ...request(),
+      protocolVersion: 1,
+      robotId: "robot-2",
+    });
+    await flush();
+    expect(client.getSnapshot().entries["interaction-1"]?.status).toBe(
+      "pending",
+    );
+    client.dispose();
+  });
+
+  it("passes expectedNamespace through the factory", async () => {
+    const { sockets, socketFactory } = createFixture();
+    const client = createTFRobotInteractionClient({
+      baseUrl: "https://robot.example/",
+      sessionProvider,
+      socketFactory,
+      robotId: "robot-1",
+      expectedNamespace: "/custom",
+    });
+    const socket = sockets[0]!;
+    socket.trigger("interaction_hello", {
+      protocolVersion: 1,
+      versions: ["interaction_v1"],
+      robotId: "robot-1",
+      namespace: "/custom",
+    });
+    socket.trigger("interaction_pending", {
+      protocolVersion: 1,
+      interactions: [],
+    });
+    socket.trigger("interaction_requested", {
+      ...request(),
+      protocolVersion: 1,
+      namespace: "/custom",
+    });
+    await flush();
+    expect(client.getSnapshot().entries["interaction-1"]?.status).toBe(
+      "pending",
+    );
+    client.dispose();
   });
 });
