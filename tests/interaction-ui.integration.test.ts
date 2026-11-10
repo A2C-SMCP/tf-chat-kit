@@ -385,6 +385,120 @@ describe("InteractionProvider", () => {
     first.client.dispose();
     second.client.dispose();
   });
+
+  it("clears a mounted card draft when an unscoped client is replaced", async () => {
+    const first = setup();
+    const second = setup();
+    await synchronize(first.transport);
+    await synchronize(second.transport);
+    const shared = request("same-id", { question: "Same question" });
+    await push(first.transport, shared);
+    await push(second.transport, shared);
+    const view = await render(
+      createElement(
+        InteractionProvider,
+        { client: first.client },
+        createElement(InteractionQueue, { labels: defaultChatUiLabels }),
+      ),
+    );
+    const other = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Other"]',
+    )!;
+    await setValue(other, "old secret draft");
+    expect(other.value).toBe("old secret draft");
+
+    await act(async () => {
+      view.root.render(
+        createElement(
+          InteractionProvider,
+          { client: second.client },
+          createElement(InteractionQueue, { labels: defaultChatUiLabels }),
+        ),
+      );
+      await flush();
+    });
+    const replacement = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Other"]',
+    )!;
+    expect(replacement.value).toBe("");
+    const submit = findButton(document, "Submit answers");
+    expect(submit.disabled).toBe(true);
+    await act(async () => {
+      submit.click();
+      await flush();
+    });
+    expect(second.transport.responses).toHaveLength(0);
+    await view.unmount();
+    first.client.dispose();
+    second.client.dispose();
+  });
+
+  it("keeps drafts across a same-scope client rebuild and clears them on scope change", async () => {
+    const first = setup();
+    const second = setup();
+    await synchronize(first.transport);
+    await synchronize(second.transport);
+    const shared = request("same-id", { question: "Same question" });
+    await push(first.transport, shared);
+    await push(second.transport, shared);
+    const queue = () =>
+      createElement(InteractionQueue, { labels: defaultChatUiLabels });
+    const view = await render(
+      createElement(
+        InteractionProvider,
+        { client: first.client, scope: "identity-a" },
+        queue(),
+      ),
+    );
+    const other = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Other"]',
+    )!;
+    await setValue(other, "keep this draft");
+
+    await act(async () => {
+      view.root.render(
+        createElement(
+          InteractionProvider,
+          { client: second.client, scope: "identity-a" },
+          queue(),
+        ),
+      );
+      await flush();
+    });
+    expect(
+      document.querySelector<HTMLInputElement>('input[aria-label="Other"]')
+        ?.value,
+    ).toBe("keep this draft");
+    await act(async () => {
+      findButton(document, "Submit answers").click();
+      await flush();
+    });
+    expect(second.transport.responses).toEqual([
+      expect.objectContaining({
+        answer: "keep this draft",
+        interactionId: "same-id",
+        status: "answered",
+      }),
+    ]);
+
+    await act(async () => {
+      view.root.render(
+        createElement(
+          InteractionProvider,
+          { client: second.client, scope: "identity-b" },
+          queue(),
+        ),
+      );
+      await flush();
+    });
+    expect(
+      document.querySelector<HTMLInputElement>('input[aria-label="Other"]')
+        ?.value,
+    ).toBe("");
+    await view.unmount();
+    first.client.dispose();
+    second.client.dispose();
+  });
 });
 
 describe("InteractionCard", () => {
@@ -429,6 +543,29 @@ describe("InteractionCard", () => {
       status: "answered",
       selectedOptions: ["yes"],
     });
+    await rendered.unmount();
+    client.dispose();
+  });
+
+  it("resolves partial copy overrides with the built-in defaults", async () => {
+    const { client, transport } = setup();
+    await synchronize(transport);
+    await push(transport, request("labels"));
+    const view = client.getSnapshot().entries["labels"]!;
+    const rendered = await render(
+      createElement(InteractionCard, {
+        connection: "connected",
+        labels: { askUserSubmit: "Send it" },
+        now: client.getSnapshot().now,
+        onRespond: () => true,
+        view,
+      }),
+    );
+    expect(findButton(rendered.container, "Send it")).toBeDefined();
+    expect(findButton(rendered.container, "Cancel")).toBeDefined();
+    expect(
+      rendered.container.querySelector('[aria-label="Time remaining"]'),
+    ).not.toBeNull();
     await rendered.unmount();
     client.dispose();
   });
@@ -1043,6 +1180,7 @@ describe("InteractionHistoryView", () => {
           question: "Deploy now?",
           answer: "Yes",
           answeredBy: "Alice",
+          answeredAt: NOW,
           error: "boom",
         },
         labels: defaultChatUiLabels,
@@ -1052,6 +1190,10 @@ describe("InteractionHistoryView", () => {
     expect(rendered.container.textContent).toContain("Deploy now?");
     expect(rendered.container.textContent).toContain("Yes");
     expect(rendered.container.textContent).toContain("Alice");
+    expect(rendered.container.textContent).toContain("Answered at");
+    expect(
+      rendered.container.querySelector("time")?.getAttribute("datetime"),
+    ).toBe(new Date(NOW).toISOString());
     expect(rendered.container.textContent).toContain("boom");
     await rendered.unmount();
   });
@@ -1082,6 +1224,7 @@ describe("InteractionHistoryView", () => {
             question: "History question",
             answer: "History answer",
             answeredBy: "Alice",
+            answeredAt: NOW,
           },
         },
       ],
@@ -1230,6 +1373,46 @@ describe("default workspaces", () => {
     chatClient.dispose({ deadlineAt: deadlineAt() });
   });
 
+  it("uses the global modal when ChatWorkspace hides the conversation surface", async () => {
+    const memory = createMemoryChatGateway();
+    const { client: chatClient } = await createLoadedClient(memory);
+    const { client: interaction, transport } = setup();
+    await synchronize(transport);
+    const rendered = await render(
+      createElement(
+        ChatProvider,
+        { client: chatClient },
+        createElement(ChatWorkspace, {
+          getDeadlineAt: deadlineAt,
+          initialSelection: "first",
+          interactionClient: interaction,
+          interactionInlineVisible: false,
+        }),
+      ),
+    );
+    await act(async () => {
+      await flushMicrotasks();
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    });
+    await push(
+      transport,
+      request("inline", {
+        conversationId: memory.fixtures.conversation.id,
+        question: "Hidden workspace question",
+      }),
+    );
+    await act(async () => {
+      await flushMicrotasks();
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    });
+    const cards = document.querySelectorAll('[data-interaction-id="inline"]');
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.closest(".ant-modal")).not.toBeNull();
+    await rendered.unmount();
+    interaction.dispose();
+    chatClient.dispose({ deadlineAt: deadlineAt() });
+  });
+
   it("uses the global modal while ChatCompactWorkspace is fresh", async () => {
     const memory = createMemoryChatGateway();
     const { client: chatClient } = await createLoadedClient(memory);
@@ -1304,9 +1487,12 @@ describe("default workspaces", () => {
     chatClient.dispose({ deadlineAt: deadlineAt() });
   });
 
-  it("does not inherit an outer provider into the default workspace", async () => {
-    const memory = createMemoryChatGateway();
+  it("inherits an outer provider for legacy suppression and leaves the queue to the host", async () => {
+    const memory = createMemoryChatGateway({
+      fixtures: createChatContractFixtures({ answerInteraction: true }),
+    });
     const { client: chatClient } = await createLoadedClient(memory);
+    const askUser = createFakeAskUser(legacyEntries(memory));
     const { client: interaction, transport } = setup();
     await synchronize(transport);
     await push(
@@ -1322,7 +1508,7 @@ describe("default workspaces", () => {
         { client: interaction },
         createElement(
           ChatProvider,
-          { client: chatClient },
+          { askUser, client: chatClient },
           createElement(ChatWorkspace, {
             getDeadlineAt: deadlineAt,
             initialSelection: "first",
@@ -1337,6 +1523,8 @@ describe("default workspaces", () => {
       await flushMicrotasks();
       await new Promise<void>((resolve) => setTimeout(resolve, 50));
     });
+    expect(rendered.container.textContent).not.toContain("Need your input");
+    expect(rendered.container.textContent).toContain("Ask User · answered");
     const cards = document.querySelectorAll('[data-interaction-id="inline"]');
     expect(cards).toHaveLength(1);
     expect(cards[0]?.closest(".ant-modal")).not.toBeNull();

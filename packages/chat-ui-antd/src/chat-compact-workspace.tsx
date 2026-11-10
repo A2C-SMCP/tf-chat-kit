@@ -55,6 +55,8 @@ export interface ChatCompactWorkspaceProps {
   readonly getDeadlineAt: () => number;
   /** Host-owned Interaction client; appears in the inline card and global queue. */
   readonly interactionClient?: InteractionClient | null | undefined;
+  /** Draft scope; drafts are discarded when this changes. */
+  readonly interactionScope?: string | undefined;
   /**
    * Whether the conversation view is actually visible. When false, the queue
    * uses the global Modal instead of assuming an inline card is on screen.
@@ -103,6 +105,7 @@ export function ChatCompactWorkspace({
   locale = "zh-CN",
   getDeadlineAt,
   interactionClient,
+  interactionScope,
   interactionInlineVisible = true,
   header,
   moreActions = [],
@@ -339,7 +342,7 @@ export function ChatCompactWorkspace({
       navigationTrigger.current.focus({ preventScroll: true });
   }, [page]);
   return (
-    <InteractionProvider client={interactionClient ?? null}>
+    <InteractionProvider client={interactionClient} scope={interactionScope}>
       <div
         ref={root}
         onKeyDownCapture={(event) => {

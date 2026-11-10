@@ -5,6 +5,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
@@ -42,6 +43,11 @@ export interface InteractionQueueState {
   readonly connection: InteractionClientSnapshot["connection"];
   readonly now: number;
   readonly liveCount: number;
+  /**
+   * Increments when the client or draft scope changes. Consumers include it in
+   * card keys so a mounted editor cannot submit old input to a new client.
+   */
+  readonly clientGeneration: number;
   readonly activate: (interactionId: string) => void;
   readonly respond: (
     interactionId: string,
@@ -60,6 +66,7 @@ const EMPTY_QUEUE_STATE: InteractionQueueState = Object.freeze({
   connection: "disconnected",
   now: 0,
   liveCount: 0,
+  clientGeneration: 0,
   activate: () => undefined,
   respond: () => false,
   getDraft: () => undefined,
@@ -82,16 +89,38 @@ export interface InteractionProviderProps {
    * `null` explicitly disables interaction UI for this subtree.
    */
   readonly client?: InteractionClient | null | undefined;
+  /**
+   * Opaque host identity scope for answer drafts (for example
+   * `managerChatIdentityScope(identity)`). Drafts are discarded when it
+   * changes, so an answer typed for one account, organization or robot is
+   * never submitted under another. When omitted, drafts are scoped to the
+   * client instance and discarded when that instance changes.
+   */
+  readonly scope?: string | undefined;
   readonly children?: ReactNode | undefined;
+}
+
+interface StoredDraft {
+  /** Client instance or identity scope; compared by reference/equality. */
+  readonly key: unknown;
+  readonly draft: InteractionDraft;
 }
 
 const InteractionQueueSubscriber = ({
   client,
+  scope,
+  generation,
   children,
 }: {
   readonly client: InteractionClient;
+  readonly scope: string | undefined;
+  readonly generation: number;
   readonly children?: ReactNode | undefined;
 }) => {
+  // Same identity + new client keeps drafts; a new identity or an unscoped
+  // client replacement never exposes an old draft.
+  const draftKey: unknown = scope === undefined ? client : scope;
+  const drafts = useRef(new Map<string, StoredDraft>());
   const subscribe = useCallback(
     (onStoreChange: () => void) => client.subscribe(onStoreChange),
     [client],
@@ -114,32 +143,32 @@ const InteractionQueueSubscriber = ({
       client.respond(interactionId, input),
     [client],
   );
-  const drafts = useRef(new Map<string, InteractionDraft>());
-  const previousClient = useRef(client);
-  if (previousClient.current !== client) {
-    previousClient.current = client;
-    drafts.current.clear();
-  }
   useEffect(() => {
     const liveIds = new Set(
       Object.values(snapshot.entries)
         .filter((entry) => entry.status !== "closed")
         .map((entry) => entry.interactionId),
     );
-    for (const interactionId of drafts.current.keys()) {
-      if (!liveIds.has(interactionId)) drafts.current.delete(interactionId);
+    for (const [interactionId, stored] of drafts.current) {
+      if (stored.key !== draftKey || !liveIds.has(interactionId))
+        drafts.current.delete(interactionId);
     }
-  }, [snapshot.entries]);
+  }, [draftKey, snapshot.entries]);
   const getDraft = useCallback(
-    (interactionId: string) => drafts.current.get(interactionId),
-    [],
+    (interactionId: string): InteractionDraft | undefined => {
+      const stored = drafts.current.get(interactionId);
+      return stored !== undefined && stored.key === draftKey
+        ? stored.draft
+        : undefined;
+    },
+    [draftKey],
   );
   const setDraft = useCallback(
     (interactionId: string, draft: InteractionDraft | undefined): void => {
       if (draft === undefined) drafts.current.delete(interactionId);
-      else drafts.current.set(interactionId, draft);
+      else drafts.current.set(interactionId, { draft, key: draftKey });
     },
-    [],
+    [draftKey],
   );
   const queue = useMemo<InteractionQueueState>(() => {
     const live = Object.values(snapshot.entries).filter(
@@ -160,12 +189,13 @@ const InteractionQueueSubscriber = ({
       connection: snapshot.connection,
       now: snapshot.now,
       liveCount: live.length,
+      clientGeneration: generation,
       activate,
       respond,
       getDraft,
       setDraft,
     };
-  }, [activate, getDraft, respond, setDraft, snapshot]);
+  }, [activate, generation, getDraft, respond, setDraft, snapshot]);
 
   return (
     <InteractionQueueContext.Provider value={queue}>
@@ -180,6 +210,7 @@ const InteractionQueueSubscriber = ({
  */
 export const InteractionProvider = ({
   client,
+  scope,
   children,
 }: InteractionProviderProps) => {
   const parent = useContext(InteractionClientContext);
@@ -188,6 +219,18 @@ export const InteractionProvider = ({
     () => ({ client: resolved }),
     [resolved],
   );
+  const draftKey: unknown =
+    resolved === null ? null : scope === undefined ? resolved : scope;
+  const [clientKeyState, setClientKeyState] = useState<{
+    key: unknown;
+    generation: number;
+  }>(() => ({ key: draftKey, generation: 0 }));
+  if (clientKeyState.key !== draftKey) {
+    setClientKeyState({
+      key: draftKey,
+      generation: clientKeyState.generation + 1,
+    });
+  }
 
   return (
     <InteractionClientContext.Provider value={value}>
@@ -196,7 +239,11 @@ export const InteractionProvider = ({
           {children}
         </InteractionQueueContext.Provider>
       ) : (
-        <InteractionQueueSubscriber client={resolved}>
+        <InteractionQueueSubscriber
+          client={resolved}
+          generation={clientKeyState.generation}
+          scope={scope}
+        >
           {children}
         </InteractionQueueSubscriber>
       )}

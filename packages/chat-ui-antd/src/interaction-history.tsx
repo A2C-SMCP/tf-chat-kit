@@ -44,6 +44,14 @@ export const InteractionHistoryView = ({
         {history.answeredBy}
       </Typography.Text>
     )}
+    {history.answeredAt === undefined ? null : (
+      <Typography.Text type="secondary">
+        {labels.interactionHistoryAnsweredAt ?? "Answered at"}:{" "}
+        <time dateTime={new Date(history.answeredAt).toISOString()}>
+          {new Date(history.answeredAt).toLocaleString()}
+        </time>
+      </Typography.Text>
+    )}
     {history.error === undefined ? null : (
       <Typography.Text type="danger">
         {labels.interactionHistoryError ?? "Error"}: {history.error}

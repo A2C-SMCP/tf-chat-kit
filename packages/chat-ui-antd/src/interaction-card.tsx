@@ -19,13 +19,15 @@ import type {
   InteractionView,
 } from "@turingfocus/chat-react";
 
-import type { ChatUiLabels } from "./types.js";
+import { resolveChatUiLabels } from "./labels.js";
+import type { ChatUiLabelOverrides, ChatUiLabels } from "./types.js";
 
 export interface InteractionCardProps {
   readonly view: InteractionView;
   readonly connection: InteractionClientSnapshot["connection"];
   readonly now: number;
-  readonly labels: ChatUiLabels;
+  /** Partial copy is resolved against the built-in English defaults. */
+  readonly labels?: ChatUiLabelOverrides | undefined;
   /** Restored UI draft; survives ack-timeout retries and inline/modal switches. */
   readonly draft?: InteractionDraft | undefined;
   readonly onDraftChange?: ((draft: InteractionDraft) => void) | undefined;
@@ -84,12 +86,13 @@ export const InteractionCard = ({
   view,
   connection,
   now,
-  labels,
+  labels: labelOverrides,
   draft,
   onDraftChange,
   onRespond,
 }: InteractionCardProps) => {
-  const [selected, setSelected] = useState<readonly string[]>(
+  const labels = resolveChatUiLabels(labelOverrides);
+  const [rawSelected, setSelected] = useState<readonly string[]>(
     draft?.selected ?? [],
   );
   const [customText, setCustomText] = useState(draft?.customText ?? "");
@@ -98,18 +101,37 @@ export const InteractionCard = ({
   onDraftChangeRef.current = onDraftChange;
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  const draftSignature =
+    draft === undefined
+      ? ""
+      : JSON.stringify([draft.selected, draft.customText]);
+  const publishedSignature = useRef(draftSignature);
+  const lastInteractionId = useRef(view.interactionId);
+
+  const options = view.options;
+  const optionValues = new Set(options.map((option) => option.value));
+  // A draft can outlive the options it was typed for (server edits, retries);
+  // never submit a stale value that the current question no longer offers.
+  const selected = rawSelected.filter((value) => optionValues.has(value));
 
   useEffect(() => {
+    publishedSignature.current = JSON.stringify([selected, customText]);
     onDraftChangeRef.current?.({ customText, selected });
   }, [customText, selected]);
   useEffect(() => {
+    const interactionChanged = lastInteractionId.current !== view.interactionId;
+    lastInteractionId.current = view.interactionId;
+    // The provider echoes the draft this card just published on the next
+    // snapshot; only an external draft/interaction change resets local state
+    // (and must not erase a submit error on a one-second tick).
+    if (!interactionChanged && draftSignature === publishedSignature.current)
+      return;
     const currentDraft = draftRef.current;
     setSelected(currentDraft?.selected ?? []);
     setCustomText(currentDraft?.customText ?? "");
     setError(null);
-  }, [view.interactionId]);
+  }, [draftSignature, view.interactionId]);
 
-  const options = view.options;
   const pending = view.status === "pending";
   const connected = connection === "connected";
   const disabled = !pending || !connected;
@@ -122,7 +144,10 @@ export const InteractionCard = ({
       setSelected((previous) =>
         previous.includes(value)
           ? previous.filter((candidate) => candidate !== value)
-          : [...previous, value],
+          : [
+              ...previous.filter((candidate) => optionValues.has(candidate)),
+              value,
+            ],
       );
       return;
     }

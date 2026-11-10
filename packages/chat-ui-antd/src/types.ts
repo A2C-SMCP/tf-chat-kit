@@ -152,6 +152,7 @@ export interface ChatUiLabels {
   readonly interactionHistoryAsk?: ReactNode | undefined;
   readonly interactionHistoryAnswer?: ReactNode | undefined;
   readonly interactionHistoryAnsweredBy?: string | undefined;
+  readonly interactionHistoryAnsweredAt?: string | undefined;
   readonly interactionHistoryError?: string | undefined;
   readonly capabilityUnavailableDescription: ReactNode;
   readonly capabilityUnavailableTitle: ReactNode;

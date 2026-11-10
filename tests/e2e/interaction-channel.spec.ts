@@ -1,77 +1,115 @@
-import path from "node:path";
+import { expect, test } from "@playwright/test";
+import { io, type Socket } from "socket.io-client";
 
 import {
-  expect,
-  test,
-  type APIRequestContext,
-  type Page,
-} from "@playwright/test";
+  MANAGER,
+  interaction,
+  mount,
+  reset,
+  waitForReady,
+} from "./fixtures/interaction-channel-helpers.js";
 
-const MANAGER =
-  process.env["TF_CHAT_MANAGER_ORIGIN"] ?? "http://127.0.0.1:4312";
-const HARNESS = `/@fs/${path.resolve(
-  "tests/e2e/fixtures/interaction-channel.ts",
-)}`;
-const CONVERSATION_ID = "conversation-contract";
+const SOCKET_PATH = "/c/tfrobot/tenant/robot-a/socket.io/";
 
-const interaction = (
-  interactionId: string,
-  question: string,
-  expiresAt: number,
-  conversationId = CONVERSATION_ID,
-) => ({
-  protocolVersion: 1,
-  interactionId,
-  conversationId,
-  conversationTitle: "E2E conversation",
-  robotId: "robot-a",
-  namespace: "/remote-tool",
-  requester: { id: "user-1", name: "Alice" },
-  target: { id: "user-2", kind: "human", name: "Bob" },
-  question,
-  options: [
-    { label: "Yes", value: "yes" },
-    { label: "No", value: "no" },
-  ],
-  multiSelect: false,
-  timeoutSeconds: 30,
-  expiresAt,
-});
-
-const mount = async (page: Page): Promise<void> => {
-  await page.goto("/");
-  await page.evaluate(
-    async ({ entry, origin }) => {
-      const harness = await import(/* @vite-ignore */ entry);
-      await harness.mount({ origin });
-    },
-    { entry: HARNESS, origin: MANAGER },
-  );
-};
-
-const reset = async (request: APIRequestContext): Promise<void> => {
-  await request.post(`${MANAGER}/__test/interaction-reset`);
-};
-
-const waitForReady = async (
-  request: APIRequestContext,
-  count: number,
-): Promise<void> => {
-  await expect
-    .poll(async () => {
-      const state = await (
-        await request.get(`${MANAGER}/__test/interaction-state`)
-      ).json();
-      return state.connections >= count && state.hellos.length >= count
-        ? count
-        : 0;
-    })
-    .toBe(count);
+const openInteractionSocket = (): {
+  readonly connected: Promise<void>;
+  readonly pending: Promise<{ readonly interactions: unknown[] }>;
+  readonly socket: Socket;
+} => {
+  const socket = io(`${MANAGER}/remote-tool`, {
+    auth: { token: "tool-browser" },
+    path: SOCKET_PATH,
+    reconnection: false,
+    transports: ["websocket"],
+  });
+  return {
+    connected: new Promise<void>((resolve, reject) => {
+      socket.once("connect", () => resolve());
+      socket.once("connect_error", reject);
+    }),
+    pending: new Promise((resolve) =>
+      socket.once("interaction_pending", resolve),
+    ),
+    socket,
+  };
 };
 
 test.describe("Interaction channel UI", () => {
   test.beforeEach(async ({ request }) => {
     await reset(request);
+  });
+
+  test("the controlled server validates responses and never resurrects an answered item", async ({
+    request,
+  }) => {
+    const first = openInteractionSocket();
+    await first.connected;
+    try {
+      const invalidAck = await new Promise<unknown>((resolve) => {
+        first.socket.timeout(2_000).emit(
+          "interaction_response",
+          {
+            protocolVersion: 1,
+            interactionId: "invalid-1",
+            status: "answered",
+            answer: 42,
+          },
+          (error: unknown, ack: unknown) => resolve(error ?? ack),
+        );
+      });
+      expect(invalidAck).toMatchObject({ status: "unknown_request" });
+
+      const pendingInteraction = interaction(
+        "server-validated-1",
+        "Server validation question",
+        Date.now() + 30_000,
+      );
+      await request.post(`${MANAGER}/__test/interaction-options`, {
+        data: { pendingOnConnect: [pendingInteraction] },
+      });
+      const accepted = await new Promise<unknown>((resolve) => {
+        first.socket.timeout(2_000).emit(
+          "interaction_response",
+          {
+            protocolVersion: 1,
+            interactionId: "server-validated-1",
+            status: "answered",
+            selectedOptions: ["yes"],
+          },
+          (error: unknown, ack: unknown) => resolve(error ?? ack),
+        );
+      });
+      expect(accepted).toMatchObject({ status: "accepted" });
+      const after = await (
+        await request.get(`${MANAGER}/__test/interaction-state`)
+      ).json();
+      expect(after.responses).toEqual([
+        expect.objectContaining({ interactionId: "server-validated-1" }),
+      ]);
+      expect(after.pending).toEqual([]);
+    } finally {
+      first.socket.disconnect();
+    }
+
+    const second = openInteractionSocket();
+    await second.connected;
+    try {
+      expect(await second.pending).toMatchObject({ interactions: [] });
+      const unknownAck = await new Promise<unknown>((resolve) => {
+        second.socket.timeout(2_000).emit(
+          "interaction_response",
+          {
+            protocolVersion: 1,
+            interactionId: "missing-1",
+            status: "answered",
+          },
+          (error: unknown, ack: unknown) => resolve(error ?? ack),
+        );
+      });
+      expect(unknownAck).toMatchObject({ status: "unknown_request" });
+    } finally {
+      second.socket.disconnect();
+    }
   });
 
   test("two tabs receive the same question and the first answer closes both", async ({

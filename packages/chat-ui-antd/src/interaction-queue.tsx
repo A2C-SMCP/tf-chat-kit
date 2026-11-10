@@ -78,6 +78,7 @@ export const InteractionQueue = ({
     waiting,
     connection,
     now,
+    clientGeneration,
     activate,
     respond,
     getDraft,
@@ -214,8 +215,8 @@ export const InteractionQueue = ({
           <InteractionCard
             connection={connection}
             draft={getDraft(active.interactionId)}
-            key={active.interactionId}
-            labels={labels}
+            key={`${clientGeneration}:${active.interactionId}`}
+            labels={labelOverrides}
             now={now}
             onDraftChange={(draft) => setDraft(active.interactionId, draft)}
             onRespond={respond}

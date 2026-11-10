@@ -613,19 +613,29 @@ const bundle = createTFRobotRemoteToolInteractionBundle({
 ```
 
 工作区会渲染 `InteractionQueue`：当前会话的活跃问询内联在消息区上方，其他会话的活跃问询使用
-全局 Modal，其余待回答项进入浮动角标。默认工作区**只在显式传入 `interactionClient` 时**接入
-Interaction UI；它不会继承外层的 `InteractionProvider`，因此宿主若选择“外层 Provider +
-自己的 `InteractionQueue`”组合，工作区保持 legacy 路径，由宿主队列统一以全局 Modal 展示，
-不会出现内联与 Modal 双重渲染。使用默认工作区时推荐直接把 client 传给工作区或
-`ManagerChatApp`。
+全局 Modal，其余待回答项进入浮动角标。默认工作区**只在显式传入非 null `interactionClient`
+时**渲染内联卡片与队列；推荐直接把 client 传给工作区或 `ManagerChatApp`。若宿主选择“外层
+`InteractionProvider` + 自己的 `InteractionQueue`”组合，工作区的内层 Provider 会继承外层
+client 以抑制 legacy/Gateway pending，但工作区不渲染队列；队列、Modal 与 `inlineConversationId`
+由宿主统一负责。此时可通过 `conversationViewProps.interactionInline` 显式开启工作区内联，并
+仍由宿主的队列协调 `inlineConversationId`，避免同一活跃项重复展示。为兼容历史行为，
+`conversationViewProps.interactionInline` 默认在继承模式下关闭。
 
-`ManagerChatApp` 内置机器人/平台/账号切换。传入 `interactionClient` 时同时传
-`interactionIdentity`（创建该 client 时的环境、用户、账号、组织、机器人与平台身份）。
-`robotId` 必填且始终参与比较；其余字段未提供时视为通配。身份不匹配或变为 `undefined`
-（登出/身份丢失）时 `onChatIdentityChange` 也会触发，宿主应释放旧 client、创建新 client 后
-更新 props，默认 UI 会先停用旧 client，避免跨环境/用户/机器人串用。省略
-`interactionIdentity` 会关闭默认身份门控（fail-open），仅建议由宿主自己完整保证切换时使用。
-直接使用 `ChatWorkspace` 的宿主自行负责同样的切换与释放。
+`ManagerChatApp` 内置机器人/平台/账号切换。传入非 null `interactionClient` 时**必须**同时传
+`interactionIdentity`（创建该 client 时的环境、用户、账号、组织、机器人与平台身份）；否则
+`ManagerChatApp` 在渲染时抛出 `TypeError`。确需无身份 client 时必须显式设置
+`allowUnscopedInteractionClient`。`robotId` 必填且始终参与比较；其余字段默认也必须精确匹配，
+只有显式设置 `allowWildcardInteractionIdentity` 时才把省略字段视为通配。身份不匹配或变为
+`undefined`（登出/身份丢失）时 `onChatIdentityChange` 也会触发，宿主应释放旧 client、创建新
+client 后更新 props，默认 UI 会先停用旧 client，避免跨环境/用户/机器人串用。直接使用
+`ChatWorkspace` 的宿主自行负责同样的切换与释放。
+
+作答草稿默认按 client 实例隔离：替换 client 会丢弃草稿。若宿主在同一身份下重建 client 并希望
+保留草稿，给 `InteractionProvider` / 工作区传稳定的 `interactionScope`（可直接使用
+`managerChatIdentityScope(identity)`，从 `@turingfocus/chat-kit/manager` 或
+`@turingfocus/chat-kit/manager-antd` 导入）；scope 变化时草稿立即失效，同一 scope 内替换
+client 则保留。`ManagerChatApp` 会自动以当前身份生成 scope。草稿还会按当前问题的 option
+values 过滤，旧问题残留的选项不会提交到新问题。
 
 方式 B：自定义 UI：
 
@@ -646,13 +656,16 @@ Interaction UI；它不会继承外层的 `InteractionProvider`，因此宿主�
 `useInteractionQueue().active` + `InteractionCard` 自己渲染并传 inline id，要么完全交给 Modal。
 默认的 `ChatWorkspace` / `ChatCompactWorkspace` 已实现这套协调逻辑，可直接复用。
 
-如果宿主会隐藏整个会话视图（例如设置面板），使用 `ChatCompactWorkspace` 时传
-`interactionInlineVisible={false}`，队列会自动回退到全局 Modal；`ManagerChatApp` 已内置该行为。
+如果宿主会隐藏整个会话视图（例如设置面板），使用 `ChatWorkspace` 或
+`ChatCompactWorkspace` 时传 `interactionInlineVisible={false}`，队列会自动回退到全局 Modal；
+`ManagerChatApp` 已内置该行为。
 
 `InteractionProvider` 的 `client` 为 `undefined` 时继承外层 Provider，为 `null` 时禁用该子树
-的 Interaction UI。`useInteractionQueue()` 返回 `active` / `waiting` / `connection` / `now` /
-`liveCount` / `activate` / `respond` / `getDraft` / `setDraft`；`active`、`waiting` 与倒计时
-均来自 Runtime store，不要在 UI 侧重新计算 EDF 或队列上限。
+的 Interaction UI；`scope` 控制草稿隔离范围。`useInteractionQueue()` 返回 `active` / `waiting` /
+`connection` / `now` / `liveCount` / `clientGeneration` / `activate` / `respond` / `getDraft` /
+`setDraft`；`active`、`waiting` 与倒计时均来自 Runtime store，不要在 UI 侧重新计算 EDF 或队列
+上限。自定义卡片应把 `clientGeneration` 与本问题的 `interactionId` 一起作为 key，防止 client
+替换后已挂载的输入区把旧草稿提交给新 client。
 
 #### Legacy 共存
 

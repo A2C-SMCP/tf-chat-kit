@@ -78,6 +78,80 @@ const resetInteractionState = () => {
     answered: new Map(),
   };
 };
+// Mirrors packages/chat-protocol/src/interaction.ts (interactionResponsePayloadSchema).
+const INTERACTION_PROTOCOL_VERSION = 1;
+const INTERACTION_MAX_ID_CHARACTERS = 1_024;
+const INTERACTION_MAX_ANSWER_CHARACTERS = 64 * 1_024;
+const INTERACTION_MAX_OPTION_VALUE_CHARACTERS = 1_024;
+const INTERACTION_MAX_SELECTED_OPTIONS = 50;
+/**
+ * @param {unknown} value
+ * @param {number} maximum
+ * @param {number} [minimum]
+ * @returns {value is string}
+ */
+const validInteractionString = (value, maximum, minimum = 0) =>
+  typeof value === "string" &&
+  value.length >= minimum &&
+  value.length <= maximum;
+/** @param {unknown} value @returns {string | undefined} */
+const interactionIdOf = (value) =>
+  typeof value === "object" &&
+  value !== null &&
+  validInteractionString(
+    /** @type {Record<string, unknown>} */ (value)["interactionId"],
+    INTERACTION_MAX_ID_CHARACTERS,
+    1,
+  )
+    ? String(/** @type {Record<string, unknown>} */ (value)["interactionId"])
+    : undefined;
+/**
+ * @param {unknown} payload
+ * @returns {Record<string, unknown> | undefined}
+ */
+const parseInteractionResponse = (payload) => {
+  if (typeof payload !== "object" || payload === null) return undefined;
+  const { protocolVersion, interactionId, status, answer, selectedOptions } =
+    /** @type {Record<string, unknown>} */ (payload);
+  if (
+    protocolVersion !== INTERACTION_PROTOCOL_VERSION ||
+    !validInteractionString(interactionId, INTERACTION_MAX_ID_CHARACTERS, 1) ||
+    (status !== "answered" && status !== "cancelled") ||
+    (answer !== undefined &&
+      !validInteractionString(answer, INTERACTION_MAX_ANSWER_CHARACTERS)) ||
+    (selectedOptions !== undefined &&
+      (!Array.isArray(selectedOptions) ||
+        selectedOptions.length > INTERACTION_MAX_SELECTED_OPTIONS ||
+        !selectedOptions.every((value) =>
+          validInteractionString(
+            value,
+            INTERACTION_MAX_OPTION_VALUE_CHARACTERS,
+          ),
+        )))
+  )
+    return undefined;
+  return /** @type {Record<string, unknown>} */ (payload);
+};
+/** @param {string} interactionId */
+const removeInteractionPending = (interactionId) => {
+  interactionState.pending = interactionState.pending.filter(
+    (interaction) => interactionIdOf(interaction) !== interactionId,
+  );
+  interactionState.pendingOnConnect = interactionState.pendingOnConnect.filter(
+    (interaction) => interactionIdOf(interaction) !== interactionId,
+  );
+  if (interactionIdOf(interactionState.earlyInteraction) === interactionId)
+    interactionState.earlyInteraction = null;
+};
+/** @param {string} interactionId */
+const isKnownInteraction = (interactionId) =>
+  interactionState.pending.some(
+    (interaction) => interactionIdOf(interaction) === interactionId,
+  ) ||
+  interactionState.pendingOnConnect.some(
+    (interaction) => interactionIdOf(interaction) === interactionId,
+  ) ||
+  interactionIdOf(interactionState.earlyInteraction) === interactionId;
 /** @type {(handler: import("node:http").RequestListener) => import("node:http").Server | import("node:https").Server} */
 const createListener =
   cert && key
@@ -204,6 +278,7 @@ const server = createListener((req, res) => {
           : { answeredAt: input.answeredAt }),
       };
       interactionState.closed.push(closed);
+      removeInteractionPending(String(input.interactionId));
       broadcastInteraction("interaction_closed", closed);
       reply({});
       return;
@@ -767,11 +842,24 @@ const sockets = [
       interactionState.hellos.push(payload);
     });
     socket.on("interaction_response", (payload, acknowledge) => {
+      const parsed = parseInteractionResponse(payload);
       const interactionId =
-        payload && typeof payload.interactionId === "string"
-          ? payload.interactionId
-          : "";
-      if (interactionId.length === 0) {
+        interactionIdOf(parsed) ?? interactionIdOf(payload) ?? "";
+      if (parsed === undefined) {
+        // The browser Runtime never emits an out-of-schema payload; the
+        // controlled server still rejects it so tests can prove the boundary.
+        if (interactionId.length > 0)
+          acknowledge?.({
+            protocolVersion: 1,
+            interactionId,
+            status: "unknown_request",
+          });
+        return;
+      }
+      if (
+        !isKnownInteraction(interactionId) ||
+        interactionState.answered.has(interactionId)
+      ) {
         acknowledge?.({
           protocolVersion: 1,
           interactionId,
@@ -779,16 +867,9 @@ const sockets = [
         });
         return;
       }
-      if (interactionState.answered.has(interactionId)) {
-        acknowledge?.({
-          protocolVersion: 1,
-          interactionId,
-          status: "already_closed",
-        });
-        return;
-      }
       interactionState.answered.set(interactionId, socket.id);
-      interactionState.responses.push(payload);
+      interactionState.responses.push(parsed);
+      removeInteractionPending(interactionId);
       acknowledge?.({
         protocolVersion: 1,
         interactionId,
@@ -798,7 +879,7 @@ const sockets = [
         protocolVersion: 1,
         interactionId,
         terminalReason:
-          payload.status === "cancelled" ? "cancelled" : "answered",
+          parsed["status"] === "cancelled" ? "cancelled" : "answered",
         answeredBy: socket.id,
         answeredAt: Date.now(),
       };

@@ -233,15 +233,20 @@ const interaction = createTFRobotInteractionClient({
 
 `InteractionProvider` 不创建、不释放宿主传入的 client；切换环境、账号或机器人时，宿主应释放旧
 client 并创建新实例，不得跨身份共享。使用 `ManagerChatApp` 时同时传入 `interactionIdentity`
-并在 `onChatIdentityChange` 中替换 client；身份不匹配时默认 UI 会停用 Interaction。需要与普通
-RemoteTool 共用同一个 `/remote-tool` owner 时，使用
+并在 `onChatIdentityChange` 中替换 client；非 null client 缺少 identity 会直接报错，身份不匹配
+时默认 UI 会停用 Interaction（`allowUnscopedInteractionClient` / `allowWildcardInteractionIdentity`
+为显式逃生口）。作答草稿默认随 client 实例失效；传入稳定的 `interactionScope`
+（如 `managerChatIdentityScope(identity)`）可让同一身份下的 client 重建保留草稿，scope 变化则
+清空。需要与普通 RemoteTool 共用同一个 `/remote-tool` owner 时，使用
 `createTFRobotRemoteToolInteractionBundle`，并只由 bundle 负责最终释放连接。
 
 默认 Ant Design UI 在同一时刻只展示一个活跃问询：属于当前打开会话时内联显示，否则使用全局
 Modal；其余待回答项进入浮动队列角标。倒计时以 `expiresAt` 为准；提交结果区分 `submitting`、
-`accepted`、ack 超时和连接断开。注入 `interactionClient` 时，legacy `AskUserRemoteTool` 的
-pending 项与 Gateway `pendingInteraction` 不再渲染，但已完成的历史结果仍保留；未注入时既有
-路径不变。不要在每个实例之间共享模块级 store。
+`accepted`、ack 超时和连接断开。工作区显式收到非 null `interactionClient` 时渲染内联卡与队列；
+未传 client 时继承外层 `InteractionProvider` 仅用于抑制 legacy/Gateway pending，队列由宿主
+负责，避免重复渲染。注入 Interaction client 时，legacy `AskUserRemoteTool` 的 pending 项与
+Gateway `pendingInteraction` 不再渲染，但已完成的历史结果仍保留；未注入时既有路径不变。
+不要在每个实例之间共享模块级 store。
 
 `supportsAskUserAdapter` 默认为 `false`；legacy adapter 只在 Bundle/传输层显式声明，宿主显式
 注册 legacy `ask_user` 时才需要开启。完整责任边界、生命周期与自定义界面接法见

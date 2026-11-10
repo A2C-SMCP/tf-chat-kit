@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   managerChatIdentityMatches,
+  managerChatIdentityScope,
   managerChatInlineVisible,
   resolveManagerInteractionClient,
 } from "../packages/chat-kit/src/manager-identity.js";
@@ -16,14 +17,30 @@ describe("managerChatIdentityMatches", () => {
     userId: "user",
   };
 
-  it("treats omitted expected fields as wildcards", () => {
+  it("requires every asserted field to match by default", () => {
+    expect(managerChatIdentityMatches(actual, actual)).toBe(true);
     expect(managerChatIdentityMatches({ robotId: "robot-a" }, actual)).toBe(
-      true,
+      false,
     );
     expect(
       managerChatIdentityMatches(
         { environment: "production", platformId: 17, robotId: "robot-a" },
         actual,
+      ),
+    ).toBe(false);
+  });
+
+  it("treats omitted expected fields as wildcards only when opted in", () => {
+    expect(
+      managerChatIdentityMatches({ robotId: "robot-a" }, actual, {
+        allowWildcards: true,
+      }),
+    ).toBe(true);
+    expect(
+      managerChatIdentityMatches(
+        { environment: "production", platformId: 17, robotId: "robot-a" },
+        actual,
+        { allowWildcards: true },
       ),
     ).toBe(true);
   });
@@ -59,11 +76,27 @@ describe("managerChatIdentityMatches", () => {
   });
 
   it("resolves the interaction client against the current identity", () => {
-    expect(resolveManagerInteractionClient("client", undefined, actual)).toBe(
+    expect(
+      resolveManagerInteractionClient("client", undefined, actual),
+    ).toBeNull();
+    expect(
+      resolveManagerInteractionClient("client", undefined, actual, {
+        allowUnscoped: true,
+      }),
+    ).toBe("client");
+    expect(resolveManagerInteractionClient("client", actual, actual)).toBe(
       "client",
     );
     expect(
       resolveManagerInteractionClient("client", { robotId: "robot-a" }, actual),
+    ).toBeNull();
+    expect(
+      resolveManagerInteractionClient(
+        "client",
+        { robotId: "robot-a" },
+        actual,
+        { allowWildcards: true },
+      ),
     ).toBe("client");
     expect(
       resolveManagerInteractionClient("client", { robotId: "robot-b" }, actual),
@@ -82,6 +115,15 @@ describe("managerChatIdentityMatches", () => {
         actual,
       ),
     ).toBeUndefined();
+  });
+
+  it("builds a stable draft scope from the full identity", () => {
+    expect(managerChatIdentityScope(actual)).toBe(
+      JSON.stringify(["production", "user", "account", "org", 17, "robot-a"]),
+    );
+    expect(
+      managerChatIdentityScope({ ...actual, robotId: "robot-b" }),
+    ).not.toBe(managerChatIdentityScope(actual));
   });
 
   it("limits inline visibility to the chat screen without a stale identity", () => {

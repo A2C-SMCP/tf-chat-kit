@@ -43,6 +43,7 @@ import { managerUiCopy } from "./manager-ui-copy.js";
 import { managerUiStyle } from "./manager-ui-style.js";
 
 import {
+  managerChatIdentityScope,
   managerChatInlineVisible,
   resolveManagerInteractionClient,
   type ManagerChatIdentity,
@@ -50,6 +51,7 @@ import {
 
 export {
   managerChatIdentityMatches,
+  managerChatIdentityScope,
   managerChatInlineVisible,
   resolveManagerInteractionClient,
   type ManagerChatIdentity,
@@ -66,8 +68,22 @@ export interface ManagerChatAppProps {
   readonly manager: ManagerClient;
   /** Host-owned Interaction client; the app never creates or disposes it. */
   readonly interactionClient?: InteractionClient | null | undefined;
-  /** Identity of the injected client; a mismatch disables Interaction UI. */
+  /**
+   * Identity of the injected client. Required for a non-null client unless the
+   * host explicitly opts into an unscoped client; a mismatch disables
+   * Interaction UI.
+   */
   readonly interactionIdentity?: ManagerChatIdentity | undefined;
+  /**
+   * Explicit opt-in to use a non-null client without an asserted identity.
+   * Defaults to false because Manager can switch accounts and robots.
+   */
+  readonly allowUnscopedInteractionClient?: boolean | undefined;
+  /**
+   * Explicit opt-in to treat omitted identity fields as wildcards. Defaults to
+   * false: every asserted field must match the current Manager identity.
+   */
+  readonly allowWildcardInteractionIdentity?: boolean | undefined;
   /** Called when the internal robot/platform/account identity changes. */
   readonly onChatIdentityChange?:
     ((identity: ManagerChatIdentity | undefined) => void) | undefined;
@@ -120,6 +136,22 @@ export function ManagerChatApp(props: ManagerChatAppProps) {
       props.requestTimeoutMs > 60_000)
   )
     throw new TypeError("Invalid Manager request timeout");
+  if (
+    props.interactionClient !== undefined &&
+    props.interactionClient !== null &&
+    props.interactionIdentity === undefined &&
+    props.allowUnscopedInteractionClient !== true
+  )
+    throw new TypeError(
+      "ManagerChatApp requires interactionIdentity for a non-null interactionClient; set allowUnscopedInteractionClient to opt into an unscoped client",
+    );
+  if (
+    props.interactionIdentity !== undefined &&
+    props.interactionIdentity.robotId.trim().length === 0
+  )
+    throw new TypeError(
+      "ManagerChatApp interactionIdentity requires a robotId",
+    );
   const requestBudget = useRef(props.requestTimeoutMs ?? 15_000);
   requestBudget.current = props.requestTimeoutMs ?? 15_000;
   const getDeadlineAt = useCallback(
@@ -245,6 +277,8 @@ function ManagerAppBinding({
   getPopupContainer,
   interactionClient,
   interactionIdentity,
+  allowUnscopedInteractionClient = false,
+  allowWildcardInteractionIdentity = false,
   onChatIdentityChange,
   debug = false,
   showEventDetailModeSelector = true,
@@ -682,7 +716,15 @@ function ManagerAppBinding({
     interactionClient,
     interactionIdentity,
     chatIdentity,
+    {
+      allowUnscoped: allowUnscopedInteractionClient,
+      allowWildcards: allowWildcardInteractionIdentity,
+    },
   );
+  const interactionScope =
+    chatIdentity === undefined
+      ? undefined
+      : managerChatIdentityScope(chatIdentity);
   const activePlatform = connection.platforms?.find(
     (p) => p.platformId === activePlatformId,
   );
@@ -969,6 +1011,7 @@ function ManagerAppBinding({
           locale={locale}
           getDeadlineAt={deadline}
           interactionClient={interactionClientForUi}
+          interactionScope={interactionScope}
           interactionInlineVisible={managerChatInlineVisible(
             screen,
             staleIdentity,

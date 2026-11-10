@@ -107,6 +107,7 @@ export const defaultChatUiLabels: ChatUiLabels = Object.freeze({
   interactionHistoryAsk: "Asked",
   interactionHistoryAnswer: "Answered",
   interactionHistoryAnsweredBy: "Answered by",
+  interactionHistoryAnsweredAt: "Answered at",
   interactionHistoryError: "Error",
   capabilityUnavailableDescription:
     "This chat capability is not available in the current session.",

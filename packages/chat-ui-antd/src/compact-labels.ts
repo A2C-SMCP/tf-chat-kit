@@ -148,6 +148,7 @@ export const compactChatZhCN: ChatUiLabelOverrides = {
   interactionHistoryAsk: "提问",
   interactionHistoryAnswer: "回答",
   interactionHistoryAnsweredBy: "回答者",
+  interactionHistoryAnsweredAt: "回答时间",
   interactionHistoryError: "错误",
   diagnostics: "帮助与诊断",
   copyDiagnostic: "复制诊断摘要",

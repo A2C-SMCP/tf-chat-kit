@@ -190,7 +190,7 @@ const ConversationInteractionCard = ({
       <InteractionCard
         connection={queue.connection}
         draft={queue.getDraft(active.interactionId)}
-        key={active.interactionId}
+        key={`${queue.clientGeneration}:${active.interactionId}`}
         labels={labels}
         now={queue.now}
         onDraftChange={(draft) => queue.setDraft(active.interactionId, draft)}

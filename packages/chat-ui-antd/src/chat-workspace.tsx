@@ -44,8 +44,20 @@ export interface ChatWorkspaceProps {
     Omit<ChatConversationViewProps, "getDeadlineAt" | "labels"> | undefined;
   readonly formatConversationUpdatedAt?: ChatUiShellProps["formatConversationUpdatedAt"];
   readonly getDeadlineAt: () => number;
-  /** Host-owned Interaction client; appears in the inline card and global queue. */
+  /**
+   * Host-owned Interaction client; appears in the inline card and global queue.
+   * `undefined` inherits an outer InteractionProvider (the host then owns the
+   * queue); `null` disables Interaction UI for this workspace.
+   */
   readonly interactionClient?: InteractionClient | null | undefined;
+  /** Draft scope; drafts are discarded when this changes. */
+  readonly interactionScope?: string | undefined;
+  /**
+   * Whether the conversation surface is visible. When false, the active
+   * interaction falls back to the global modal instead of the inline card.
+   * Defaults to true.
+   */
+  readonly interactionInlineVisible?: boolean | undefined;
   readonly getPopupContainer?: (() => HTMLElement) | undefined;
   readonly header?: ReactNode;
   readonly initialSelection?: "first" | "none" | undefined;
@@ -103,6 +115,8 @@ export const ChatWorkspace = ({
   formatConversationUpdatedAt,
   getDeadlineAt,
   interactionClient,
+  interactionScope,
+  interactionInlineVisible = true,
   getPopupContainer,
   header,
   initialSelection,
@@ -171,7 +185,8 @@ export const ChatWorkspace = ({
     (snapshot) => snapshot?.conversation.id,
   );
   const effectiveInteractionInline =
-    conversationViewProps?.interactionInline ?? interactionClient != null;
+    interactionInlineVisible &&
+    (conversationViewProps?.interactionInline ?? interactionClient != null);
   const inlineConversationId =
     contentState.kind === "ready" && effectiveInteractionInline
       ? chatConversationId
@@ -236,7 +251,7 @@ export const ChatWorkspace = ({
   );
 
   return (
-    <InteractionProvider client={interactionClient ?? null}>
+    <InteractionProvider client={interactionClient} scope={interactionScope}>
       <ChatUiShell
         nonReadyContent={
           workspace.snapshot.selectionStatus === "loading" ||
