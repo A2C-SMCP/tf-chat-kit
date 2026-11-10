@@ -134,7 +134,7 @@ pnpm add react@^18.2.0
 pnpm add react@^18.2.0 react-dom@^18.2.0 antd@^5.23.4
 ```
 
-如果宿主已经安装兼容版本的 React、ReactDOM 和 Ant Design，不要重复安装。`@turingfocus/chat-kit` 会安装同版本的五个生产叶子包；宿主无需重复声明它们。npm 不能根据导入子路径改变安装依赖，因此 Headless 安装树仍包含这些叶子包，但 `/headless` 的运行时和声明入口不会加载 React、DOM 或 Ant Design。高级消费者如果直接组合多个叶子包，应将所有 `@turingfocus/chat-*` 包锁定到同一个发布版本。
+如果宿主已经安装兼容版本的 React、ReactDOM 和 Ant Design，不要重复安装。`@turingfocus/chat-kit` 会安装同版本的六个生产叶子包（含 `chat-auth`）；宿主无需重复声明它们。npm 不能根据导入子路径改变安装依赖，因此 Headless 安装树仍包含这些叶子包，但 `/headless` 的运行时和声明入口不会加载 React、DOM 或 Ant Design。高级消费者如果直接组合多个叶子包，应将所有 `@turingfocus/chat-*` 包锁定到同一个发布版本。
 
 ## 3. 准备宿主配置
 

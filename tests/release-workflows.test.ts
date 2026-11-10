@@ -152,12 +152,23 @@ describe("TFCK-13 release workflows", () => {
     expect(objectField(manifest, "env")).toEqual({
       RELEASE_CHANNEL: "${{ inputs.channel }}",
       EXPECTED_VERSION: "${{ inputs.expected-version }}",
-      RELEASE_GROUP: "${{ inputs.group }}",
-      EXPECTED_AUTH_VERSION: "${{ inputs.expected-auth-version }}",
-      CONSUMER_CORE_VERSION: "${{ inputs.consumer-core-version }}",
-      CONSUMER_AUTH_VERSION: "${{ inputs.consumer-auth-version }}",
     });
     expect(manifest["run"]).not.toContain("${{ inputs.");
+    expect(manifest["run"]).toContain("--expected-version");
+    expect(manifest["run"]).not.toContain("--group");
+    expect(manifest["run"]).not.toContain("--expected-auth-version");
+    expect(manifest["run"]).not.toContain("--consumer-core-version");
+    expect(manifest["run"]).not.toContain("--consumer-auth-version");
+    const triggers = objectField(parsed, "on");
+    const dispatch = objectField(triggers, "workflow_dispatch");
+    const inputs = objectField(dispatch, "inputs");
+    expect(inputs).not.toHaveProperty("group");
+    expect(inputs).not.toHaveProperty("expected-auth-version");
+    expect(inputs).not.toHaveProperty("consumer-core-version");
+    expect(inputs).not.toHaveProperty("consumer-auth-version");
+    expect(inputs).toHaveProperty("expected-version");
+    expect(inputs).toHaveProperty("channel");
+    expect(inputs).toHaveProperty("auth-mode");
     expect(bootstrapConfig["if"]).toBe(
       "inputs.auth-mode == 'bootstrap-token' || inputs.auth-mode == 'oidc-with-bootstrap-facade'",
     );
