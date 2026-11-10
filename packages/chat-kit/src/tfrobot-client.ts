@@ -87,7 +87,9 @@ export type TFRobotInteractionOptions = Omit<
 >;
 
 export interface TFRobotInteractionClientOptions
-  extends TFRobotRemoteToolOptions, TFRobotInteractionOptions {}
+  extends
+    Omit<TFRobotRemoteToolOptions, "supportsAskUserAdapter">,
+    TFRobotInteractionOptions {}
 
 /**
  * Creates an interaction-only client. It attaches before the shared
@@ -104,6 +106,13 @@ export interface TFRobotInteractionClientOptions
 export const createTFRobotInteractionClient = (
   options: TFRobotInteractionClientOptions,
 ): InteractionClient => {
+  if (
+    (options as { readonly supportsAskUserAdapter?: unknown })
+      .supportsAskUserAdapter === true
+  )
+    throw new TypeError(
+      "supportsAskUserAdapter is only supported by createTFRobotRemoteToolInteractionBundle",
+    );
   const {
     robotId,
     acceptServerIdentity,

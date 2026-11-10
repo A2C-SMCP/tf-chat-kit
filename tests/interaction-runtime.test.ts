@@ -64,6 +64,7 @@ class MemoryInteractionTransport implements InteractionTransport {
   respondReturn = true;
   detached = false;
   retry = vi.fn();
+  retryInteraction = vi.fn();
 
   attachInteraction(
     observer: InteractionTransportObserver,
@@ -326,28 +327,58 @@ describe("InteractionClient state", () => {
     client.dispose();
   });
 
-  it("delegates explicit recovery to the transport and contains failures", () => {
+  it("prefers interaction-specific recovery over the generic retry", () => {
     const transport = new MemoryInteractionTransport();
     const client = createInteractionClient({ transport, robotId: "robot-1" });
     expect(client.retry()).toBe(true);
-    expect(transport.retry).toHaveBeenCalledTimes(1);
-    const failingTransport = new MemoryInteractionTransport();
-    failingTransport.retry.mockImplementation(() => {
+    expect(transport.retryInteraction).toHaveBeenCalledTimes(1);
+    expect(transport.retry).not.toHaveBeenCalled();
+
+    const fallbackTransport = new MemoryInteractionTransport();
+    delete (fallbackTransport as unknown as { retryInteraction?: unknown })
+      .retryInteraction;
+    const fallback = createInteractionClient({
+      transport: fallbackTransport,
+      robotId: "robot-1",
+    });
+    expect(fallback.retry()).toBe(true);
+    expect(fallbackTransport.retry).toHaveBeenCalledTimes(1);
+    fallback.dispose();
+
+    const bare: InteractionTransport = {
+      clock: transport.clock,
+      attachInteraction: () => ({
+        respond: () => false,
+        detach: () => undefined,
+      }),
+    };
+    const bareClient = createInteractionClient({
+      transport: bare,
+      robotId: "robot-1",
+    });
+    expect(bareClient.retry()).toBe(false);
+    bareClient.dispose();
+
+    client.dispose();
+    expect(client.retry()).toBe(false);
+  });
+
+  it("contains transport recovery failures and reports them", () => {
+    const transport = new MemoryInteractionTransport();
+    transport.retryInteraction.mockImplementation(() => {
       throw new Error("connection disposed");
     });
     const errors: string[] = [];
-    const failing = createInteractionClient({
-      transport: failingTransport,
+    const client = createInteractionClient({
+      transport,
       robotId: "robot-1",
       onFrameError: (message) => errors.push(message),
     });
-    expect(failing.retry()).toBe(false);
+    expect(client.retry()).toBe(false);
     expect(errors.some((message) => message.includes("retry failed"))).toBe(
       true,
     );
-    failing.dispose();
     client.dispose();
-    expect(client.retry()).toBe(false);
   });
 
   it("supports an explicit expected namespace for rewrite deployments", async () => {
@@ -364,6 +395,67 @@ describe("InteractionClient state", () => {
     await flush();
     expect(entries(client)["custom"]?.status).toBe("pending");
     expect(entries(client)["transport-namespace"]).toBeUndefined();
+    client.dispose();
+  });
+
+  it("normalizes trailing slashes in expectedNamespace, hello and requests", async () => {
+    const { transport, client } = setup({ expectedNamespace: "/custom/" });
+    transport.connection("connected");
+    transport.hello({
+      versions: ["interaction_v1"],
+      robotId: "robot-1",
+      namespace: "/custom/",
+    });
+    transport.pending({ kind: "snapshot", requests: [], knownIds: [] });
+    transport.requested(request("slash", { namespace: "/custom/" }));
+    await flush();
+    expect(entries(client)["slash"]?.status).toBe("pending");
+    client.dispose();
+  });
+
+  it("caps ackTimeoutMs at the shared transport budget", () => {
+    const transport = new MemoryInteractionTransport();
+    expect(() =>
+      createInteractionClient({
+        transport,
+        robotId: "robot-1",
+        ackTimeoutMs: 60_001,
+      }),
+    ).toThrow(/timing/);
+    const client = createInteractionClient({
+      transport,
+      robotId: "robot-1",
+      ackTimeoutMs: 60_000,
+    });
+    client.dispose();
+  });
+
+  it("backfills closed answered metadata without reviving an already_closed entry", async () => {
+    const { transport, client } = setup();
+    await synchronize(transport);
+    transport.requested(request("answer"));
+    await flush();
+    client.respond("answer", { status: "answered", answer: "yes" });
+    transport.ack({ interactionId: "answer", status: "already_closed" });
+    await flush();
+    expect(entries(client)["answer"]).toMatchObject({
+      status: "closed",
+      terminalReason: "already_closed",
+    });
+
+    transport.closed({
+      interactionId: "answer",
+      terminalReason: "answered",
+      answeredBy: "Bob",
+      answeredAt: NOW + 456,
+    });
+    await flush();
+    expect(entries(client)["answer"]).toMatchObject({
+      status: "closed",
+      terminalReason: "already_closed",
+      answeredBy: "Bob",
+      answeredAt: NOW + 456,
+    });
     client.dispose();
   });
 

@@ -292,7 +292,29 @@ export class InteractionStore {
   receiveClosed(closed: InteractionClosed): void {
     if (this.#disposed) return;
     const entry = this.#entries.get(closed.interactionId);
-    if (entry === undefined || entry.status === "closed") return;
+    if (entry === undefined) return;
+    if (entry.status === "closed") {
+      // A closed frame may arrive after an already_closed ack; backfill only
+      // the answered metadata. Status and terminalReason are not changed and
+      // the entry is not revived.
+      const answeredBy = entry.answeredBy ?? closed.answeredBy;
+      const answeredAt = entry.answeredAt ?? closed.answeredAt;
+      if (
+        (answeredBy === undefined && answeredAt === undefined) ||
+        (answeredBy === entry.answeredBy && answeredAt === entry.answeredAt)
+      )
+        return;
+      this.#entries.set(
+        closed.interactionId,
+        freezeEntry({
+          ...entry,
+          ...(answeredBy === undefined ? {} : { answeredBy }),
+          ...(answeredAt === undefined ? {} : { answeredAt }),
+        }),
+      );
+      this.#publish(true);
+      return;
+    }
     const now = this.#clock.now();
     this.#entries.set(
       closed.interactionId,

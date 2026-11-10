@@ -456,14 +456,17 @@ const askUserToolNames = new Set([
   "askusertool",
 ]);
 
+/** Case/separator-insensitive tool identity shared by Ask User and colleague. */
+const normalizeToolName = (value: unknown): string =>
+  typeof value === "string"
+    ? value
+        .trim()
+        .toLocaleLowerCase("en-US")
+        .replace(/[^a-z0-9]/g, "")
+    : "";
+
 const isAskUserToolName = (value: unknown): boolean =>
-  typeof value === "string" &&
-  askUserToolNames.has(
-    value
-      .trim()
-      .toLocaleLowerCase("en-US")
-      .replace(/[^a-z0-9]/g, ""),
-  );
+  askUserToolNames.has(normalizeToolName(value));
 
 const stringValue = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim().length > 0
@@ -676,16 +679,8 @@ const colleagueToolNames = {
   ]),
 } as const;
 
-const normalizedToolName = (value: unknown): string =>
-  typeof value === "string"
-    ? value
-        .trim()
-        .toLocaleLowerCase("en-US")
-        .replace(/[^a-z0-9]/g, "")
-    : "";
-
 const colleagueDirection = (value: unknown): "ask" | "answer" | undefined => {
-  const normalized = normalizedToolName(value);
+  const normalized = normalizeToolName(value);
   if (colleagueToolNames.answer.has(normalized)) return "answer";
   if (colleagueToolNames.ask.has(normalized)) return "ask";
   return undefined;
