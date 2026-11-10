@@ -11,6 +11,7 @@ import {
   compareAgentEventTransitions,
   compareTimelineItems,
   conversationSchema,
+  interactionHistorySchema,
   messageSchema,
   sanitizeDiagnosticText,
   sanitizeRaw,
@@ -25,6 +26,7 @@ import {
   type ChatSnapshot,
   type ChatUpdate,
   type Conversation,
+  type InteractionHistory,
   type Message,
   type MessageContent,
   type MessageContentPart,
@@ -660,6 +662,139 @@ const mapAskUserResult = (
   return parsed.success ? parsed.data : undefined;
 };
 
+const colleagueToolNames = {
+  ask: new Set(["askcolleague", "askcolleaguetool", "askcolleagues"]),
+  answer: new Set([
+    "answercolleague",
+    "answercolleaguetool",
+    "answercolleagues",
+  ]),
+} as const;
+
+const normalizedToolName = (value: unknown): string =>
+  typeof value === "string"
+    ? value
+        .trim()
+        .toLocaleLowerCase("en-US")
+        .replace(/[^a-z0-9]/g, "")
+    : "";
+
+const colleagueDirection = (value: unknown): "ask" | "answer" | undefined => {
+  const normalized = normalizedToolName(value);
+  if (colleagueToolNames.answer.has(normalized)) return "answer";
+  if (colleagueToolNames.ask.has(normalized)) return "ask";
+  return undefined;
+};
+
+const colleagueReturnData = (
+  toolReturn: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined => {
+  const meta = isRecord(toolReturn?.["meta"]) ? toolReturn["meta"] : undefined;
+  const mcp = isRecord(meta?.["__MCP__"]) ? meta["__MCP__"] : undefined;
+  const transformed = mcp?.["a2c_vrl_transformed"];
+  if (typeof transformed === "string") {
+    try {
+      const parsed = JSON.parse(transformed) as unknown;
+      if (isRecord(parsed)) return parsed;
+    } catch {
+      // Fall back to origin below.
+    }
+  }
+  const origin = parseJsonIfPossible(toolReturn?.["origin"]);
+  return isRecord(origin) ? origin : undefined;
+};
+
+const colleagueParameters = (
+  functionCall: Record<string, unknown> | undefined,
+): { readonly params: Record<string, unknown>; readonly raw: unknown } => {
+  const raw = functionCall?.["parameters"];
+  const parsed = parseJsonIfPossible(raw);
+  return { params: isRecord(parsed) ? parsed : {}, raw };
+};
+
+const colleagueText = (value: unknown): string | undefined => {
+  if (Array.isArray(value)) {
+    const values = value.flatMap((entry) => {
+      const text = displayStringValue(entry);
+      return text === undefined ? [] : [text];
+    });
+    return values.length === 0 ? undefined : values.join("、");
+  }
+  return displayStringValue(value);
+};
+
+const colleagueQuestion = (
+  params: Record<string, unknown>,
+  raw: unknown,
+): string | undefined => {
+  const direct = displayStringValue(params["question"]);
+  if (direct !== undefined) return direct;
+  if (typeof raw !== "string") return undefined;
+  const match = /["']?question["']?\s*[:=]\s*["']([^"']+)["']/u.exec(raw);
+  return match?.[1] === undefined ? undefined : displayStringValue(match[1]);
+};
+
+const colleagueAnswer = (
+  params: Record<string, unknown>,
+  raw: unknown,
+): string | undefined => {
+  const direct = displayStringValue(params["answer"]);
+  if (direct !== undefined) return direct;
+  const selected = params["selected_options"] ?? params["selectedOptions"];
+  if (Array.isArray(selected)) {
+    const values = selected.flatMap((value) => {
+      const entry = displayStringValue(value);
+      return entry === undefined ? [] : [entry];
+    });
+    if (values.length > 0) return values.join("、");
+  }
+  if (typeof raw !== "string") return undefined;
+  const match = /["']?answer["']?\s*[:=]\s*["']([^"']+)["']/u.exec(raw);
+  return match?.[1] === undefined ? undefined : displayStringValue(match[1]);
+};
+
+const mapInteractionHistory = (
+  toolName: unknown,
+  toolCall: Record<string, unknown> | undefined,
+  toolReturn: Record<string, unknown> | undefined,
+): InteractionHistory | undefined => {
+  const functionCall = isRecord(toolCall?.["functionCall"])
+    ? toolCall["functionCall"]
+    : undefined;
+  const direction =
+    colleagueDirection(toolName) ?? colleagueDirection(functionCall?.["name"]);
+  if (direction === undefined) return undefined;
+  const data = colleagueReturnData(toolReturn);
+  if (data === undefined) return undefined;
+  const status = displayStringValue(data["status"]);
+  const error = displayStringValue(data["error"]);
+  if (status === undefined && error === undefined) return undefined;
+  const { params, raw } = colleagueParameters(functionCall);
+  const interactionId = (
+    displayStringValue(data["interactionId"]) ??
+    displayStringValue(toolCall?.["toolId"])
+  )?.slice(0, 1_024);
+  if (interactionId === undefined) return undefined;
+  const question =
+    displayStringValue(data["question"]) ?? colleagueQuestion(params, raw);
+  const answer = colleagueText(data["answer"]) ?? colleagueAnswer(params, raw);
+  const answeredBy = displayStringValue(data["answeredBy"]);
+  const parsed = interactionHistorySchema.safeParse({
+    kind: "interaction-history",
+    interactionId,
+    direction,
+    status: status ?? "error",
+    ...(question === undefined ? {} : { question }),
+    ...(answer === undefined ? {} : { answer }),
+    ...(answeredBy === undefined ? {} : { answeredBy }),
+    ...(typeof data["answeredAt"] === "number"
+      ? { answeredAt: data["answeredAt"] }
+      : {}),
+    ...(error === undefined ? {} : { error }),
+  });
+  return parsed.success ? parsed.data : undefined;
+};
+
 const eventIdentity = (dto: EventDto): string =>
   dto.eventId == null
     ? `event:${asId(dto.conversationId)}:${dto.createTimestamp}:${dto.eventScene}`
@@ -760,6 +895,10 @@ const mapToolTransition = (
     return undefined;
   }
   const interaction = mapAskUserResult(name, toolCall, toolReturn);
+  const interactionHistory =
+    interaction === undefined
+      ? mapInteractionHistory(name, toolCall, toolReturn)
+      : undefined;
   return {
     id: transitionId,
     status: mapEventStatus(dto.status),
@@ -775,6 +914,7 @@ const mapToolTransition = (
       ? {}
       : { toolReturn: normalizedToolReturn }),
     ...(interaction === undefined ? {} : { interaction }),
+    ...(interactionHistory === undefined ? {} : { interactionHistory }),
     ...extraRaw(dto, EVENT_KEYS),
   };
 };
