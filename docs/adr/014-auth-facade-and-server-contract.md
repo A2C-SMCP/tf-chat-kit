@@ -29,3 +29,7 @@ Manager 的 apiBaseURL 属于 BFF，不推断为 Bearer Server 地址。沿用�
 通过真实本地 HTTP/Socket、打包消费者和 Playwright 验证协议与生命周期，再以
 https://user.test.turingfocus.cn 的真实部署完成创建、发送、回复、历史切换和精确清理。
 浏览器宿主模拟与真实 Word 验收分开记录。其他仓库部署变更不属于本次代码修改范围。
+
+> **2026-11-10 决策更新**：独立发布/独立版本策略条款由
+> [ADR-018](018-unified-version-and-release.md) 替代；门面依赖 auth、显式认证入口与 Server
+> 会话契约决策继续有效。

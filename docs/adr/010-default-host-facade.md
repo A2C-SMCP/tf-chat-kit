@@ -73,3 +73,6 @@ protocol/runtime/gateway-tfrobot/react/ui-antd <- chat-kit
 - 从 `chat-ui-antd` 反向导出 Gateway 和 Runtime：会让视觉包感知传输组合，破坏依赖方向。
 - 只在文档中提供宿主侧 helper：仍要求每个宿主声明五包并复制生命周期装配，无法形成版本化公共接入契约。
 - 把 `chat-testing` 纳入门面：会让生产默认入口携带测试工具并模糊生产与测试边界。
+
+> **2026-11-10 决策更新**：包集合按 [ADR-018](018-unified-version-and-release.md) 扩展为八个
+> 公开包的统一 fixed group；本 ADR 的门面边界、分层入口与实例所有权决策继续有效。

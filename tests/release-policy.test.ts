@@ -335,4 +335,45 @@ describe("release compatibility and manifest policy", () => {
       }),
     ).toThrow(/stable SemVer version/u);
   });
+
+  it("keeps the unified release group all-or-nothing", async () => {
+    const rootDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "tf-chat-kit-release-policy-"),
+    );
+    const { version, packages } = await buildReleasePackages({
+      rootDirectory,
+      packManifest: await createPackedGroup(rootDirectory),
+    });
+    const base = {
+      version,
+      channel: "next",
+      commit: "a".repeat(40),
+      runUrl: "https://github.com/A2C-SMCP/tf-chat-kit/actions/runs/1",
+      createdAt: "2026-07-29T00:00:00.000Z",
+      compatibility: await loadPolicy(),
+      packages,
+    };
+
+    const manifest = createReleaseManifest(base);
+    expect(manifest.releaseGroup).toBe("all");
+    expect(manifest.tag).toBe(`v${version}`);
+    expect(manifest.consumerPackages).toHaveLength(
+      RELEASE_PACKAGE_NAMES.length,
+    );
+    expect(
+      manifest.consumerPackages.every((entry) => entry.version === version),
+    ).toBe(true);
+
+    expect(() =>
+      createReleaseManifest({ ...base, releaseGroup: "auth" }),
+    ).toThrow(/retired/u);
+    const mixed = structuredClone(packages);
+    mixed[1]!.version = "0.2.1-next.0";
+    expect(() => createReleaseManifest({ ...base, packages: mixed })).toThrow(
+      /share one version/u,
+    );
+    expect(() =>
+      createReleaseManifest({ ...base, packages: packages.slice(0, -1) }),
+    ).toThrow(/complete unified group/u);
+  });
 });

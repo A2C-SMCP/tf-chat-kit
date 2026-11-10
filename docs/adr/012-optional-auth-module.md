@@ -60,3 +60,6 @@ Server Contract Reviewer 确认；确认前只能实现安全降级和可重复�
 - 在缺少 refresh 契约时用密码静默登录。
 
 > 2026-10-13：门面安装 auth 的限制由 [ADR-014](014-auth-facade-and-server-contract.md) 替代，其余决策继续有效。
+
+> 2026-11-10：认证包独立 Changesets 版本的条款由 [ADR-018](018-unified-version-and-release.md)
+> 替代；认证模块的可选性、Headless 契约、信任边界与凭据安全决策继续有效。

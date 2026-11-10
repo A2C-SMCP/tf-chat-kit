@@ -4,7 +4,7 @@ TFRobot 聊天能力的可复用模块。项目采用 Headless Runtime、宿主�
 
 ## 当前状态
 
-项目处于 V1 纵向切片建设阶段。七包 workspace、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-kit` 通过 `headless`、`react`、`antd` 分层入口为不同宿主提供一个生产门面和实例安全的组合工厂。叶子包继续提供可裁剪的 Protocol、Runtime、Gateway、React、UI 与 Testing 能力，其中 Runtime、React 和 Ant Design UI 分别提供实例隔离的会话工作区编排、无样式订阅绑定和可直接挂载的成品工作区。真实 Gateway 与真实宿主 E2E 作为可选兼容观察记录；TFRobot `/remote-tool` 的多 Provider 与会话路由完成前，实时 Ask User 回答能力保持关闭。
+项目处于 V1 纵向切片建设阶段。八包 workspace（八包统一版本策略已落地，0.13.0 版本提交随后由 Changesets 生成）、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-kit` 通过 `headless`、`react`、`antd` 分层入口为不同宿主提供一个生产门面和实例安全的组合工厂。叶子包继续提供可裁剪的 Protocol、Runtime、Gateway、React、UI 与 Testing 能力，其中 Runtime、React 和 Ant Design UI 分别提供实例隔离的会话工作区编排、无样式订阅绑定和可直接挂载的成品工作区。真实 Gateway 与真实宿主 E2E 作为可选兼容观察记录；TFRobot `/remote-tool` 的多 Provider 与会话路由完成前，实时 Ask User 回答能力保持关闭。
 
 ## V1 承诺
 
@@ -38,7 +38,7 @@ chat-ui-antd -> chat-react -> chat-runtime -> chat-protocol
 chat-ui-antd -------------------------------> chat-protocol
                          chat-gateway-tfrobot -> chat-protocol
 chat-kit -> chat-auth/chat-ui-antd/chat-react/chat-runtime/chat-gateway-tfrobot/chat-protocol
-chat-auth (独立发布，门面显式 auth 子入口；react/antd 为可选 peer UI)
+chat-auth (门面显式 auth 子入口；react/antd 为可选 peer UI；与核心包统一版本)
                                   chat-testing -> chat-protocol
 ```
 
@@ -51,10 +51,10 @@ chat-auth (独立发布，门面显式 auth 子入口；react/antd 为可选 pee
 
 ## 登录、Chat Token 与会话接入
 
-以下接入示例面向目标版本 `0.10.0`（需本次变更发布后使用）；认证叶子包独立发布，由门面声明兼容依赖。已经有登录系统的宿主可以只使用核心包，并注入自己的 `SessionProvider`。
+以下接入示例面向目标版本 `0.13.0`（需本次变更发布后使用）；认证叶子包与核心包统一版本发布，由门面声明兼容依赖。已经有登录系统的宿主可以只使用核心包，并注入自己的 `SessionProvider`。
 
 ```bash
-pnpm add @turingfocus/chat-kit@0.10.0
+pnpm add @turingfocus/chat-kit@0.13.0
 # 使用下面的 React / Ant Design UI 时还需要：
 pnpm add react@^18.2.0 react-dom@^18.2.0 antd@^5.23.4
 ```
@@ -236,9 +236,9 @@ Playground 不启动模拟后端，不包含 Mock 模式、演示消息或模拟
 检查前直接失败。显式使用 `--ignore-scripts` 会跳过前者，但不会绕过 `pnpm check`。
 
 `pnpm check` 会执行架构边界、lint、格式、类型、测试、构建、tarball 内容与安全检查，并在临时
-TypeScript 消费者中实际安装、构建和运行七个产物。宿主验证必须使用 tarball、npm prerelease
+TypeScript 消费者中实际安装、构建和运行八个产物。宿主验证必须使用 tarball、npm prerelease
 或 npm 官方 Registry 的正式版本，不得通过源码路径消费。
-`pnpm pack:workspace` 可从 clean workspace 直接构建并生成经过内容检查的七包 tarball。
+`pnpm pack:workspace` 可从 clean workspace 直接构建并生成经过内容检查的八包 tarball。
 
 Runtime V1 的时间轴性能门禁覆盖 5,000 个常驻条目上的 1,000 次连续增量更新，以及将 5,000
 个历史条目一次归并到 5,000 个当前条目。不可变快照会在每次可观察更新时复制时间轴的顶层数组，
@@ -275,7 +275,7 @@ import { createManagerChatController } from "@turingfocus/chat-kit/manager";
 
 `/auth/react`、`/auth/antd` 分别要求宿主提供相应 React、Ant Design peers。
 `/auth`、`/auth/tfrobot`、`/auth/manager` 无需 React/DOM。门面负责声明兼容的 auth 依赖；
-`chat-auth` 仍独立发布。已有 SessionProvider 接入不需要创建 AuthClient。
+`chat-auth` 与核心包统一版本发布（ADR-018）。已有 SessionProvider 接入不需要创建 AuthClient。
 
 当部署的 Server 使用 JSON 创建会话协议时，在 `chat` 配置中显式设置
 `conversationContract: "json-v2"`。默认 `query-v1` 保留旧 Server 查询参数协议；

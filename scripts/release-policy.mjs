@@ -5,10 +5,11 @@ import path from "node:path";
 import {
   isPrereleaseVersion,
   isZeroMajorVersion,
-  PACKAGE_POLICY,
 } from "./workspace-policy.mjs";
 
 import {
+  ALL_PACKAGE_NAMES,
+  releaseGroup as normalizeReleaseGroup,
   validateReleaseGroup,
   releaseSourceTag,
   registryConsumerPackages,
@@ -19,9 +20,7 @@ export const RELEASE_REGISTRY = "https://registry.npmjs.org/";
 export const RELEASE_ENVIRONMENT = "npm-production";
 export const RELEASE_WORKFLOW = "release.yml";
 export const RELEASE_CHANNELS = Object.freeze(["next", "latest"]);
-export const RELEASE_PACKAGE_NAMES = Object.freeze(
-  Object.values(PACKAGE_POLICY).map(({ name }) => name),
-);
+export const RELEASE_PACKAGE_NAMES = ALL_PACKAGE_NAMES;
 export const RELEASE_CONSUMER_NAMES = Object.freeze([
   "tfrobotfrontMock",
   "officeMock",
@@ -587,8 +586,7 @@ export async function buildReleasePackages({ rootDirectory, packManifest }) {
  *   createdAt: string;
  *   compatibility: CompatibilityPolicy;
  *   packages: ReleasePackage[];
- *   releaseGroup?: import("./release-group-policy.mjs").ReleaseGroup;
- *   consumerPackages?: { name: string; version: string }[];
+ *   releaseGroup?: string;
  * }} input
  */
 export function createReleaseManifest({
@@ -600,8 +598,8 @@ export function createReleaseManifest({
   compatibility,
   packages,
   releaseGroup = "all",
-  consumerPackages,
 }) {
+  const normalizedReleaseGroup = normalizeReleaseGroup(releaseGroup);
   assertReleaseChannelAllowed(compatibility, channel);
   if (!isZeroMajorVersion(version)) {
     throw new Error(`release version must remain on 0.x; found ${version}.`);
@@ -616,11 +614,10 @@ export function createReleaseManifest({
       `latest releases require a stable SemVer version; found ${version}.`,
     );
   }
-  validateReleaseGroup(packages, releaseGroup, version, channel);
+  validateReleaseGroup(packages, version, channel);
   const consumers = registryConsumerPackages({
     packages,
-    releaseGroup,
-    ...(consumerPackages ? { consumerPackages } : {}),
+    releaseGroup: normalizedReleaseGroup,
   });
   if (!/^[0-9a-f]{40}$/u.test(commit)) {
     throw new Error("release commit must be a full lowercase Git SHA.");
@@ -634,8 +631,8 @@ export function createReleaseManifest({
     repository: RELEASE_REPOSITORY,
     version,
     channel,
-    tag: releaseSourceTag(releaseGroup, version),
-    releaseGroup,
+    tag: releaseSourceTag(version),
+    releaseGroup: normalizedReleaseGroup,
     consumerPackages: consumers,
     commit,
     workflow: RELEASE_WORKFLOW,

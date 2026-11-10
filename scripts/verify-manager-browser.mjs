@@ -39,7 +39,7 @@ try {
       `file:${path.resolve(root, item.tarball)}`,
     ]),
   );
-  const coreOverrides = Object.fromEntries(
+  const registryOverrides = Object.fromEntries(
     Object.entries(packages).filter(
       ([name]) => name !== "@turingfocus/chat-auth",
     ),
@@ -59,7 +59,7 @@ try {
       pnpm: {
         overrides:
           process.env["TF_CHAT_AUTH_FROM_REGISTRY"] === "1"
-            ? coreOverrides
+            ? registryOverrides
             : packages,
       },
     }),
@@ -97,8 +97,9 @@ try {
       },
     },
   });
-  // Check the independent auth version. TF_CHAT_AUTH_FROM_REGISTRY=1 also
-  // verifies registry resolution when the current auth version is published.
+  // Check that the packed auth dependency matches the workspace's unified
+  // version. TF_CHAT_AUTH_FROM_REGISTRY=1 verifies registry resolution after
+  // that unified version has been published.
   const installedAuth = JSON.parse(
     await readFile(
       path.join(
@@ -127,7 +128,7 @@ try {
     await readFile(path.join(root, "packages/chat-auth/package.json"), "utf8"),
   );
   if (installedAuth.version !== sourceAuth.version)
-    throw new Error("Wrong independent auth dependency");
+    throw new Error("Wrong unified auth dependency version");
   const bundle = await readFile(path.join(temporary, "dist/consumer.js"));
   const keyPath = path.join(temporary, "key.pem");
   const certPath = path.join(temporary, "cert.pem");

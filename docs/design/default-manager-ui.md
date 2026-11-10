@@ -83,7 +83,7 @@ compact 历史、账号、机器人选择打开为覆盖主体的全宽子页，
 - `chat-ui-antd`：增强 ChatWorkspace compact 导航和用户向状态，复用 ChatUiShell 已有 compact 扩展点；保留旧行为并以新 preset 启用。
 - `chat-kit/manager-antd`：可选流程绑定、局部导航、组合生命周期；认证客户端与部署配置仍为宿主注入。纯 `/headless` 和旧 `/antd` 不因此初始化 auth。
 - 宿主：提供 AuthClient/ManagerClient 或已认证会话、连接策略、品牌与 locale、显式平台 preset（可选）、Word 文档操作（可选）、隐藏与卸载策略。
-- 核心七包按新的真实功能 Changeset 计算版本；auth 若发生实际变更独立增版，不回退到核心同号。
+- 八个公开包按统一 fixed group 计算版本，auth 与核心包同号发布（ADR-018）。
 
 迁移目标：宿主从“分别挂载多个 Panel + 自己写步骤判断”切换为“挂载一个可选完整组件并提供依赖”。已有自定义 UI 消费者可完全保持原状。
 
