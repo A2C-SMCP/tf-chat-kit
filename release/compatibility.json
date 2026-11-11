@@ -35,11 +35,11 @@
   "channels": {
     "next": {
       "versionKind": "prerelease",
-      "reason": "Deterministic package and mock-consumer evidence permits an explicitly versioned prerelease."
+      "reason": "Deterministic evidence for the unified eight-package group and mock consumers permits an explicitly versioned prerelease."
     },
     "latest": {
       "versionKind": "stable",
-      "reason": "Stable releases require the fixed package group and all repository-owned compatibility mocks to pass."
+      "reason": "Stable releases require the unified eight-package group and all repository-owned compatibility mocks to pass."
     }
   },
   "knownLimitations": [

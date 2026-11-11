@@ -111,7 +111,7 @@ describe("workspace dependency versions", () => {
     ["@turingfocus/chat-auth", "0.11.0"],
     ["@turingfocus/chat-runtime", "0.10.0-next.0"],
   ]);
-  it("resolves independently versioned dependencies using the target package", () => {
+  it("resolves workspace dependencies using the target package version", () => {
     const manifest = {
       name: "@turingfocus/chat-kit",
       version: "0.10.0-next.0",

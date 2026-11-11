@@ -1,4 +1,5 @@
 export * from "./gateway.js";
+export * from "./interaction.js";
 export {
   ASK_USER_MAX_ANSWER_VALUES,
   ASK_USER_MAX_OPTIONS,
@@ -24,6 +25,7 @@ export {
   getTimelineItemKey,
   getGeneratedEventTexts,
   hasCompatibleAgentEventMetadata,
+  interactionHistorySchema,
   messageSchema,
   runSchema,
   timelineItemSchema,
@@ -61,6 +63,7 @@ export type {
   FileMessageContent,
   GenericAgentEvent,
   GenericAgentEventTransitionPayload,
+  InteractionHistory,
   MediaMessageContent,
   Message,
   MessageAuthor,

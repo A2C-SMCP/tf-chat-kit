@@ -8,9 +8,15 @@ import {
   chatErrorSchema,
   chatSnapshotSchema,
   chatUpdateSchema,
+  INTERACTION_MAX_ANSWER_CHARACTERS,
+  INTERACTION_MAX_DISPLAY_TEXT_CHARACTERS,
+  INTERACTION_MAX_ID_CHARACTERS,
+  INTERACTION_MAX_OPTION_VALUE_CHARACTERS,
+  INTERACTION_MAX_QUESTION_CHARACTERS,
   compareAgentEventTransitions,
   compareTimelineItems,
   conversationSchema,
+  interactionHistorySchema,
   messageSchema,
   sanitizeDiagnosticText,
   sanitizeRaw,
@@ -25,6 +31,7 @@ import {
   type ChatSnapshot,
   type ChatUpdate,
   type Conversation,
+  type InteractionHistory,
   type Message,
   type MessageContent,
   type MessageContentPart,
@@ -449,14 +456,17 @@ const askUserToolNames = new Set([
   "askusertool",
 ]);
 
+/** Case/separator-insensitive tool identity shared by Ask User and colleague. */
+const normalizeToolName = (value: unknown): string =>
+  typeof value === "string"
+    ? value
+        .trim()
+        .toLocaleLowerCase("en-US")
+        .replace(/[^a-z0-9]/g, "")
+    : "";
+
 const isAskUserToolName = (value: unknown): boolean =>
-  typeof value === "string" &&
-  askUserToolNames.has(
-    value
-      .trim()
-      .toLocaleLowerCase("en-US")
-      .replace(/[^a-z0-9]/g, ""),
-  );
+  askUserToolNames.has(normalizeToolName(value));
 
 const stringValue = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim().length > 0
@@ -660,6 +670,149 @@ const mapAskUserResult = (
   return parsed.success ? parsed.data : undefined;
 };
 
+const colleagueToolNames = {
+  ask: new Set(["askcolleague", "askcolleaguetool", "askcolleagues"]),
+  answer: new Set([
+    "answercolleague",
+    "answercolleaguetool",
+    "answercolleagues",
+  ]),
+} as const;
+
+const colleagueDirection = (value: unknown): "ask" | "answer" | undefined => {
+  const normalized = normalizeToolName(value);
+  if (colleagueToolNames.answer.has(normalized)) return "answer";
+  if (colleagueToolNames.ask.has(normalized)) return "ask";
+  return undefined;
+};
+
+const colleagueReturnData = (
+  toolReturn: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined => {
+  const meta = isRecord(toolReturn?.["meta"]) ? toolReturn["meta"] : undefined;
+  const mcp = isRecord(meta?.["__MCP__"]) ? meta["__MCP__"] : undefined;
+  const transformed = mcp?.["a2c_vrl_transformed"];
+  if (typeof transformed === "string") {
+    try {
+      const parsed = JSON.parse(transformed) as unknown;
+      if (isRecord(parsed)) return parsed;
+    } catch {
+      // Fall back to origin below.
+    }
+  }
+  const origin = parseJsonIfPossible(toolReturn?.["origin"]);
+  return isRecord(origin) ? origin : undefined;
+};
+
+const colleagueParameters = (
+  functionCall: Record<string, unknown> | undefined,
+): { readonly params: Record<string, unknown>; readonly raw: unknown } => {
+  const raw = functionCall?.["parameters"];
+  const parsed = parseJsonIfPossible(raw);
+  return { params: isRecord(parsed) ? parsed : {}, raw };
+};
+
+const boundedText = (value: unknown, maximum: number): string | undefined =>
+  stringValue(value)?.slice(0, maximum);
+
+const colleagueText = (value: unknown, maximum: number): string | undefined => {
+  if (Array.isArray(value)) {
+    const values = value.flatMap((entry) => {
+      const text = boundedText(entry, INTERACTION_MAX_OPTION_VALUE_CHARACTERS);
+      return text === undefined ? [] : [text];
+    });
+    return values.length === 0
+      ? undefined
+      : values.join("、").slice(0, maximum);
+  }
+  return boundedText(value, maximum);
+};
+
+const colleagueQuestion = (
+  params: Record<string, unknown>,
+  raw: unknown,
+  maximum: number,
+): string | undefined => {
+  const direct = boundedText(params["question"], maximum);
+  if (direct !== undefined) return direct;
+  if (typeof raw !== "string") return undefined;
+  const match = /["']?question["']?\s*[:=]\s*["']([^"']+)["']/u.exec(raw);
+  return match?.[1] === undefined ? undefined : boundedText(match[1], maximum);
+};
+
+const colleagueAnswer = (
+  params: Record<string, unknown>,
+  raw: unknown,
+  maximum: number,
+): string | undefined => {
+  const direct = boundedText(params["answer"], maximum);
+  if (direct !== undefined) return direct;
+  const selected = params["selected_options"] ?? params["selectedOptions"];
+  if (Array.isArray(selected)) {
+    const values = selected.flatMap((value) => {
+      const entry = boundedText(value, INTERACTION_MAX_OPTION_VALUE_CHARACTERS);
+      return entry === undefined ? [] : [entry];
+    });
+    if (values.length > 0) return values.join("、").slice(0, maximum);
+  }
+  if (typeof raw !== "string") return undefined;
+  const match = /["']?answer["']?\s*[:=]\s*["']([^"']+)["']/u.exec(raw);
+  return match?.[1] === undefined ? undefined : boundedText(match[1], maximum);
+};
+
+const mapInteractionHistory = (
+  toolName: unknown,
+  toolCall: Record<string, unknown> | undefined,
+  toolReturn: Record<string, unknown> | undefined,
+): InteractionHistory | undefined => {
+  const functionCall = isRecord(toolCall?.["functionCall"])
+    ? toolCall["functionCall"]
+    : undefined;
+  const direction =
+    colleagueDirection(toolName) ?? colleagueDirection(functionCall?.["name"]);
+  if (direction === undefined) return undefined;
+  const data = colleagueReturnData(toolReturn);
+  if (data === undefined) return undefined;
+  const status = boundedText(
+    data["status"],
+    INTERACTION_MAX_DISPLAY_TEXT_CHARACTERS,
+  );
+  const error = boundedText(
+    data["error"],
+    INTERACTION_MAX_DISPLAY_TEXT_CHARACTERS,
+  );
+  if (status === undefined && error === undefined) return undefined;
+  const { params, raw } = colleagueParameters(functionCall);
+  const interactionId =
+    boundedText(data["interactionId"], INTERACTION_MAX_ID_CHARACTERS) ??
+    boundedText(toolCall?.["toolId"], INTERACTION_MAX_ID_CHARACTERS);
+  if (interactionId === undefined) return undefined;
+  const question =
+    boundedText(data["question"], INTERACTION_MAX_QUESTION_CHARACTERS) ??
+    colleagueQuestion(params, raw, INTERACTION_MAX_QUESTION_CHARACTERS);
+  const answer =
+    colleagueText(data["answer"], INTERACTION_MAX_ANSWER_CHARACTERS) ??
+    colleagueAnswer(params, raw, INTERACTION_MAX_ANSWER_CHARACTERS);
+  const answeredBy = boundedText(
+    data["answeredBy"],
+    INTERACTION_MAX_DISPLAY_TEXT_CHARACTERS,
+  );
+  const parsed = interactionHistorySchema.safeParse({
+    kind: "interaction-history",
+    interactionId,
+    direction,
+    status: status ?? "error",
+    ...(question === undefined ? {} : { question }),
+    ...(answer === undefined ? {} : { answer }),
+    ...(answeredBy === undefined ? {} : { answeredBy }),
+    ...(typeof data["answeredAt"] === "number"
+      ? { answeredAt: data["answeredAt"] }
+      : {}),
+    ...(error === undefined ? {} : { error }),
+  });
+  return parsed.success ? parsed.data : undefined;
+};
+
 const eventIdentity = (dto: EventDto): string =>
   dto.eventId == null
     ? `event:${asId(dto.conversationId)}:${dto.createTimestamp}:${dto.eventScene}`
@@ -760,6 +913,10 @@ const mapToolTransition = (
     return undefined;
   }
   const interaction = mapAskUserResult(name, toolCall, toolReturn);
+  const interactionHistory =
+    interaction === undefined
+      ? mapInteractionHistory(name, toolCall, toolReturn)
+      : undefined;
   return {
     id: transitionId,
     status: mapEventStatus(dto.status),
@@ -775,6 +932,7 @@ const mapToolTransition = (
       ? {}
       : { toolReturn: normalizedToolReturn }),
     ...(interaction === undefined ? {} : { interaction }),
+    ...(interactionHistory === undefined ? {} : { interactionHistory }),
     ...extraRaw(dto, EVENT_KEYS),
   };
 };

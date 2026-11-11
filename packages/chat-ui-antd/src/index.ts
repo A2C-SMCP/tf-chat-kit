@@ -21,6 +21,19 @@ export {
   type AskUserInteractionResultViewProps,
 } from "./ask-user-interaction.js";
 export {
+  InteractionCard,
+  formatInteractionRemaining,
+  type InteractionCardProps,
+} from "./interaction-card.js";
+export {
+  InteractionQueue,
+  type InteractionQueueProps,
+} from "./interaction-queue.js";
+export {
+  InteractionHistoryView,
+  type InteractionHistoryViewProps,
+} from "./interaction-history.js";
+export {
   ChatConversationView,
   type ChatConversationViewProps,
   type ChatUiCommand,

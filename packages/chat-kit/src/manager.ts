@@ -14,6 +14,14 @@ import {
   type SessionProvider,
 } from "@turingfocus/chat-protocol";
 
+export {
+  managerChatIdentityMatches,
+  managerChatIdentityScope,
+  managerChatInlineVisible,
+  resolveManagerInteractionClient,
+  type ManagerChatIdentity,
+} from "./manager-identity.js";
+
 /** Structural port: hosts may also supply their own Manager integration. */
 export interface ManagerChatConnection {
   readonly target: {

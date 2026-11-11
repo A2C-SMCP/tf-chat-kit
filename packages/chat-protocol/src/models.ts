@@ -9,6 +9,7 @@ import {
   chatSnapshotParser,
   chatUpdateParser,
   conversationParser,
+  interactionHistoryParser,
   messageParser,
   runParser,
   timelineItemParser,
@@ -262,10 +263,25 @@ export interface AskUserInteractionResult {
   readonly error?: string | undefined;
 }
 
+/** Historical ask_colleague / answer_colleague tool event, rendered read-only. */
+export interface InteractionHistory {
+  readonly kind: "interaction-history";
+  readonly interactionId: string;
+  readonly direction: "ask" | "answer";
+  /** Server status stays open so unknown terminal reasons remain visible. */
+  readonly status: string;
+  readonly question?: string | undefined;
+  readonly answer?: string | undefined;
+  readonly answeredBy?: string | undefined;
+  readonly answeredAt?: number | undefined;
+  readonly error?: string | undefined;
+}
+
 export interface ToolEventTransition extends AgentEventTransition {
   readonly toolCall?: ToolCall | undefined;
   readonly toolReturn?: ToolReturn | undefined;
   readonly interaction?: AskUserInteractionResult | undefined;
+  readonly interactionHistory?: InteractionHistory | undefined;
 }
 
 interface AgentEventBase {
@@ -573,6 +589,9 @@ export const chatErrorSchema = createRuntimeSchema(chatErrorParser);
 export const capabilitiesSchema = createRuntimeSchema(capabilitiesParser);
 export const chatSnapshotSchema = createRuntimeSchema(chatSnapshotParser);
 export const chatUpdateSchema = createRuntimeSchema(chatUpdateParser);
+export const interactionHistorySchema = createRuntimeSchema(
+  interactionHistoryParser,
+);
 
 /** Stable identity used by Runtime upsert and deduplication. */
 export const getTimelineItemKey = (item: TimelineItem): string =>

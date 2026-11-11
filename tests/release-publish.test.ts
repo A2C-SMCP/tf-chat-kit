@@ -54,6 +54,7 @@ const createFixture = async () => {
       version: releaseVersion,
       channel: "next",
       tag: `v${releaseVersion}`,
+      releaseGroup: "all",
       commit: "b".repeat(40),
       packages,
     },
@@ -93,6 +94,32 @@ describe("protected npm publication", () => {
 
     expect(() => validateReleaseManifestForPublish(unsafe)).toThrow(
       /safe immutable artifacts/u,
+    );
+  });
+
+  it("rejects retired groups, legacy auth tags, and partial unified manifests", async () => {
+    const fixture = await createFixture();
+    const legacyGroup: Record<string, unknown> = structuredClone(
+      fixture.manifest,
+    );
+    legacyGroup["releaseGroup"] = "auth";
+    expect(() => validateReleaseManifestForPublish(legacyGroup)).toThrow(
+      /retired/u,
+    );
+    const legacyTag = structuredClone(fixture.manifest);
+    legacyTag.tag = `chat-auth-v${releaseVersion}`;
+    expect(() => validateReleaseManifestForPublish(legacyTag)).toThrow(
+      /identity fields/u,
+    );
+    const partial = structuredClone(fixture.manifest);
+    partial.packages.splice(0, 1);
+    expect(() => validateReleaseManifestForPublish(partial)).toThrow(
+      /complete unified group/u,
+    );
+    const mixed = structuredClone(fixture.manifest);
+    mixed.packages[1]!.version = "0.2.1-next.0";
+    expect(() => validateReleaseManifestForPublish(mixed)).toThrow(
+      /share one version/u,
     );
   });
 

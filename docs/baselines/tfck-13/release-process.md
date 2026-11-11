@@ -2,11 +2,11 @@
 
 ## 发布模型
 
-七个 `@turingfocus/*` 包是不可拆分的 fixed group：同一 release commit、同一 `0.x` 版本、同一
-dist-tag。`.github/workflows/release-pr.yml` 在 `main` 更新 Changesets 版本 PR，但不发布。
-`.github/workflows/release.yml` 只能从 `main` 手工触发，并引用 `npm-production` Environment；
-该引用会产生 GitHub Deployment 记录。发布清单记录 source commit、workflow run、tag、七个
-tarball 的 SHA-512 完整性和兼容证据。
+八个 `@turingfocus/*` 包是不可拆分的统一 fixed group：同一 release commit、同一 `0.x` 版本、
+同一 dist-tag、同一 `v<version>` 标签。`.github/workflows/release-pr.yml` 在 `main` 更新 Changesets
+版本 PR，但不发布。`.github/workflows/release.yml` 只能从 `main` 手工触发，并引用
+`npm-production` Environment；该引用会产生 GitHub Deployment 记录。发布清单记录 source commit、
+workflow run、tag、八个 tarball 的 SHA-512 完整性和兼容证据。
 
 `release/compatibility.json` 是机器可读门禁。Front、Office 和 Tauri 风格版本化消费者以及
 包级验证对 `next` 与 `latest` 都是硬门禁；`next` 只接受显式 prerelease（如
@@ -22,13 +22,31 @@ revision、`staging`/`production` 环境、HTTPS 执行记录、执行时间和 
 越界路径、mock 文档或不匹配内容均不能被报告为真实 E2E。真实 E2E 缺失或失败会保留为兼容风险，
 但不改变仓库内兼容门禁的结果。
 
+## 统一版本与标签（ADR-018）
+
+- 所有公开包（含 `@turingfocus/chat-auth`）统一版本、统一 fixed group、统一发布组。发布
+  workflow 不再提供 `group` 选择，也不接受 `expected-auth-version`、
+  `consumer-core-version`、`consumer-auth-version` 等独立版本覆盖参数；传入退休参数会 fail-closed。
+- 新版本使用不可移动的 `v<version>` 标签。历史 `chat-auth-v*` 标签保留保护、不移动、不复用，
+  但不再产生新的 auth 标签。
+- release manifest 始终记录八个包；`consumerPackages` 与发布包同名同版本。
+- 新增公开包默认加入统一组；若新包尚未在 npm 存在，仍按本手册的 bootstrap 流程处理。
+- 迁移期 `check:workspace` 只放行精确的 core 七包 `0.11.0` / auth `0.12.1` 旧状态；0.13.0
+  版本提交在 `main` 生成后必须移除该过渡分支（GitHub #172）。`check:changesets` 的入口脚本与
+  版本重放路径未改；release-plan 校验随八包 fixed group 收紧（不再允许独立包发布计划，并修复
+  空计划误接受）。在旧基线上对已升版本输出运行会失败，这是基线问题，不是实现缺陷。
+- 迁移前不得合并或发布旧的 `changeset-release/main` 分支；迁移后由 changesets/action 基于新
+  config 重新生成 0.13.0 版本 PR。若旧分支先被发布，auth 0.13.0 会被提前占用，统一目标必须
+  改成更高的新版本。
+
 ## GitHub 一次性配置
 
 Release Owner 需要单独审批并完成以下外部变更：
 
 1. 创建 `npm-production` Environment，只允许 `main`，配置 required reviewer，禁止管理员绕过。
-2. 建立 `main` Ruleset，要求 CI 成功和 PR 合并；为 `v*` 和 `chat-auth-v*` tag 建立 Ruleset，禁止更新和删除正式 tag，
-   并只给受控发布主体创建权限。
+2. 建立 `main` Ruleset，要求 CI 成功和 PR 合并；为 `v*` 和历史 `chat-auth-v*` tag 建立 Ruleset，
+   禁止更新和删除正式 tag，并只给受控发布主体创建权限。历史 `chat-auth-v*` 仅作为追溯记录保留，
+   不再新建。
 3. 保持 Actions 默认 token 为只读；仅两个 release workflow 使用文件内声明的最小权限。
 4. 首发时把短期 npm granular write token 写入 Environment secret
    `NPM_BOOTSTRAP_TOKEN`。不得写为仓库 secret，不得写入 `.npmrc`、源码或日志。
@@ -37,12 +55,12 @@ Release Owner 需要单独审批并完成以下外部变更：
 
 npm 只有在包存在后才能绑定 Trusted Publisher。因此首发采用一次性 bootstrap：
 
-1. 合并版本 PR并确认七包版本完全一致。
-2. 在 Actions 手工运行 `tf-chat-kit protected npm release`，输入精确版本，选择 `next` 和
+1. 合并版本 PR 并确认八包版本完全一致。
+2. 在 Actions 手工运行 `tf-chat-kit protected npm release`，输入精确的统一版本，选择 `next` 和
    `bootstrap-token`，由 Environment reviewer 审批。
 3. workflow 先执行完整质量门、打包并生成 release manifest，再创建或核对不可移动的 `v<version>`
    tag，随后使用固定的 npm 11.18.0 发布 tarball 并生成 provenance。
-4. 七个包在 Registry 完整性和无认证 consumer 验证全部通过后，workflow 才创建 GitHub Release。
+4. 八个包在 Registry 完整性和无认证 consumer 验证全部通过后，workflow 才创建 GitHub Release。
 5. 确认 Release Owner 的 npm 账号已启用 2FA，然后为每个包绑定 GitHub Actions Trusted
    Publisher：organization `A2C-SMCP`、repository `tf-chat-kit`、workflow `release.yml`、
    environment `npm-production`，allowed action **只选择 `npm publish`**，不授予 stage publish。
@@ -56,53 +74,30 @@ npm 只有在包存在后才能绑定 Trusted Publisher。因此首发采用一�
      --allow-publish
    ```
 
-6. 对七包分别运行 `npm trust list <package> --json`，核对 provider、repository、workflow、
+6. 对八包分别运行 `npm trust list <package> --json`，核对 provider、repository、workflow、
    environment 与 publish permission；删除 `NPM_BOOTSTRAP_TOKEN`，并在 npm 撤销该 token。
    后续发布只允许选择 `oidc`。
 
-如果固定组已有包已通过 OIDC 发布，后来经 Accepted ADR 新增一个尚不存在于 npm 的包，不得把
-bootstrap token 暴露给整个固定组。新增 `@turingfocus/chat-kit` 时使用一次性的
-`oidc-with-bootstrap-facade`：脚本在任何写入前确认旧六包均已存在、门面包完全不存在；旧包与
+如果固定组已通过 OIDC 发布，后来经 Accepted ADR 新增一个尚不存在于 npm 的包，不得把
+bootstrap token 暴露给整个固定组。新增 `@turingfocus/chat-kit` 时曾使用一次性的
+`oidc-with-bootstrap-facade`：脚本在任何写入前确认旧包均已存在、门面包完全不存在；旧包与
 门面首发后的恢复发布使用 OIDC，只有完全不存在的门面包子进程获得隔离的 token 和 npm userconfig。
 门面包首次成功后立即为其绑定与旧包相同的 Trusted Publisher，核对 trust 配置，然后删除
 Environment secret 并撤销 token。若门面包已经存在但目标版本缺失，该模式会失败关闭，必须在
-Trusted Publisher 配置完成后使用 `oidc`。
+Trusted Publisher 配置完成后使用 `oidc`。`@turingfocus/chat-auth` 已存在，0.13.0 统一发布
+应使用 `oidc`，不重新 bootstrap。
 
 任何身份、组织权限、包状态或 Trusted Publisher 核对失败都必须停止，E404 不能证明发布权限。
-
-## 可选认证包的独立发布（ADR-012 / #96）
-
-原有七包仍为 fixed group，`@turingfocus/chat-auth` 不加入该组。发布 workflow 的
-`group` 明确选择 `core`（仅七包）、`auth`（仅认证包）或 `all`（两组）。
-`expected-version` 对 `core`/`all` 指七包版本，对 `auth` 指认证包版本；`all` 还必须
-填写 `expected-auth-version`，例如七包 `0.8.3` 与认证包 `0.9.0`。所选包都必须符合
-同一 channel 的稳定/预发布语义，不能把不完整七包或七包不同版本作为独立批次发布。
-
-认证包单独发布使用不可移动的 `chat-auth-v<version>` 标签；七包/联合批次继续使用
-`v<core-version>`。不能复用已经指向其他提交或不同清单的源码标签；若七包已经发布，
-后续认证包发布应选择 `auth`。GitHub Release 只上传所选批次的 tarball，清单同时记录
-所有消费者所需的确切包版本。Registry consumer 验证使用 `--manifest` 按各包版本安装，
-同时覆盖启用认证与禁用认证的宿主。认证独立批次可用 `consumer-core-version` 明确指定
-已发布的七包版本；七包批次可用 `consumer-auth-version` 指定已发布认证版本。
-未填写时采用本次工作区打包版本；未选组不产生 npm 写入，其消费者版本必须已存在于 Registry。
-这允许先首发认证包并验证已发布七包，再发布七包新版验证该认证版本，无需发布整个固定组来
-bootstrap 认证包。所选组的版本不能被消费者参数覆盖。事故恢复命令按各包目标版本核对 dist-tag。
-
-首次新增认证包时，先选择 `auth` 与受保护的 `bootstrap-token`，只给认证包的首次
-批次使用 token；不要对已发布七包使用 bootstrap。认证包发布成功后立即绑定同样的
-Trusted Publisher、核对 trust 配置、删除并撤销 token，后续仅使用 OIDC。
-独立认证发布仍必须经过全部仓库内质量门、Environment 审批、provenance、Registry
-完整性与无认证消费者安装验证。代码支持与模拟 Registry 测试不代表实际 npm 发布完成。
 
 ## 常规发布
 
 1. 合并带 changeset 的功能 PR。
 2. 审核自动生成的 fixed-group 版本 PR：仓库内兼容矩阵未通过时不得生成或发布版本；选择
    prerelease 时保持 `.changeset/pre.json` 的 `next` 模式，稳定发布时退出 prerelease mode。
-3. 确认 `main` CI 与所有仓库内兼容消费者通过，手工触发 release workflow，填写版本、channel
+3. 确认 `main` CI 与所有仓库内兼容消费者通过，手工触发 release workflow，填写统一版本、channel
    和 `oidc`。
 4. Environment reviewer 对 commit、版本、兼容矩阵和 channel 进行审批。
-5. 下载 GitHub Release 中的 manifest，核对 npm provenance、source commit、tag 和七包 integrity。
+5. 下载 GitHub Release 中的 manifest，核对 npm provenance、source commit、tag 和八包 integrity。
 6. `latest` 必须发布新的稳定版本，不能把已存在的 `next` 版本原地改标；真实外部 E2E 状态随
    `release/compatibility.json` 进入报告，但不是切换 channel 的前置条件。
 
@@ -125,7 +120,7 @@ Registry consumer 验证按 release manifest 中每个包的确切版本安装 `
 `npm publish` 返回后会在约两分钟的固定上限内按退避间隔重新读取 Registry，同时等待目标版本、
 tarball integrity 与目标 dist-tag 可见。该短期对账只处理 npm 最终一致性，不会重新执行 publish；
 超限后仍失败并记录 Incident。相同 commit 的批准重跑可以补齐 integrity 完全一致且尚未发布的包；
-若七包已经全部成功，则跳过写入并继续无认证 Registry consumer 验证。GitHub Release 创建也可重入：
+若八包已经全部成功，则跳过写入并继续无认证 Registry consumer 验证。GitHub Release 创建也可重入：
 已存在 tarball 必须与当前制品字节一致；manifest 允许重跑产生新的 `runUrl`/`createdAt`，但其余不可变
 发布身份必须结构化完全一致。缺失 asset 才会补传，冲突 asset 直接失败。
 不能覆盖冲突版本或 Release asset。失败 workflow 会创建或更新 `[Release incident] v<version>` Issue。
@@ -137,6 +132,6 @@ Release Owner 应先核对事故清单和 Registry：
   版本；原来没有该 tag 时才移除。不得凭 `publish-attempted` 状态直接删除 tag。
 - 一旦恢复或移除任何 dist-tag，不再重跑旧版本，修复后发布新的 patch，并在后续 GitHub Release
   链接事故 Issue。
-- 不执行 `npm unpublish`，不覆盖版本，不移动或删除 `v*` tag。
+- 不执行 `npm unpublish`，不覆盖版本，不移动或删除 `v*` 或历史 `chat-auth-v*` tag。
 
 外部设置、bootstrap、正式发布、dist-tag 变更和事故处置都需要 Release Owner 单独授权。

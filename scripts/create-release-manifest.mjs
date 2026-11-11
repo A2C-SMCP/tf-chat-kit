@@ -2,12 +2,6 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import {
-  AUTH_PACKAGE_NAME,
-  releaseGroup,
-  releasePackageNames,
-} from "./release-group-policy.mjs";
-
 import readChangesets from "@changesets/read";
 
 import {
@@ -19,6 +13,22 @@ import {
   createReleaseManifest,
   loadCompatibilityPolicy,
 } from "./release-policy.mjs";
+
+const REQUIRED_ARGUMENTS = Object.freeze([
+  "channel",
+  "commit",
+  "run-url",
+  "expected-version",
+  "output",
+]);
+const RETIRED_ARGUMENTS = Object.freeze(
+  new Set([
+    "group",
+    "expected-auth-version",
+    "consumer-core-version",
+    "consumer-auth-version",
+  ]),
+);
 
 /**
  * @param {readonly { id: string }[]} changesets
@@ -51,29 +61,31 @@ export function parseReleaseManifestArguments(args) {
     if (!flag?.startsWith("--") || value === undefined) {
       throw new Error("release manifest arguments must be --flag value pairs.");
     }
-    values[flag.slice(2)] = value;
+    const name = flag.slice(2);
+    if (RETIRED_ARGUMENTS.has(name)) {
+      throw new Error(
+        `--${name} is retired; releases always include the complete unified package group.`,
+      );
+    }
+    if (!REQUIRED_ARGUMENTS.includes(name)) {
+      throw new Error(`unknown release manifest argument --${name}.`);
+    }
+    if (values[name] !== undefined) {
+      throw new Error(`duplicate release manifest argument --${name}.`);
+    }
+    values[name] = value;
   }
-  for (const required of [
-    "channel",
-    "commit",
-    "run-url",
-    "expected-version",
-    "output",
-  ]) {
+  for (const required of REQUIRED_ARGUMENTS) {
     if (!values[required]) {
       throw new Error(`missing required --${required} argument.`);
     }
   }
   return {
-    releaseGroup: releaseGroup(values["group"]),
-    expectedAuthVersion: values["expected-auth-version"],
-    consumerCoreVersion: values["consumer-core-version"],
-    consumerAuthVersion: values["consumer-auth-version"],
-    channel: values["channel"],
-    commit: values["commit"],
-    runUrl: values["run-url"],
-    expectedVersion: values["expected-version"],
-    output: values["output"],
+    channel: values["channel"] ?? "",
+    commit: values["commit"] ?? "",
+    runUrl: values["run-url"] ?? "",
+    expectedVersion: values["expected-version"] ?? "",
+    output: values["output"] ?? "",
   };
 }
 
@@ -91,54 +103,26 @@ export async function runCreateReleaseManifest(args) {
       "utf8",
     ),
   );
-  const { packages: allPackages } = await buildReleasePackages({
+  const { packages } = await buildReleasePackages({
     rootDirectory,
     packManifest,
   });
-  const packages = allPackages.filter(({ name }) =>
-    releasePackageNames(options.releaseGroup).includes(name),
-  );
   const version = packages[0]?.version;
-  if (
-    options.releaseGroup === "all" &&
-    allPackages.find(({ name }) => name === "@turingfocus/chat-auth")
-      ?.version !== options.expectedAuthVersion
-  ) {
-    throw new Error(
-      "all releases require --expected-auth-version matching the independent auth package.",
-    );
-  }
   if (version !== options.expectedVersion) {
     throw new Error(
       `packed version ${version} does not match requested ${options.expectedVersion}.`,
     );
   }
-  if (options.consumerCoreVersion && options.releaseGroup !== "auth")
-    throw new Error(
-      "--consumer-core-version is only valid for auth-only releases.",
-    );
-  if (options.consumerAuthVersion && options.releaseGroup !== "core")
-    throw new Error(
-      "--consumer-auth-version is only valid for core-only releases.",
-    );
   const manifest = createReleaseManifest({
     version: version ?? "",
-    releaseGroup: options.releaseGroup,
-    consumerPackages: allPackages.map(({ name, version }) => ({
-      name,
-      version:
-        name === AUTH_PACKAGE_NAME
-          ? options.consumerAuthVersion || version
-          : options.consumerCoreVersion || version,
-    })),
-    channel: options.channel ?? "",
-    commit: options.commit ?? "",
-    runUrl: options.runUrl ?? "",
+    channel: options.channel,
+    commit: options.commit,
+    runUrl: options.runUrl,
     createdAt: new Date().toISOString(),
     compatibility: await loadCompatibilityPolicy(rootDirectory),
     packages,
   });
-  const output = path.resolve(options.output ?? "");
+  const output = path.resolve(options.output);
   await mkdir(path.dirname(output), { recursive: true });
   await writeFile(output, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   console.log(`Created release manifest for ${manifest.tag}.`);

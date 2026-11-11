@@ -13,6 +13,7 @@ import * as enUSModule from "antd/es/locale/en_US.js";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -27,7 +28,7 @@ import {
   type ManagerClient,
   type ManagerRobot,
 } from "@turingfocus/chat-auth/manager";
-import { ChatProvider } from "@turingfocus/chat-react";
+import { ChatProvider, type InteractionClient } from "@turingfocus/chat-react";
 import {
   ChatCompactWorkspace,
   type ChatCompactDraft,
@@ -41,6 +42,21 @@ import { useManagerChat } from "./manager-react.js";
 import { managerUiCopy } from "./manager-ui-copy.js";
 import { managerUiStyle } from "./manager-ui-style.js";
 
+import {
+  managerChatIdentityScope,
+  managerChatInlineVisible,
+  resolveManagerInteractionClient,
+  type ManagerChatIdentity,
+} from "./manager-identity.js";
+
+export {
+  managerChatIdentityMatches,
+  managerChatIdentityScope,
+  managerChatInlineVisible,
+  resolveManagerInteractionClient,
+  type ManagerChatIdentity,
+} from "./manager-identity.js";
+
 export interface ManagerChatAppProps {
   readonly debug?: boolean | undefined;
   /** Show Auto / Split / Modal controls; defaults to true, independently of debug. */
@@ -50,6 +66,27 @@ export interface ManagerChatAppProps {
   /** Host-owned clients; the app never disposes them or persists credentials. */
   readonly auth: AuthClient;
   readonly manager: ManagerClient;
+  /** Host-owned Interaction client; the app never creates or disposes it. */
+  readonly interactionClient?: InteractionClient | null | undefined;
+  /**
+   * Identity of the injected client. Required for a non-null client unless the
+   * host explicitly opts into an unscoped client; a mismatch disables
+   * Interaction UI.
+   */
+  readonly interactionIdentity?: ManagerChatIdentity | undefined;
+  /**
+   * Explicit opt-in to use a non-null client without an asserted identity.
+   * Defaults to false because Manager can switch accounts and robots.
+   */
+  readonly allowUnscopedInteractionClient?: boolean | undefined;
+  /**
+   * Explicit opt-in to treat omitted identity fields as wildcards. Defaults to
+   * false: every asserted field must match the current Manager identity.
+   */
+  readonly allowWildcardInteractionIdentity?: boolean | undefined;
+  /** Called when the internal robot/platform/account identity changes. */
+  readonly onChatIdentityChange?:
+    ((identity: ManagerChatIdentity | undefined) => void) | undefined;
   /** Keep this configuration referentially stable. */
   readonly chat: Omit<
     ManagerChatControllerOptions<ManagerRobot>["chat"],
@@ -99,6 +136,22 @@ export function ManagerChatApp(props: ManagerChatAppProps) {
       props.requestTimeoutMs > 60_000)
   )
     throw new TypeError("Invalid Manager request timeout");
+  if (
+    props.interactionClient !== undefined &&
+    props.interactionClient !== null &&
+    props.interactionIdentity === undefined &&
+    props.allowUnscopedInteractionClient !== true
+  )
+    throw new TypeError(
+      "ManagerChatApp requires interactionIdentity for a non-null interactionClient; set allowUnscopedInteractionClient to opt into an unscoped client",
+    );
+  if (
+    props.interactionIdentity !== undefined &&
+    props.interactionIdentity.robotId.trim().length === 0
+  )
+    throw new TypeError(
+      "ManagerChatApp interactionIdentity requires a robotId",
+    );
   const requestBudget = useRef(props.requestTimeoutMs ?? 15_000);
   requestBudget.current = props.requestTimeoutMs ?? 15_000;
   const getDeadlineAt = useCallback(
@@ -222,6 +275,11 @@ function ManagerAppBinding({
   restoring,
   brand,
   getPopupContainer,
+  interactionClient,
+  interactionIdentity,
+  allowUnscopedInteractionClient = false,
+  allowWildcardInteractionIdentity = false,
+  onChatIdentityChange,
   debug = false,
   showEventDetailModeSelector = true,
   requestTimeoutMs = 15_000,
@@ -610,6 +668,61 @@ function ManagerAppBinding({
       : `${copy.directoryId}: ${value.employeeId ?? value.id}`;
   const activePlatformId =
     connection.status === "ready" ? connection.platformId : undefined;
+  const chatIdentityPlatformId =
+    typeof activePlatformId === "number" ? activePlatformId : chosenPlatform;
+  const chatIdentity = useMemo<ManagerChatIdentity | undefined>(
+    () =>
+      robot?.robotId === undefined
+        ? undefined
+        : {
+            ...(authState.account?.accountId === undefined
+              ? {}
+              : { accountId: authState.account.accountId }),
+            ...(authState.account?.organizationId === undefined
+              ? {}
+              : { organizationId: authState.account.organizationId }),
+            ...(auth.environment === undefined
+              ? {}
+              : { environment: auth.environment }),
+            ...(authState.user?.userId === undefined
+              ? {}
+              : { userId: authState.user.userId }),
+            ...(chatIdentityPlatformId === undefined
+              ? {}
+              : { platformId: chatIdentityPlatformId }),
+            robotId: robot.robotId,
+          },
+    [
+      auth.environment,
+      authState.account?.accountId,
+      authState.account?.organizationId,
+      authState.user?.userId,
+      chatIdentityPlatformId,
+      robot?.robotId,
+    ],
+  );
+  const chatIdentityKey =
+    chatIdentity === undefined ? "" : managerChatIdentityScope(chatIdentity);
+  const chatIdentityRef = useRef(chatIdentity);
+  chatIdentityRef.current = chatIdentity;
+  const onChatIdentityChangeRef = useRef(onChatIdentityChange);
+  onChatIdentityChangeRef.current = onChatIdentityChange;
+  useEffect(() => {
+    onChatIdentityChangeRef.current?.(chatIdentityRef.current);
+  }, [chatIdentityKey]);
+  const interactionClientForUi = resolveManagerInteractionClient(
+    interactionClient,
+    interactionIdentity,
+    chatIdentity,
+    {
+      allowUnscoped: allowUnscopedInteractionClient,
+      allowWildcards: allowWildcardInteractionIdentity,
+    },
+  );
+  const interactionScope =
+    chatIdentity === undefined
+      ? undefined
+      : managerChatIdentityScope(chatIdentity);
   const activePlatform = connection.platforms?.find(
     (p) => p.platformId === activePlatformId,
   );
@@ -895,6 +1008,12 @@ function ManagerAppBinding({
           ]}
           locale={locale}
           getDeadlineAt={deadline}
+          interactionClient={interactionClientForUi}
+          interactionScope={interactionScope}
+          interactionInlineVisible={managerChatInlineVisible(
+            screen,
+            staleIdentity,
+          )}
           onActivityChange={onActivityChange}
           restoredDraft={restoredDraft}
           onAccessDenied={onAccessDenied}

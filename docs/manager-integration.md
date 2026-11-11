@@ -150,7 +150,7 @@ Playground Manager 模式现在直接使用公共 `routed-server`，不经过 `/
 
 ## 0.10.0 单包接入与 test 验收
 
-认证入口随 chat-kit 一起安装，auth 叶子仍独立发布。React 的 ManagerChatProvider 支持
+认证入口随 chat-kit 一起安装，auth 叶子与核心包统一版本发布（[ADR-018](adr/018-unified-version-and-release.md)）。React 的 ManagerChatProvider 支持
 受控 platformId；JSON 会话的平台查询、空列表、403、失效 ID 与切换释放遵循
 [ADR-014](adr/014-auth-facade-and-server-contract.md)。
 

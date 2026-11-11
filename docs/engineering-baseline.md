@@ -2,7 +2,7 @@
 
 - 状态：Accepted for TFCK-2 implementation
 - 日期：2026-07-14
-- 适用范围：七个 `@turingfocus/*` workspace 包的构建、测试、打包与开发验证
+- 适用范围：八个 `@turingfocus/*` workspace 包的构建、测试、打包与开发验证
 
 ## 工具链
 
@@ -13,13 +13,18 @@
 | TypeScript       | 5.9.3                          | 生成 ESM 与声明文件，保留对现有 TypeScript 5.x 宿主的类型语法兼容 |
 | Test             | Vitest 4.1                     | 覆盖工程治理的正常、边界和错误路径                                |
 | Lint             | ESLint 9 + typescript-eslint 8 | 使用稳定 flat config，避免把最新主版本迁移混入脚手架任务          |
-| Release metadata | Changesets 2.31                | 七包配置为 fixed group，统一 `0.x` 版本                           |
+| Release metadata | Changesets 2.31                | 八包配置为 fixed group，统一 `0.x` 版本                           |
 
 包产物是未打包的 ESM、声明文件和 source map。Protocol、Runtime 与 Testing 编译时不包含
 DOM lib；React/UI 才启用 DOM 和 JSX。这样可以在工程层阻止浏览器或 UI 能力回流到 Headless
-核心。七个公共包默认也不允许 Node.js built-in 或 `process`/`Buffer` 等 Node 全局；确需平台
+核心。八个公共包默认也不允许 Node.js built-in 或 `process`/`Buffer` 等 Node 全局；确需平台
 能力时必须先在逐包 allowlist 中评审，不得让 Node 专属 API 破坏 Office、Tauri 或浏览器消费者。
 首个版本为 `0.1.0`，根仓库和所有包采用 MIT License，发布访问级别为 `public`。
+
+2026-11-10 起，`@turingfocus/chat-auth` 纳入同一 fixed group：八个公开包统一 `0.x` 版本、同一
+发布组与 `v<version>` 标签，见 [ADR-018](adr/018-unified-version-and-release.md)。迁移期的
+`check:workspace` 只放行精确的 core 七包 `0.11.0` / auth `0.12.1` 旧状态；0.13.0 版本提交在
+`main` 生成后必须移除该过渡分支（GitHub #172）。
 
 ## Peer dependency 基线
 
@@ -54,7 +59,7 @@ React 19 和 Ant Design 6 尚未经过目标宿主验证，不在 V1 支持矩�
 
 ## GitHub 与 npm 官方 Registry
 
-源码仓库为公开的 `https://github.com/A2C-SMCP/tf-chat-kit`。七个 `@turingfocus/*` package manifest
+源码仓库为公开的 `https://github.com/A2C-SMCP/tf-chat-kit`。八个 `@turingfocus/*` package manifest
 固定使用 `https://registry.npmjs.org/`、`public` access、MIT License 和与源码仓库精确匹配的
 repository metadata。
 
@@ -96,24 +101,24 @@ pnpm pack:workspace
 归属、lint、格式、类型、测试、构建、tarball 最终内容，以及临时消费者的离线安装、TypeScript
 构建和 ESM 运行。
 公共包变更必须包含描述 SemVer 影响的 changeset；尚未发布且无需升版的工程初始化可以使用带
-说明的 empty changeset，但仅在比较基线尚无七包且本次完整创建七包时放行。版本提交必须由
-比较基线中被消费的 release changeset 支撑，七包版本必须全部相对基线变化，并且包内只能包含
+说明的 empty changeset，但仅在比较基线尚无八包且本次完整创建八包时放行。版本提交必须由
+比较基线中被消费的 release changeset 支撑，八包版本必须全部相对基线变化，并且包内只能包含
 fixed group 的 `package.json` 和 `CHANGELOG.md` 输出；版本提交必须保持纯净，源码变更另行提交并
 提供新的 changeset。根清单、
-pnpm override 与七包清单都禁止源码路径依赖；公共包外部依赖采用按 dependency section 划分的
+pnpm override 与八包清单都禁止源码路径依赖；公共包外部依赖采用按 dependency section 划分的
 显式 allowlist，React 和 Ant Design 只允许作为 peer，`socket.io-client` 只允许作为
 `chat-gateway-tfrobot` 的生产依赖；`react-markdown`、`remark-gfm` 与 `rehype-sanitize`
 只允许作为 `chat-ui-antd` 的安全 Markdown 生产依赖，Monaco/xterm 等重 renderer 也只允许作为
-`chat-ui-antd` 的生产依赖。七包必须显式声明 `sideEffects`；当前纯入口使用 `false`，未来引入 CSS 等副作用时改为明确
+`chat-ui-antd` 的生产依赖。八包必须显式声明 `sideEffects`；当前纯入口使用 `false`，未来引入 CSS 等副作用时改为明确
 的文件模式列表。Changesets fixed-group release plan 是版本计算的唯一依据：
 待消费计划基于当前全部 pending changeset 计算且不得越过 0.x；已消费计划会在隔离 worktree 中
-使用固定版本的 Changesets CLI 在比较基线的全部 pending changeset 上重放，提交中的七包清单、
-七个 changelog 及 package 目录触碰文件集合必须与重放结果逐字匹配，不允许手工部分消费。
+使用固定版本的 Changesets CLI 在比较基线的全部 pending changeset 上重放，提交中的八包清单、
+八个 changelog 及 package 目录触碰文件集合必须与重放结果逐字匹配，不允许手工部分消费。
 GitHub Pull Request 使用 base SHA 计算 merge-base，`main` push 使用 event `before` SHA 覆盖
 本次 push 的完整提交范围；workflow 必须 checkout 完整历史，缺失或非法事件基线时门禁直接失败。
 npm organization 所有权已验证；Trusted Publishing 绑定与发布前权限复核仍由 TFCK-13 完成。
 
-`pnpm pack:workspace` 是独立可用的制品入口：它会先构建七包，再通过 `pnpm pack --json`
+`pnpm pack:workspace` 是独立可用的制品入口：它会先构建八包，再通过 `pnpm pack --json`
 逐包确认 tarball 包含 `dist/index.js`、`dist/index.d.ts` 和 `package.json`。`pack:check` 进一步实际
 解包，要求最终 manifest 与源码 manifest 经 workspace 版本解析后的结果完全一致、tarball 文件集合
 与 pack 输出一致，并扫描凭证、开发者绝对路径、宿主源码标记和源码依赖协议。即使从 clean

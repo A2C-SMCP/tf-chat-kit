@@ -19,7 +19,6 @@ import {
 } from "./workspace-policy.mjs";
 
 import {
-  releaseGroup,
   releaseSourceTag,
   validateReleaseGroup,
   registryConsumerPackages,
@@ -55,7 +54,7 @@ export const REGISTRY_RECONCILIATION_DELAYS_MS = Object.freeze([
  *   tag: string;
  *   commit: string;
  *   packages: ReleasePackage[];
- *   releaseGroup?: import("./release-group-policy.mjs").ReleaseGroup;
+ *   releaseGroup?: string;
  *   consumerPackages?: { name: string; version: string }[];
  * }} ReleaseManifest
  */
@@ -66,13 +65,17 @@ export function validateReleaseManifestForPublish(value) {
     throw new Error("release manifest must be an object.");
   }
   const manifest = /** @type {Record<string, unknown>} */ (value);
+  if (manifest["releaseGroup"] !== "all") {
+    throw new Error(
+      'release manifest releaseGroup must be "all"; independent core/auth release groups are retired.',
+    );
+  }
   if (
     typeof manifest["version"] !== "string" ||
     !isZeroMajorVersion(manifest["version"]) ||
     typeof manifest["channel"] !== "string" ||
     !RELEASE_CHANNELS.includes(manifest["channel"]) ||
-    manifest["tag"] !==
-      releaseSourceTag(manifest["releaseGroup"], manifest["version"]) ||
+    manifest["tag"] !== releaseSourceTag(manifest["version"]) ||
     typeof manifest["commit"] !== "string" ||
     !/^[0-9a-f]{40}$/u.test(manifest["commit"]) ||
     !Array.isArray(manifest["packages"])
@@ -90,12 +93,7 @@ export function validateReleaseManifestForPublish(value) {
     );
   }
   const packages = /** @type {ReleasePackage[]} */ (manifest["packages"]);
-  validateReleaseGroup(
-    packages,
-    releaseGroup(manifest["releaseGroup"]),
-    manifest["version"],
-    manifest["channel"],
-  );
+  validateReleaseGroup(packages, manifest["version"], manifest["channel"]);
   registryConsumerPackages(/** @type {ReleaseManifest} */ (value));
   if (
     packages.some(
@@ -108,7 +106,7 @@ export function validateReleaseManifestForPublish(value) {
     )
   ) {
     throw new Error(
-      "release manifest must contain the complete selected package group with safe immutable artifacts.",
+      "release manifest must contain the complete unified package group with safe immutable artifacts.",
     );
   }
   return /** @type {ReleaseManifest} */ (value);
