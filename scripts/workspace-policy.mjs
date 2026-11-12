@@ -311,6 +311,9 @@ const CHANGESET_CONFIG_POLICY = Object.freeze({
 });
 
 const ROOT_SCRIPT_POLICY = Object.freeze({
+  storybook: "storybook dev -p 6006 --host 127.0.0.1 --no-open",
+  "build:storybook": "storybook build -o .artifacts/storybook",
+  "typecheck:storybook": "tsc -p tsconfig.storybook.json --pretty false",
   build: "tsc -b --pretty false",
   "build:playground": "vite build --config playground/vite.config.ts",
   check:
@@ -321,9 +324,9 @@ const ROOT_SCRIPT_POLICY = Object.freeze({
   "check:workspace": "node scripts/check-workspace.mjs",
   clean: "node scripts/clean-workspace.mjs",
   format:
-    'prettier --write "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "playwright.config.ts" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "playground/**/*.{css,html,json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.{md,ts}" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/*.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
+    'prettier --write "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "playwright.config.ts" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "playground/**/*.{css,html,json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.{md,ts}" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/*.md" "docs/baselines/**/*.md" ".github/workflows/*.yml" ".storybook/**/*.{ts,tsx,css}" "stories/**/*.{ts,tsx}"',
   "format:check":
-    'prettier --check "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "playwright.config.ts" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "playground/**/*.{css,html,json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.{md,ts}" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/*.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
+    'prettier --check "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "playwright.config.ts" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "playground/**/*.{css,html,json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.{md,ts}" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/*.md" "docs/baselines/**/*.md" ".github/workflows/*.yml" ".storybook/**/*.{ts,tsx,css}" "stories/**/*.{ts,tsx}"',
   lint: "eslint . --max-warnings=0",
   "pack:check": "node scripts/verify-packed-artifacts.mjs",
   "pack:workspace": "node scripts/pack-workspace.mjs",
@@ -333,7 +336,7 @@ const ROOT_SCRIPT_POLICY = Object.freeze({
   "test:manager-browser":
     "pnpm pack:workspace && node scripts/verify-manager-browser.mjs",
   typecheck:
-    "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false && tsc -p playground/tsconfig.json --pretty false",
+    "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false && tsc -p playground/tsconfig.json --pretty false && pnpm run typecheck:storybook",
   "dev:playground":
     "vite --config playground/vite.config.ts --port 4311 --strictPort",
   changeset: "changeset",

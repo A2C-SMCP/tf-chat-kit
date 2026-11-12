@@ -349,3 +349,16 @@ Manager 编排仍会校验该 ID 存在。空列表表示没有可选平台；40
 直接使用 SessionProvider 的宿主可从 `chat-kit/headless` 导入
 `createTFRobotPlatformClient`，通过 `list({ deadlineAt, signal })` 读取平台，显式选择后
 传给 `createTFRobotChatClient`；切换平台时释放旧 client，结束时释放平台 client。
+
+## 组件与交互展示（Storybook）
+
+`pnpm storybook` 在 <http://127.0.0.1:6006> 启动组件目录；`pnpm build:storybook`
+生成 `.artifacts/storybook` 静态站点。包含新 Interaction/旧 AskUserTool、工作区、消息事件、
+输入与会话、状态恢复、认证和 Manager 接入示例。全局工具栏支持中英文、主题和宽度切换。
+展示使用受控数据，无需真实账号；真实环境联调继续使用 Playground。
+
+`pnpm typecheck:storybook` 检查展示源码；构建后运行
+`pnpm exec playwright test --config .storybook/playwright.config.ts` 验证所有 Story 与代表性交互。
+展示通过公共入口加载本仓库源码，不替代打包消费者验证，不进入八包发布产物。
+Storybook 10.6.7 的 React 声明中两处内联 `@ts-expect-error` 位置不被 TypeScript 5.9
+正确识别，`patches/@storybook__react@10.6.7.patch` 仅调整声明注释位置，保留严格类型检查。

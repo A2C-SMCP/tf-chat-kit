@@ -37,7 +37,11 @@ export default tseslint.config(
     },
   },
   {
-    files: ["playground/**/*.{ts,tsx}"],
+    files: [
+      "playground/**/*.{ts,tsx}",
+      "stories/**/*.{ts,tsx}",
+      ".storybook/**/*.{ts,tsx}",
+    ],
     languageOptions: {
       globals: {
         ...globals.browser,
