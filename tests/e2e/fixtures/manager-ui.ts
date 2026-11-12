@@ -1197,16 +1197,22 @@ export function registerManagerUiTests() {
     await page
       .getByRole("button", { name: "使用其他账号", exact: true })
       .click();
-    await expect(page.getByRole("dialog")).toBeVisible();
-    await page.getByRole("button", { name: "取消", exact: true }).click();
+    await (
+      await readyDialog(page)
+    )
+      .getByRole("button", { name: "取消", exact: true })
+      .click();
     await expect(page.getByRole("dialog")).not.toBeVisible();
     await expect(
       page.getByRole("heading", { name: "选择工作组织" }),
     ).toBeVisible();
     await page.getByRole("button", { name: /另一个组织/ }).click();
     await page.getByRole("button", { name: "进入组织" }).click();
-    await expect(page.getByRole("dialog")).toBeVisible();
-    await page.getByRole("button", { name: "确认", exact: true }).click();
+    const confirmation = await readyDialog(page);
+    await confirmation
+      .getByRole("button", { name: "确认", exact: true })
+      .click();
+    await expect(confirmation).toBeHidden();
     await page.getByRole("button", { name: /legacy/ }).click();
     await page.getByRole("button", { name: "使用这个机器人" }).click();
     await expect(page.locator("textarea:not([aria-hidden])")).toHaveValue("");
