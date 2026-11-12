@@ -1,5 +1,15 @@
 # @turingfocus/chat-protocol
 
+## 0.13.0
+
+### Minor Changes
+
+- 9c81d5b: Add the Interaction channel core for `ask_colleague`: protocol wire models and transport ports, a single-owner interaction sub-protocol on the shared `/remote-tool` transport, an instance-scoped Runtime `InteractionClient` with EDF queueing, snapshot reconciliation, ack handling and queue bounds, and explicit interaction-only/combined factories. RemoteTool behavior and `/chat` events are unchanged.
+
+### Patch Changes
+
+- f67cf28: Interaction core follow-ups: interaction-specific retry that re-handshakes the shared namespace and re-registers RemoteTool, namespace trailing-slash normalization, legacy `supportsAskUserAdapter` restricted to the Bundle, ack timeout aligned to the 60s transport budget, closed answered metadata backfill, shared tool-name normalization, and additional recovery/cleanup coverage.
+
 ## 0.11.0
 
 ### Minor Changes
