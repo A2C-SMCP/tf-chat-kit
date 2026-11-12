@@ -73,3 +73,7 @@ ADR-007 的以下决策继续有效：六包统一版本、SemVer 分类、初�
   第二个 scope。
 - 保持源码私有但包公开：无法获得完整的公开 provenance 与源码审计链路。
 - 在 TFCK-42 直接执行正式首发：会绕过 TFCK-13 的仓库内兼容矩阵和回滚门禁。
+
+> **2026-11-10 决策更新**：公开包集合与版本治理按 [ADR-018](018-unified-version-and-release.md)
+> 更新为八个 `@turingfocus/*` 包的统一 fixed group；本 ADR 的 GitHub 托管、MIT 许可证、npm 官方
+> Registry、Trusted Publishing、provenance 与标签不可变决策继续有效。

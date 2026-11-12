@@ -45,7 +45,7 @@ export function WordTaskPane() {
 
 验证命令：`pnpm test:manager-browser` 从 tarball 安装独立消费者，使用本地 HTTPS/Socket 服务运行浏览器测试。此项验证不等同于 test 集群或真实 Word WebView 的验收。
 
-认证原子组件新增 `AuthUiLabels.errors`（按安全错误码覆盖文案）与 `LoginPanel.showSessionError`（默认 true）；组合 UI 自己提示登录过期，避免重复错误。auth 随独立 Minor Changeset 增版，不与核心包强制同号。
+认证原子组件新增 `AuthUiLabels.errors`（按安全错误码覆盖文案）与 `LoginPanel.showSessionError`（默认 true）；组合 UI 自己提示登录过期，避免重复错误。auth 与核心包统一版本发布（ADR-018）。
 
 ## 工作上下文与切换（#135）
 

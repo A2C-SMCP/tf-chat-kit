@@ -4,7 +4,7 @@ TFRobot 聊天能力的可复用模块。项目采用 Headless Runtime、宿主�
 
 ## 当前状态
 
-项目处于 V1 纵向切片建设阶段。七包 workspace、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-kit` 通过 `headless`、`react`、`antd` 分层入口为不同宿主提供一个生产门面和实例安全的组合工厂。叶子包继续提供可裁剪的 Protocol、Runtime、Gateway、React、UI 与 Testing 能力，其中 Runtime、React 和 Ant Design UI 分别提供实例隔离的会话工作区编排、无样式订阅绑定和可直接挂载的成品工作区。真实 Gateway 与真实宿主 E2E 作为可选兼容观察记录；TFRobot `/remote-tool` 的多 Provider 与会话路由完成前，实时 Ask User 回答能力保持关闭。
+项目处于 V1 纵向切片建设阶段。八包 workspace（八包统一版本策略已落地，0.13.0 版本提交随后由 Changesets 生成）、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-kit` 通过 `headless`、`react`、`antd` 分层入口为不同宿主提供一个生产门面和实例安全的组合工厂。叶子包继续提供可裁剪的 Protocol、Runtime、Gateway、React、UI 与 Testing 能力，其中 Runtime、React 和 Ant Design UI 分别提供实例隔离的会话工作区编排、无样式订阅绑定和可直接挂载的成品工作区。真实 Gateway 与真实宿主 E2E 作为可选兼容观察记录；TFRobot `/remote-tool` 的多 Provider 与会话路由完成前，实时 Ask User 回答能力保持关闭。
 
 ## V1 承诺
 
@@ -38,7 +38,7 @@ chat-ui-antd -> chat-react -> chat-runtime -> chat-protocol
 chat-ui-antd -------------------------------> chat-protocol
                          chat-gateway-tfrobot -> chat-protocol
 chat-kit -> chat-auth/chat-ui-antd/chat-react/chat-runtime/chat-gateway-tfrobot/chat-protocol
-chat-auth (独立发布，门面显式 auth 子入口；react/antd 为可选 peer UI)
+chat-auth (门面显式 auth 子入口；react/antd 为可选 peer UI；与核心包统一版本)
                                   chat-testing -> chat-protocol
 ```
 
@@ -51,10 +51,10 @@ chat-auth (独立发布，门面显式 auth 子入口；react/antd 为可选 pee
 
 ## 登录、Chat Token 与会话接入
 
-以下接入示例面向目标版本 `0.10.0`（需本次变更发布后使用）；认证叶子包独立发布，由门面声明兼容依赖。已经有登录系统的宿主可以只使用核心包，并注入自己的 `SessionProvider`。
+以下接入示例面向目标版本 `0.13.0`（需本次变更发布后使用）；认证叶子包与核心包统一版本发布，由门面声明兼容依赖。已经有登录系统的宿主可以只使用核心包，并注入自己的 `SessionProvider`。
 
 ```bash
-pnpm add @turingfocus/chat-kit@0.10.0
+pnpm add @turingfocus/chat-kit@0.13.0
 # 使用下面的 React / Ant Design UI 时还需要：
 pnpm add react@^18.2.0 react-dom@^18.2.0 antd@^5.23.4
 ```
@@ -198,6 +198,61 @@ const gateway = createTFRobotChatGateway({
 
 当部署的 Server 能为初次 join 返回访问校验 ACK，并在重连 ACK 中提供经过验证的 durable replay cursor/outbox 完整性后，宿主应删除兼容配置，回到默认 `verified`。不要把 `current-server` 当作永久降级开关或在未知 Server 上自动探测启用。
 
+## Interaction 通道（可选）
+
+TFRobotServer 的 `ask_colleague` Interaction 通道通过共享 `/remote-tool` Socket.IO 连接收发
+`interaction_*` 事件。Kit 提供可选的 React / Ant Design 接入；宿主创建并持有
+`InteractionClient`，Kit 只消费它的实例快照。
+
+```tsx
+import { createTFRobotInteractionClient } from "@turingfocus/chat-kit/headless";
+import {
+  ChatWorkspace,
+  InteractionProvider,
+  InteractionQueue,
+} from "@turingfocus/chat-kit";
+
+const interaction = createTFRobotInteractionClient({
+  baseUrl,
+  socketPath,
+  robotId,
+  sessionProvider: {
+    getSession: async () => ({ kind: "bearer", token: await getChatToken() }),
+  },
+});
+
+// 方式 A：交给默认工作区；工作区渲染全局队列与内联卡片
+<ChatWorkspace interactionClient={interaction} getDeadlineAt={getDeadlineAt} />
+
+// 方式 B：完全自定义 React UI；宿主自己挂载队列
+<InteractionProvider client={interaction}>
+  <YourConversationView />
+  <InteractionQueue labels={labels} />
+</InteractionProvider>
+```
+
+`InteractionProvider` 不创建、不释放宿主传入的 client；切换环境、账号或机器人时，宿主应释放旧
+client 并创建新实例，不得跨身份共享。使用 `ManagerChatApp` 时同时传入 `interactionIdentity`
+并在 `onChatIdentityChange` 中替换 client；非 null client 缺少 identity 会直接报错，身份不匹配
+时默认 UI 会停用 Interaction（`allowUnscopedInteractionClient` / `allowWildcardInteractionIdentity`
+为显式逃生口）。作答草稿默认随 client 实例失效；传入稳定的 `interactionScope`
+（如 `managerChatIdentityScope(identity)`）可让同一身份下的 client 重建保留草稿，scope 变化则
+清空。需要与普通 RemoteTool 共用同一个 `/remote-tool` owner 时，使用
+`createTFRobotRemoteToolInteractionBundle`，并只由 bundle 负责最终释放连接。
+
+默认 Ant Design UI 在同一时刻只展示一个活跃问询：属于当前打开会话时内联显示，否则使用全局
+Modal；其余待回答项进入浮动队列角标。倒计时以 `expiresAt` 为准；提交结果区分 `submitting`、
+`accepted`、ack 超时和连接断开。工作区显式收到非 null `interactionClient` 时渲染内联卡与队列；
+未传 client 时整体继承外层 `InteractionProvider`（同一订阅、草稿 store 与 scope）以抑制
+legacy/Gateway pending，队列由宿主负责，避免重复渲染和草稿分裂。注入 Interaction client 时，
+legacy `AskUserRemoteTool` 的 pending 项与
+Gateway `pendingInteraction` 不再渲染，但已完成的历史结果仍保留；未注入时既有路径不变。
+不要在每个实例之间共享模块级 store。
+
+`supportsAskUserAdapter` 默认为 `false`；legacy adapter 只在 Bundle/传输层显式声明，宿主显式
+注册 legacy `ask_user` 时才需要开启。完整责任边界、生命周期与自定义界面接法见
+[宿主 App 接入指南](docs/host-app-integration.md#64-interaction-通道-ui170)。
+
 ## 文档
 
 - [宿主 App 接入指南](docs/host-app-integration.md)
@@ -236,9 +291,9 @@ Playground 不启动模拟后端，不包含 Mock 模式、演示消息或模拟
 检查前直接失败。显式使用 `--ignore-scripts` 会跳过前者，但不会绕过 `pnpm check`。
 
 `pnpm check` 会执行架构边界、lint、格式、类型、测试、构建、tarball 内容与安全检查，并在临时
-TypeScript 消费者中实际安装、构建和运行七个产物。宿主验证必须使用 tarball、npm prerelease
+TypeScript 消费者中实际安装、构建和运行八个产物。宿主验证必须使用 tarball、npm prerelease
 或 npm 官方 Registry 的正式版本，不得通过源码路径消费。
-`pnpm pack:workspace` 可从 clean workspace 直接构建并生成经过内容检查的七包 tarball。
+`pnpm pack:workspace` 可从 clean workspace 直接构建并生成经过内容检查的八包 tarball。
 
 Runtime V1 的时间轴性能门禁覆盖 5,000 个常驻条目上的 1,000 次连续增量更新，以及将 5,000
 个历史条目一次归并到 5,000 个当前条目。不可变快照会在每次可观察更新时复制时间轴的顶层数组，
@@ -275,7 +330,7 @@ import { createManagerChatController } from "@turingfocus/chat-kit/manager";
 
 `/auth/react`、`/auth/antd` 分别要求宿主提供相应 React、Ant Design peers。
 `/auth`、`/auth/tfrobot`、`/auth/manager` 无需 React/DOM。门面负责声明兼容的 auth 依赖；
-`chat-auth` 仍独立发布。已有 SessionProvider 接入不需要创建 AuthClient。
+`chat-auth` 与核心包统一版本发布（ADR-018）。已有 SessionProvider 接入不需要创建 AuthClient。
 
 当部署的 Server 使用 JSON 创建会话协议时，在 `chat` 配置中显式设置
 `conversationContract: "json-v2"`。默认 `query-v1` 保留旧 Server 查询参数协议；
@@ -294,3 +349,16 @@ Manager 编排仍会校验该 ID 存在。空列表表示没有可选平台；40
 直接使用 SessionProvider 的宿主可从 `chat-kit/headless` 导入
 `createTFRobotPlatformClient`，通过 `list({ deadlineAt, signal })` 读取平台，显式选择后
 传给 `createTFRobotChatClient`；切换平台时释放旧 client，结束时释放平台 client。
+
+## 组件与交互展示（Storybook）
+
+`pnpm storybook` 在 <http://127.0.0.1:6006> 启动组件目录；`pnpm build:storybook`
+生成 `.artifacts/storybook` 静态站点。包含新 Interaction/旧 AskUserTool、工作区、消息事件、
+输入与会话、状态恢复、认证和 Manager 接入示例。全局工具栏支持中英文、主题和宽度切换。
+展示使用受控数据，无需真实账号；真实环境联调继续使用 Playground。
+
+`pnpm typecheck:storybook` 检查展示源码；构建后运行
+`pnpm exec playwright test --config .storybook/playwright.config.ts` 验证所有 Story 与代表性交互。
+展示通过公共入口加载本仓库源码，不替代打包消费者验证，不进入八包发布产物。
+Storybook 10.6.7 的 React 声明中两处内联 `@ts-expect-error` 位置不被 TypeScript 5.9
+正确识别，`patches/@storybook__react@10.6.7.patch` 仅调整声明注释位置，保留严格类型检查。

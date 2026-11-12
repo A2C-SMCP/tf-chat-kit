@@ -81,18 +81,12 @@ const validateFixedGroupReleasePlan = (label, plan, errors) => {
   const releases = publicPlannedReleases(plan);
   const plannedNames = sortedUnique(releases.map(({ name }) => name));
   const expectedFixedNames = sortedUnique([...fixedPackageNames]);
-  const hasFixedPackage = plannedNames.some((name) =>
-    fixedPackageNames.has(name),
+  const includesEveryFixedPackage = expectedFixedNames.every((name) =>
+    plannedNames.includes(name),
   );
-  const isFixedRelease =
-    hasFixedPackage &&
-    expectedFixedNames.every((name) => plannedNames.includes(name));
-  const isIndependentRelease = plannedNames.every(
-    (name) => publicPackageNames.has(name) && !fixedPackageNames.has(name),
-  );
-  if (!isFixedRelease && !isIndependentRelease) {
+  if (!includesEveryFixedPackage) {
     errors.push(
-      `${label} release plan must include the complete fixed group or an independent package; expected fixed group ${expectedFixedNames.join(", ")}; found ${plannedNames.join(", ") || "<none>"}`,
+      `${label} release plan must include the complete fixed group; expected ${expectedFixedNames.join(", ")}; found ${plannedNames.join(", ") || "<none>"}`,
     );
   }
   for (const { name, newVersion } of releases) {

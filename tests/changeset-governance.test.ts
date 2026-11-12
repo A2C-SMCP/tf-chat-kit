@@ -106,6 +106,73 @@ describe("changeset governance", () => {
     ).toEqual([]);
   });
 
+  it("rejects a partial fixed-group release plan", () => {
+    const completePlan = fixedReleasePlan(
+      "minor",
+      "0.2.0",
+      releaseChangeset.id,
+    );
+    expect(
+      validateChangesetCoverage({
+        changedFiles: [runtimeSource],
+        addedChangesets: [releaseChangeset],
+        pendingChangesets: [releaseChangeset],
+        pendingReleasePlan: {
+          releases: completePlan.releases.filter(
+            ({ name }) => name !== "@turingfocus/chat-auth",
+          ),
+        },
+        isInitialWorkspaceBootstrap: false,
+      }),
+    ).toContainEqual(
+      expect.stringContaining(
+        "release plan must include the complete fixed group",
+      ),
+    );
+  });
+
+  it("rejects an empty release plan for pending public releases", () => {
+    expect(
+      validateChangesetCoverage({
+        changedFiles: [runtimeSource],
+        addedChangesets: [releaseChangeset],
+        pendingChangesets: [releaseChangeset],
+        pendingReleasePlan: { releases: [] },
+        isInitialWorkspaceBootstrap: false,
+      }),
+    ).toContainEqual(
+      expect.stringContaining(
+        "release plan must include the complete fixed group;",
+      ),
+    );
+  });
+
+  it("rejects a single independent package release plan", () => {
+    expect(
+      validateChangesetCoverage({
+        changedFiles: [runtimeSource],
+        addedChangesets: [releaseChangeset],
+        pendingChangesets: [releaseChangeset],
+        pendingReleasePlan: {
+          releases: [
+            {
+              name: "@turingfocus/chat-runtime",
+              type: "minor",
+              oldVersion: "0.1.0",
+              newVersion: "0.2.0",
+              changesets: [releaseChangeset.id],
+            },
+          ],
+        },
+        isInitialWorkspaceBootstrap: false,
+      }),
+    ).toContainEqual(
+      expect.stringContaining(
+        "release plan must include the complete fixed group",
+      ),
+    );
+  });
+
   it("rejects a changeset release for a different public package", () => {
     expect(
       validateChangesetCoverage({

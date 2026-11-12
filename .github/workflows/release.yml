@@ -4,29 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       expected-version:
-        description: Exact core version for all/core, or auth version for auth
+        description: Exact unified version for all eight public packages
         required: true
-        type: string
-      group:
-        description: Publish the fixed core group, independent auth, or both
-        required: true
-        default: all
-        type: choice
-        options:
-          - all
-          - core
-          - auth
-      expected-auth-version:
-        description: Exact independent auth version (required for group all)
-        required: false
-        type: string
-      consumer-core-version:
-        description: Optional already-published core version for auth-only consumers
-        required: false
-        type: string
-      consumer-auth-version:
-        description: Optional already-published auth version for core-only consumers
-        required: false
         type: string
       channel:
         description: npm dist-tag; both channels require repository-owned compatibility evidence
@@ -97,16 +76,8 @@ jobs:
         env:
           RELEASE_CHANNEL: ${{ inputs.channel }}
           EXPECTED_VERSION: ${{ inputs.expected-version }}
-          RELEASE_GROUP: ${{ inputs.group }}
-          EXPECTED_AUTH_VERSION: ${{ inputs.expected-auth-version }}
-          CONSUMER_CORE_VERSION: ${{ inputs.consumer-core-version }}
-          CONSUMER_AUTH_VERSION: ${{ inputs.consumer-auth-version }}
         run: |
           node scripts/create-release-manifest.mjs \
-            --consumer-core-version "${CONSUMER_CORE_VERSION}" \
-            --consumer-auth-version "${CONSUMER_AUTH_VERSION}" \
-            --group "${RELEASE_GROUP}" \
-            --expected-auth-version "${EXPECTED_AUTH_VERSION}" \
             --channel "${RELEASE_CHANNEL}" \
             --commit "${GITHUB_SHA}" \
             --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \

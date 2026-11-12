@@ -119,7 +119,82 @@ export const FIXED_PACKAGE_NAMES = Object.freeze([
   "@turingfocus/chat-ui-antd",
   "@turingfocus/chat-kit",
   "@turingfocus/chat-testing",
+  "@turingfocus/chat-auth",
 ]);
+
+/**
+ * One-time migration state for adopting the unified eight-package version.
+ *
+ * Before the migration the seven core packages shared 0.11.0 while
+ * `@turingfocus/chat-auth` advanced independently to 0.12.1. The governance
+ * PR that adds auth to the fixed group must be mergeable before the 0.13.0
+ * version commit exists, so this exact pre-migration mapping is the only
+ * mismatched version state that the normal fixed-group equality rule accepts.
+ *
+ * Remove this branch after the 0.13.0 version commit is generated on `main`
+ * (tracked in #172), unless the owner explicitly decides to keep it. Once all
+ * eight packages share one version this predicate can never match again.
+ */
+/**
+ * @type {Readonly<{
+ *   targetVersion: string;
+ *   versions: Readonly<Record<string, string>>;
+ * }>}
+ */
+export const UNIFIED_VERSION_MIGRATION = Object.freeze({
+  targetVersion: "0.13.0",
+  versions: Object.freeze({
+    "@turingfocus/chat-protocol": "0.11.0",
+    "@turingfocus/chat-runtime": "0.11.0",
+    "@turingfocus/chat-gateway-tfrobot": "0.11.0",
+    "@turingfocus/chat-react": "0.11.0",
+    "@turingfocus/chat-ui-antd": "0.11.0",
+    "@turingfocus/chat-kit": "0.11.0",
+    "@turingfocus/chat-testing": "0.11.0",
+    "@turingfocus/chat-auth": "0.12.1",
+  }),
+});
+
+/**
+ * @param {Readonly<Record<string, string | undefined>>} versionsByName
+ * @returns {boolean}
+ */
+export const isUnifiedVersionMigrationState = (versionsByName) => {
+  const expectedVersions = UNIFIED_VERSION_MIGRATION.versions;
+  const expectedNames = Object.keys(expectedVersions);
+  return (
+    expectedNames.length === FIXED_PACKAGE_NAMES.length &&
+    expectedNames.every(
+      (name) =>
+        FIXED_PACKAGE_NAMES.includes(name) &&
+        versionsByName[name] === expectedVersions[name],
+    )
+  );
+};
+
+/**
+ * The unified policy requires the fixed group to be exactly the complete
+ * public package set in PACKAGE_POLICY order. This runtime check keeps the two
+ * declarations from drifting when a public package is added or removed.
+ *
+ * @param {readonly string[]} fixedPackageNames
+ * @param {readonly string[]} publicPackageNames
+ * @returns {string[]}
+ */
+export function validateFixedGroupPolicy(
+  fixedPackageNames,
+  publicPackageNames,
+) {
+  if (
+    fixedPackageNames.length === publicPackageNames.length &&
+    fixedPackageNames.every((name, index) => name === publicPackageNames[index])
+  ) {
+    return [];
+  }
+  return [
+    "FIXED_PACKAGE_NAMES must equal the complete public package set in PACKAGE_POLICY order",
+  ];
+}
 
 /** @type {Readonly<Record<string, PackageRule>>} */
 export const PACKAGE_POLICY = Object.freeze({
@@ -236,6 +311,9 @@ const CHANGESET_CONFIG_POLICY = Object.freeze({
 });
 
 const ROOT_SCRIPT_POLICY = Object.freeze({
+  storybook: "storybook dev -p 6006 --host 127.0.0.1 --no-open",
+  "build:storybook": "storybook build -o .artifacts/storybook",
+  "typecheck:storybook": "tsc -p tsconfig.storybook.json --pretty false",
   build: "tsc -b --pretty false",
   "build:playground": "vite build --config playground/vite.config.ts",
   check:
@@ -246,9 +324,9 @@ const ROOT_SCRIPT_POLICY = Object.freeze({
   "check:workspace": "node scripts/check-workspace.mjs",
   clean: "node scripts/clean-workspace.mjs",
   format:
-    'prettier --write "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "playwright.config.ts" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "playground/**/*.{css,html,json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.{md,ts}" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/*.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
+    'prettier --write "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "playwright.config.ts" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "playground/**/*.{css,html,json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.{md,ts}" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/*.md" "docs/baselines/**/*.md" ".github/workflows/*.yml" ".storybook/**/*.{ts,tsx,css}" "stories/**/*.{ts,tsx}"',
   "format:check":
-    'prettier --check "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "playwright.config.ts" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "playground/**/*.{css,html,json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.{md,ts}" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/*.md" "docs/baselines/**/*.md" ".github/workflows/*.yml"',
+    'prettier --check "package.json" "pnpm-workspace.yaml" "tsconfig*.json" "eslint.config.mjs" "dependency-cruiser.config.mjs" "playwright.config.ts" "vitest.config.ts" "packages/**/*.{json,ts,tsx}" "playground/**/*.{css,html,json,ts,tsx}" "scripts/**/*.mjs" "tests/**/*.{md,ts}" "fixtures/**/*.json" "release/**/*.json" ".changeset/**/*.{json,md}" "README.md" "docs/project-charter.md" "docs/engineering-baseline.md" "docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md" "docs/adr/*.md" "docs/baselines/**/*.md" ".github/workflows/*.yml" ".storybook/**/*.{ts,tsx,css}" "stories/**/*.{ts,tsx}"',
   lint: "eslint . --max-warnings=0",
   "pack:check": "node scripts/verify-packed-artifacts.mjs",
   "pack:workspace": "node scripts/pack-workspace.mjs",
@@ -258,7 +336,7 @@ const ROOT_SCRIPT_POLICY = Object.freeze({
   "test:manager-browser":
     "pnpm pack:workspace && node scripts/verify-manager-browser.mjs",
   typecheck:
-    "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false && tsc -p playground/tsconfig.json --pretty false",
+    "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false && tsc -p playground/tsconfig.json --pretty false && pnpm run typecheck:storybook",
   "dev:playground":
     "vite --config playground/vite.config.ts --port 4311 --strictPort",
   changeset: "changeset",
@@ -2287,6 +2365,12 @@ export function validateWorkspaceSnapshot(snapshot) {
   const errors = [];
   const expectedDirectories = Object.keys(PACKAGE_POLICY);
   const actualDirectories = snapshot.packages.map(({ directory }) => directory);
+  errors.push(
+    ...validateFixedGroupPolicy(
+      FIXED_PACKAGE_NAMES,
+      Object.values(PACKAGE_POLICY).map(({ name }) => name),
+    ),
+  );
 
   if (
     stableObjectJson(snapshot.changesetConfig ?? {}) !==
@@ -2344,22 +2428,27 @@ export function validateWorkspaceSnapshot(snapshot) {
   validateDependencySources("root", snapshot.rootManifest, errors);
   validateRootOverrides(snapshot.rootManifest, errors);
 
+  const fixedPackages = snapshot.packages.filter(({ manifest }) =>
+    FIXED_PACKAGE_NAMES.includes(manifest.name ?? ""),
+  );
   const fixedVersions = [
-    ...new Set(
-      snapshot.packages
-        .filter(({ manifest }) =>
-          FIXED_PACKAGE_NAMES.includes(manifest.name ?? ""),
-        )
-        .map(({ manifest }) => manifest.version),
-    ),
+    ...new Set(fixedPackages.map(({ manifest }) => manifest.version)),
   ];
+  const fixedVersionsByName = Object.fromEntries(
+    fixedPackages.map(({ manifest }) => [
+      manifest.name ?? "",
+      manifest.version,
+    ]),
+  );
   const displayedVersions = fixedVersions.map((version) =>
     typeof version === "string" ? version : "<missing>",
   );
   if (fixedVersions.length !== 1) {
-    errors.push(
-      `workspace package versions must match within the fixed group; found ${sorted(displayedVersions).join(", ")}`,
-    );
+    if (!isUnifiedVersionMigrationState(fixedVersionsByName)) {
+      errors.push(
+        `workspace package versions must match within the fixed group; found ${sorted(displayedVersions).join(", ")}; only the approved one-time 0.11.0/0.12.1 migration state (planned target ${UNIFIED_VERSION_MIGRATION.targetVersion}) tracked by #172 is exempt`,
+      );
+    }
   } else if (
     typeof fixedVersions[0] !== "string" ||
     !isZeroMajorVersion(fixedVersions[0])

@@ -6,12 +6,17 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import {
   ChatStateView,
   createTFRobotChatClientFactory,
+  InteractionProvider,
+  InteractionQueue,
   OwnedChatProvider,
   useChatClient,
+  useInteractionQueue,
   type ChatClient,
   type ChatClientFactory,
   type ChatClientUnhandledError,
   type ChatError,
+  type InteractionClient,
+  type InteractionClientSnapshot,
   type SessionProvider,
   type TFRobotMessageCreatorProvider,
   type TFRobotSession,
@@ -573,4 +578,68 @@ export const runHostConsumerVerification = async (): Promise<void> => {
       !observableFailures.includes(second.expectedAuthorization),
     "diagnostics must not expose session material",
   );
+
+  const interactionNow = Date.now();
+  const interactionSnapshot: InteractionClientSnapshot = {
+    activeId: "interaction-1",
+    connection: "connected",
+    entries: {
+      "interaction-1": {
+        attempt: 0,
+        conversationId: "contract",
+        expiresAt: interactionNow + 30_000,
+        interactionId: "interaction-1",
+        multiSelect: false,
+        namespace: "/remote-tool",
+        options: [{ label: "Yes", value: "yes" }],
+        order: 1,
+        question: "Deploy?",
+        receivedAt: interactionNow,
+        requester: { id: "user-1", name: "Alice" },
+        robotId: "robot-1",
+        status: "pending",
+        target: { id: "user-2", kind: "human", name: "Bob" },
+        timeoutSeconds: 30,
+      },
+    },
+    now: interactionNow,
+  };
+  const interactionClient = {
+    activate: () => undefined,
+    dispose: () => undefined,
+    getSnapshot: () => interactionSnapshot,
+    respond: () => false,
+    retry: () => false,
+    subscribe: () => () => undefined,
+  } as unknown as InteractionClient;
+  const InteractionProbe = () => {
+    const queue = useInteractionQueue();
+    return createElement("div", {
+      "data-active": queue.active?.interactionId ?? "",
+      "data-connection": queue.connection,
+    });
+  };
+  let interactionRenderer: ReactTestRenderer | undefined;
+  await act(async () => {
+    interactionRenderer = create(
+      createElement(
+        InteractionProvider,
+        { client: interactionClient },
+        createElement(InteractionProbe),
+      ),
+    );
+    await flushMicrotasks();
+  });
+  check(
+    JSON.stringify(interactionRenderer?.toJSON()).includes("interaction-1"),
+    "the packed facade must expose a working InteractionProvider/useInteractionQueue",
+  );
+  check(
+    typeof InteractionQueue === "function",
+    "the packed facade must export InteractionQueue",
+  );
+  await act(async () => {
+    interactionRenderer?.unmount();
+    await flushMicrotasks();
+  });
 };

@@ -5,7 +5,12 @@ import {
   createManagerClient,
   type ManagerRobot,
 } from "@turingfocus/chat-kit/auth/manager";
-import { createManagerChatController } from "@turingfocus/chat-kit/manager";
+import {
+  createManagerChatController,
+  managerChatIdentityMatches,
+  managerChatIdentityScope,
+  resolveManagerInteractionClient,
+} from "@turingfocus/chat-kit/manager";
 
 const check = (value: unknown, message: string): void => {
   if (!value) throw new Error(message);
@@ -14,6 +19,41 @@ const check = (value: unknown, message: string): void => {
 export const runManagerConsumerVerification = async (
   host: "web" | "office" = "web",
 ): Promise<void> => {
+  const mappedIdentity = {
+    accountId: "account",
+    environment: "staging",
+    organizationId: "org",
+    platformId: 17,
+    robotId: "robot-a",
+    userId: "user",
+  };
+  check(
+    managerChatIdentityMatches(mappedIdentity, mappedIdentity),
+    "Packed Manager identity matcher rejected an exact identity",
+  );
+  check(
+    resolveManagerInteractionClient("client", undefined, mappedIdentity) ===
+      null,
+    "Packed Manager interaction client did not fail closed without an identity",
+  );
+  check(
+    resolveManagerInteractionClient("client", undefined, mappedIdentity, {
+      allowUnscoped: true,
+    }) === "client",
+    "Packed Manager unscoped opt-in was ignored",
+  );
+  check(
+    resolveManagerInteractionClient("client", mappedIdentity, {
+      ...mappedIdentity,
+      robotId: "robot-b",
+    }) === null,
+    "Packed Manager interaction client crossed a robot boundary",
+  );
+  check(
+    managerChatIdentityScope(mappedIdentity) !==
+      managerChatIdentityScope({ ...mappedIdentity, robotId: "robot-b" }),
+    "Packed Manager draft scope did not include the robot",
+  );
   for (const format of ["legacy", "alias"] as const) {
     const socketPath =
       format === "legacy"

@@ -71,3 +71,24 @@ export {
 export { useChatDiagnostics } from "./hooks.js";
 
 export { useAskUserRemoteTool } from "./hooks.js";
+
+export {
+  InteractionProvider,
+  useInteractionClient,
+  useHasInteractionClient,
+  useInteractionQueue,
+  useInteractionSnapshot,
+  type InteractionDraft,
+  type InteractionProviderProps,
+  type InteractionQueueState,
+  type InteractionSnapshot,
+  type InteractionView,
+} from "./interaction.js";
+export type {
+  InteractionClient,
+  InteractionClientSnapshot,
+  InteractionEntry,
+  InteractionResponseInput,
+  InteractionStaleReason,
+  InteractionStatus,
+} from "@turingfocus/chat-runtime";

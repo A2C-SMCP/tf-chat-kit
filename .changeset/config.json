@@ -10,7 +10,8 @@
       "@turingfocus/chat-react",
       "@turingfocus/chat-ui-antd",
       "@turingfocus/chat-kit",
-      "@turingfocus/chat-testing"
+      "@turingfocus/chat-testing",
+      "@turingfocus/chat-auth"
     ]
   ],
   "linked": [],

@@ -32,7 +32,8 @@
     "patchedDependencies": {
       "antd@5.23.4": "patches/antd@5.23.4.patch",
       "rc-cascader@3.33.1": "patches/rc-cascader@3.33.1.patch",
-      "rc-picker@4.9.2": "patches/rc-picker@4.9.2.patch"
+      "rc-picker@4.9.2": "patches/rc-picker@4.9.2.patch",
+      "@storybook/react@10.6.7": "patches/@storybook__react@10.6.7.patch"
     }
   },
   "scripts": {
@@ -43,8 +44,8 @@
     "check:changesets": "node scripts/check-changesets.mjs",
     "check:workspace": "node scripts/check-workspace.mjs",
     "clean": "node scripts/clean-workspace.mjs",
-    "format": "prettier --write \"package.json\" \"pnpm-workspace.yaml\" \"tsconfig*.json\" \"eslint.config.mjs\" \"dependency-cruiser.config.mjs\" \"playwright.config.ts\" \"vitest.config.ts\" \"packages/**/*.{json,ts,tsx}\" \"playground/**/*.{css,html,json,ts,tsx}\" \"scripts/**/*.mjs\" \"tests/**/*.{md,ts}\" \"fixtures/**/*.json\" \"release/**/*.json\" \".changeset/**/*.{json,md}\" \"README.md\" \"docs/project-charter.md\" \"docs/engineering-baseline.md\" \"docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md\" \"docs/adr/*.md\" \"docs/baselines/**/*.md\" \".github/workflows/*.yml\"",
-    "format:check": "prettier --check \"package.json\" \"pnpm-workspace.yaml\" \"tsconfig*.json\" \"eslint.config.mjs\" \"dependency-cruiser.config.mjs\" \"playwright.config.ts\" \"vitest.config.ts\" \"packages/**/*.{json,ts,tsx}\" \"playground/**/*.{css,html,json,ts,tsx}\" \"scripts/**/*.mjs\" \"tests/**/*.{md,ts}\" \"fixtures/**/*.json\" \"release/**/*.json\" \".changeset/**/*.{json,md}\" \"README.md\" \"docs/project-charter.md\" \"docs/engineering-baseline.md\" \"docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md\" \"docs/adr/*.md\" \"docs/baselines/**/*.md\" \".github/workflows/*.yml\"",
+    "format": "prettier --write \"package.json\" \"pnpm-workspace.yaml\" \"tsconfig*.json\" \"eslint.config.mjs\" \"dependency-cruiser.config.mjs\" \"playwright.config.ts\" \"vitest.config.ts\" \"packages/**/*.{json,ts,tsx}\" \"playground/**/*.{css,html,json,ts,tsx}\" \"scripts/**/*.mjs\" \"tests/**/*.{md,ts}\" \"fixtures/**/*.json\" \"release/**/*.json\" \".changeset/**/*.{json,md}\" \"README.md\" \"docs/project-charter.md\" \"docs/engineering-baseline.md\" \"docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md\" \"docs/adr/*.md\" \"docs/baselines/**/*.md\" \".github/workflows/*.yml\" \".storybook/**/*.{ts,tsx,css}\" \"stories/**/*.{ts,tsx}\"",
+    "format:check": "prettier --check \"package.json\" \"pnpm-workspace.yaml\" \"tsconfig*.json\" \"eslint.config.mjs\" \"dependency-cruiser.config.mjs\" \"playwright.config.ts\" \"vitest.config.ts\" \"packages/**/*.{json,ts,tsx}\" \"playground/**/*.{css,html,json,ts,tsx}\" \"scripts/**/*.mjs\" \"tests/**/*.{md,ts}\" \"fixtures/**/*.json\" \"release/**/*.json\" \".changeset/**/*.{json,md}\" \"README.md\" \"docs/project-charter.md\" \"docs/engineering-baseline.md\" \"docs/epics/001-chat-kit-v1-and-tfrobotfront-migration.md\" \"docs/adr/*.md\" \"docs/baselines/**/*.md\" \".github/workflows/*.yml\" \".storybook/**/*.{ts,tsx,css}\" \"stories/**/*.{ts,tsx}\"",
     "lint": "eslint . --max-warnings=0",
     "pack:check": "node scripts/verify-packed-artifacts.mjs",
     "pack:workspace": "node scripts/pack-workspace.mjs",
@@ -52,11 +53,14 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:manager-browser": "pnpm pack:workspace && node scripts/verify-manager-browser.mjs",
-    "typecheck": "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false && tsc -p playground/tsconfig.json --pretty false",
+    "typecheck": "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false && tsc -p playground/tsconfig.json --pretty false && pnpm run typecheck:storybook",
     "changeset": "changeset",
     "changeset:status": "changeset status",
     "dev:playground": "vite --config playground/vite.config.ts --port 4311 --strictPort",
-    "version-packages": "changeset version"
+    "version-packages": "changeset version",
+    "storybook": "storybook dev -p 6006 --host 127.0.0.1 --no-open",
+    "build:storybook": "storybook build -o .artifacts/storybook",
+    "typecheck:storybook": "tsc -p tsconfig.storybook.json --pretty false"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.5",
@@ -67,6 +71,9 @@
     "@changesets/read": "0.6.7",
     "@eslint/js": "9.39.5",
     "@playwright/test": "1.62.1",
+    "@storybook/addon-a11y": "10.6.7",
+    "@storybook/addon-docs": "10.6.7",
+    "@storybook/react-vite": "10.6.7",
     "@types/jsdom": "28.0.3",
     "@types/node": "24.13.3",
     "@types/npm-package-arg": "6.1.4",
@@ -87,6 +94,7 @@
     "react-test-renderer": "18.3.1",
     "socket.io": "4.8.3",
     "socket.io-client": "4.8.3",
+    "storybook": "10.6.7",
     "typescript": "5.9.3",
     "typescript-eslint": "8.64.0",
     "vite": "8.1.4",
