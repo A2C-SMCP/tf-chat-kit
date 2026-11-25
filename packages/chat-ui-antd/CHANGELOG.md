@@ -1,5 +1,13 @@
 # @turingfocus/chat-ui-antd
 
+## 0.14.0
+
+### Patch Changes
+
+- Updated dependencies [129c39f]
+  - @turingfocus/chat-react@0.14.0
+  - @turingfocus/chat-protocol@0.14.0
+
 ## 0.13.0
 
 ### Minor Changes
