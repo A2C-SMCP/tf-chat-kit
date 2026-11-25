@@ -294,7 +294,7 @@ const server = createListener((req, res) => {
       return;
     }
     if (url.pathname === "/__test/remote-invoke") {
-      const toolName = url.searchParams.get("tool") ?? "add";
+      const toolName = "add";
       const tool = sockets
         .flatMap((io) => [...io.of("/remote-tool").sockets.values()])
         .find((socket) => socket.data.registeredToolNames?.includes(toolName));
@@ -304,7 +304,7 @@ const server = createListener((req, res) => {
       }
       const params = JSON.parse(body);
       void tool
-        .timeout(toolName === "ask_user" ? 10_000 : 2000)
+        .timeout(2000)
         .emitWithAck("remote_tool_invoke", {
           providerId: tool.id,
           requestId: randomUUID(),

@@ -1,10 +1,5 @@
-import { Alert, Button, Input, Modal, Select, Space, Tag } from "antd";
+import { Alert, Button, Input, Select, Space, Tag } from "antd";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import {
-  AskUserInteractionCard,
-  resolveChatUiLabels,
-} from "@turingfocus/chat-kit";
-import type { AskUserRemoteTool } from "@turingfocus/chat-kit/headless";
 import { ManagerChatApp } from "@turingfocus/chat-kit/manager-antd";
 import { managerIdentityScope } from "@turingfocus/chat-kit/auth/manager";
 import {
@@ -34,50 +29,6 @@ const toolErrors: Readonly<Record<string, string>> = {
   transport: "网络连接失败，请检查机器人入口和网络。",
   "invalid-parameters": "收到的工具参数无效，请检查工具调用详情。",
 };
-const askUserLabels = resolveChatUiLabels({
-  askUserCancel: "取消",
-  askUserLabel: "需要你的回答",
-  askUserRequired: "此项必填",
-  askUserSubmit: "提交回答",
-  askUserSubmitting: "正在提交",
-});
-
-function AskUserDialog({
-  controller,
-  robotName,
-}: {
-  readonly controller: AskUserRemoteTool;
-  readonly robotName: string;
-}) {
-  const entries = useSyncExternalStore(
-    controller.subscribe,
-    controller.getSnapshot,
-  );
-  const entry = entries.find((item) => item.result === undefined);
-  if (!entry) return null;
-  const { request } = entry;
-  return (
-    <Modal
-      open
-      title={`ask_user · ${robotName}`}
-      footer={null}
-      closable={false}
-      keyboard={false}
-      maskClosable={false}
-    >
-      <AskUserInteractionCard
-        key={request.requestId}
-        labels={askUserLabels}
-        request={request}
-        answerDisabled={false}
-        onAnswer={(answer) =>
-          Promise.resolve(controller.answer(request.conversationId, answer))
-        }
-      />
-    </Modal>
-  );
-}
-
 function RemoteToolPanel({
   environment,
 }: {
@@ -124,8 +75,7 @@ function RemoteToolPanel({
         </Tag>
       </div>
       <p>
-        可为选中的机器人注册 <code>add</code> 或 <code>ask_user</code>
-        。工具连接无须选择聊天会话。
+        可为选中的机器人注册 <code>add</code>，无需选择聊天会话。
       </p>
       {!signedIn ? (
         <p>
@@ -187,20 +137,11 @@ function RemoteToolPanel({
         >
           注册 add
         </Button>
-        <Button
-          disabled={!selected || active || !signedIn}
-          onClick={() => {
-            if (selected) void tools.start(selected, "ask_user");
-          }}
-        >
-          注册 ask_user
-        </Button>
         <Button disabled={!active} onClick={tools.stop}>
           注销 RemoteTool
         </Button>
       </Space>
       {toolRobotName ? <p>工具机器人：{toolRobotName}</p> : null}
-      {state.toolName ? <p>当前工具：{state.toolName}</p> : null}
       {state.error ? (
         <Alert
           type="error"
@@ -219,11 +160,6 @@ function RemoteToolPanel({
           注册后，在该机器人的聊天中要求调用 add，例如「请调用 add 计算 12 +
           30」。下方仅显示服务端实际发起的调用。
         </p>
-        <strong>ask_user</strong>
-        <p>
-          为你控制的测试机器人注册后，向它发送「请用 ask_user
-          问我今天中午吃了什么」。该机器人发给本页的提问会在独立弹窗中显示。
-        </p>
       </div>
       <h3>add 调用记录</h3>
       <ol aria-label="add 调用记录">
@@ -237,9 +173,6 @@ function RemoteToolPanel({
       </ol>
       {state.calls.length === 0 ? (
         <p className="playground-muted">尚未收到调用。</p>
-      ) : null}
-      {state.askUser && toolRobotName ? (
-        <AskUserDialog controller={state.askUser} robotName={toolRobotName} />
       ) : null}
     </section>
   );
@@ -320,6 +253,12 @@ export function PlaygroundApp() {
                 {chatMounted ? "断开 Chat Kit" : "打开 Chat Kit"}
               </Button>
             </div>
+            {chatMounted ? (
+              <p className="playground-muted">
+                在支持 Interaction 的机器人中，发送「请用 ask_colleague
+                问我今天中午吃了什么」可体验会话内问询。
+              </p>
+            ) : null}
             <div className="playground-host-frame">
               {chatMounted ? (
                 <ManagerChatApp

@@ -31,6 +31,10 @@ export default defineConfig({
         workspaceRoot,
         "packages/chat-kit/src/headless.ts",
       ),
+      "@turingfocus/chat-auth/manager": path.join(
+        workspaceRoot,
+        "packages/chat-auth/src/manager.ts",
+      ),
       "@turingfocus/chat-gateway-tfrobot": packageSource(
         "chat-gateway-tfrobot",
       ),

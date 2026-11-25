@@ -23,6 +23,7 @@
 | [017](017-shared-socket-connection.md)                       | 可选的跨 namespace 共享连接上下文          | Accepted   |
 | [018](018-unified-version-and-release.md)                    | 八包统一版本与发布治理                     | Accepted   |
 | [019](019-interaction-channel-ui.md)                         | Interaction 通道 UI 接入与单一 pending 源  | Accepted   |
+| [020](020-manager-default-interaction.md)                    | ManagerChatApp 默认接入 Interaction        | Accepted   |
 
 ## 状态规则
 

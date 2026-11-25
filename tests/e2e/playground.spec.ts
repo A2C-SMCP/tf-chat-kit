@@ -1,5 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
-const MANAGER = "http://127.0.0.1:4312";
+import {
+  MANAGER,
+  interaction,
+  reset,
+  waitForReady,
+} from "./fixtures/interaction-channel-helpers.js";
 const chat = (page: Page) =>
   page.getByRole("region", { name: "Chat Kit 连接", exact: true });
 const tools = (page: Page) =>
@@ -21,7 +26,7 @@ async function environment(page: Page) {
     chat(page).getByRole("button", { name: /legacy/ }),
   ).toBeVisible();
 }
-async function register(page: Page, toolName = "add") {
+async function register(page: Page) {
   await tools(page)
     .getByRole("button", { name: "加载机器人", exact: true })
     .click();
@@ -30,7 +35,7 @@ async function register(page: Page, toolName = "add") {
     .press("ArrowDown");
   await page.getByTitle("legacy", { exact: true }).last().click();
   await tools(page)
-    .getByRole("button", { name: `注册 ${toolName}`, exact: true })
+    .getByRole("button", { name: "注册 add", exact: true })
     .click();
   await expect(tools(page).getByText("已注册", { exact: true })).toBeVisible();
 }
@@ -53,10 +58,17 @@ async function connectChat(page: Page) {
   await chat(page)
     .locator("textarea:not([aria-hidden])")
     .fill("Browser round trip");
+  const created = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/conversations"),
+  );
   await chat(page).getByRole("button", { name: "发送", exact: true }).click();
   await expect(
     chat(page).getByText("Direct browser reply", { exact: true }),
   ).toBeVisible();
+  const { data } = await (await created).json();
+  return String(data.conversationId);
 }
 test("default host UI uses test Manager and exposes no Mock or local simulation", async ({
   page,
@@ -84,54 +96,51 @@ test("default host UI uses test Manager and exposes no Mock or local simulation"
     ).toBeLessThanOrEqual(1);
   }
 });
-test("ask_user opens a reply dialog from a registered RemoteTool invocation", async ({
+test("ManagerChatApp connects automatically and answers in the active conversation", async ({
   page,
+  request,
 }) => {
+  await reset(request);
   await environment(page);
-  await register(page, "ask_user");
-  const invocation = page.request.post(
-    `${MANAGER}/__test/remote-invoke?tool=ask_user`,
-    {
-      data: {
-        questions: [
-          {
-            question: "What did you have for lunch?",
-            header: "Lunch",
-            options: [{ label: "Noodles", description: "A bowl of noodles" }],
-          },
-        ],
-      },
+  const conversationId = await connectChat(page);
+  await waitForReady(request, 1);
+  const interactionState = async () =>
+    (await request.get(`${MANAGER}/__test/interaction-state`)).json();
+  expect(await interactionState()).toMatchObject({ registerCalls: 0 });
+  await expect(
+    tools(page).getByRole("button", { name: "注册 ask_user" }),
+  ).toHaveCount(0);
+  const question = "May I use this draft?";
+  const emitted = await request.post(`${MANAGER}/__test/interaction-request`, {
+    data: {
+      interaction: interaction(
+        "playground-interaction",
+        question,
+        Date.now() + 30_000,
+        conversationId,
+      ),
     },
-  );
-  const dialog = page.getByRole("dialog", { name: "ask_user · legacy" });
-  await expect(dialog.getByText("What did you have for lunch?")).toBeVisible();
-  await dialog.getByRole("radio", { name: /Noodles/ }).check();
-  await dialog.getByRole("button", { name: "提交回答", exact: true }).click();
-  expect(await (await invocation).json()).toMatchObject({
-    success: true,
-    done: true,
-    resultForLlm: "1. What did you have for lunch?: Noodles",
   });
-  await expect(dialog).toHaveCount(0);
-  const cancelledInvocation = page.request.post(
-    `${MANAGER}/__test/remote-invoke?tool=ask_user`,
-    {
-      data: {
-        questions: [
-          { question: "Answer later?", header: "Follow-up", options: [] },
-        ],
+  expect(emitted.ok()).toBe(true);
+
+  const workspace = chat(page);
+  await expect(workspace.getByText(question, { exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog").getByText(question)).toHaveCount(0);
+  await workspace.getByLabel("Yes", { exact: true }).check();
+  await workspace.getByRole("button", { name: "提交", exact: true }).click();
+  await expect.poll(interactionState).toMatchObject({
+    registerCalls: 0,
+    responses: [
+      {
+        interactionId: "playground-interaction",
+        status: "answered",
+        selectedOptions: ["yes"],
       },
-    },
-  );
-  await expect(dialog.getByText("Answer later?")).toBeVisible();
-  await dialog.getByRole("button", { name: /^取\s*消$/u }).click();
-  expect(await (await cancelledInvocation).json()).toMatchObject({
-    success: false,
-    done: true,
-    error: "cancelled",
+    ],
   });
-  await expect(dialog).toHaveCount(0);
-  await expect(tools(page).getByRole("alert")).toHaveCount(0);
+  await expect(workspace.getByText(question, { exact: true })).toHaveCount(0);
+  await workspace.getByRole("button", { name: "断开 Chat Kit" }).click();
+  await expect.poll(interactionState).toMatchObject({ disconnects: 1 });
 });
 test("tool first: real registration and add dispatch share one socket with default chat and survive independent disposal", async ({
   page,
@@ -151,11 +160,16 @@ test("tool first: real registration and add dispatch share one socket with defau
     tools(page).getByRole("list", { name: "add 调用记录" }),
   ).toContainText("add(12, 30) = 42");
   await connectChat(page);
-  expect(await state(page)).toMatchObject({ engines: 1, chat: 1, tools: 1 });
+  await expect
+    .poll(() => state(page))
+    .toMatchObject({ engines: 2, chat: 1, tools: 1 });
   await chat(page)
     .getByRole("button", { name: "断开 Chat Kit", exact: true })
     .click();
   await expect(tools(page).getByText("已注册", { exact: true })).toBeVisible();
+  await expect
+    .poll(() => state(page))
+    .toMatchObject({ engines: 1, chat: 0, tools: 1 });
   expect(
     (
       await page.request.post(`${MANAGER}/__test/remote-invoke`, {
@@ -177,7 +191,9 @@ test("chat first: revoking and re-registering tools does not interrupt chat", as
   await environment(page);
   await connectChat(page);
   await register(page);
-  expect(await state(page)).toMatchObject({ engines: 1, chat: 1, tools: 1 });
+  await expect
+    .poll(() => state(page))
+    .toMatchObject({ engines: 2, chat: 1, tools: 1 });
   await tools(page)
     .getByRole("button", { name: "注销 RemoteTool", exact: true })
     .click();
@@ -199,7 +215,9 @@ test("chat first: revoking and re-registering tools does not interrupt chat", as
     .getByRole("button", { name: "注册 add", exact: true })
     .click();
   await expect(tools(page).getByText("已注册", { exact: true })).toBeVisible();
-  expect(await state(page)).toMatchObject({ engines: 1, chat: 1, tools: 1 });
+  await expect
+    .poll(() => state(page))
+    .toMatchObject({ engines: 2, chat: 1, tools: 1 });
   await page
     .getByRole("combobox", { name: "Manager 环境", exact: true })
     .press("ArrowDown");
@@ -210,11 +228,12 @@ test("chat first: revoking and re-registering tools does not interrupt chat", as
 test("explicit tool permission denial stays visible and leaves chat usable", async ({
   page,
 }) => {
+  await reset(page.request);
   await environment(page);
-  await connectChat(page);
   await page.request.post(`${MANAGER}/__test/tool-permission`, {
     data: { denied: true },
   });
+  await connectChat(page);
   await tools(page)
     .getByRole("button", { name: "加载机器人", exact: true })
     .click();
@@ -232,5 +251,5 @@ test("explicit tool permission denial stays visible and leaves chat usable", asy
   await expect(
     chat(page).getByRole("button", { name: "发送", exact: true }),
   ).toBeVisible();
-  expect(await state(page)).toMatchObject({ chat: 1, tools: 0 });
+  expect(await state(page)).toMatchObject({ engines: 1, chat: 1, tools: 0 });
 });

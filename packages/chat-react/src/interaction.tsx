@@ -264,6 +264,10 @@ export const useInteractionClient = (): InteractionClient | null => {
 export const useHasInteractionClient = (): boolean =>
   useInteractionClient() !== null;
 
+/** True when a parent provider supplies or explicitly disables Interaction. */
+export const useHasInteractionProvider = (): boolean =>
+  useContext(InteractionClientContext) !== null;
+
 export const useInteractionSnapshot = (): InteractionClientSnapshot => {
   const client = useInteractionClient();
   const subscribe = useCallback(
