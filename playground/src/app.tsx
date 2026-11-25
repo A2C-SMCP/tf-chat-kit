@@ -1,5 +1,10 @@
-import { Alert, Button, Input, Select, Space, Tag } from "antd";
+import { Alert, Button, Input, Modal, Select, Space, Tag } from "antd";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import {
+  AskUserInteractionCard,
+  resolveChatUiLabels,
+} from "@turingfocus/chat-kit";
+import type { AskUserRemoteTool } from "@turingfocus/chat-kit/headless";
 import { ManagerChatApp } from "@turingfocus/chat-kit/manager-antd";
 import { managerIdentityScope } from "@turingfocus/chat-kit/auth/manager";
 import {
@@ -22,13 +27,56 @@ const toolStatuses = {
 const toolErrors: Readonly<Record<string, string>> = {
   authentication: "认证或授权失败，请确认当前账号拥有 action:execute 权限。",
   "name-conflict":
-    "这个机器人的 add 工具已被其他 Provider 注册，请先注销该 Provider。",
+    "这个机器人的同名工具已被其他客户端注册，请先注销原注册或关闭对应的 TFRobotFront 标签页，再重试。",
   "registration-rejected": "服务端拒绝注册，请检查工具执行权限。",
   "invalid-ack": "服务端注册响应无效。",
   timeout: "连接或注册超时，请检查机器人状态和网络后重新注册。",
   transport: "网络连接失败，请检查机器人入口和网络。",
-  "invalid-parameters": "收到的 add 参数无效，需要两个有限数值。",
+  "invalid-parameters": "收到的工具参数无效，请检查工具调用详情。",
 };
+const askUserLabels = resolveChatUiLabels({
+  askUserCancel: "取消",
+  askUserLabel: "需要你的回答",
+  askUserRequired: "此项必填",
+  askUserSubmit: "提交回答",
+  askUserSubmitting: "正在提交",
+});
+
+function AskUserDialog({
+  controller,
+  robotName,
+}: {
+  readonly controller: AskUserRemoteTool;
+  readonly robotName: string;
+}) {
+  const entries = useSyncExternalStore(
+    controller.subscribe,
+    controller.getSnapshot,
+  );
+  const entry = entries.find((item) => item.result === undefined);
+  if (!entry) return null;
+  const { request } = entry;
+  return (
+    <Modal
+      open
+      title={`ask_user · ${robotName}`}
+      footer={null}
+      closable={false}
+      keyboard={false}
+      maskClosable={false}
+    >
+      <AskUserInteractionCard
+        key={request.requestId}
+        labels={askUserLabels}
+        request={request}
+        answerDisabled={false}
+        onAnswer={(answer) =>
+          Promise.resolve(controller.answer(request.conversationId, answer))
+        }
+      />
+    </Modal>
+  );
+}
 
 function RemoteToolPanel({
   environment,
@@ -56,6 +104,9 @@ function RemoteToolPanel({
   useEffect(() => setRobotId(undefined), [directory.identityRevision]);
   const active = state.status !== "idle";
   const selected = directory.items.find((robot) => robot.id === robotId);
+  const toolRobotName =
+    directory.items.find((robot) => robot.id === state.robotId)?.name ??
+    state.robotId;
   const load = () => {
     void manager.refresh().catch(() => undefined);
   };
@@ -73,8 +124,8 @@ function RemoteToolPanel({
         </Tag>
       </div>
       <p>
-        内置 <code>add(a, b)</code>
-        ，返回两个数的和。独立注册和注销，无须选择聊天会话。
+        可为选中的机器人注册 <code>add</code> 或 <code>ask_user</code>
+        。工具连接无须选择聊天会话。
       </p>
       {!signedIn ? (
         <p>
@@ -136,23 +187,29 @@ function RemoteToolPanel({
         >
           注册 add
         </Button>
+        <Button
+          disabled={!selected || active || !signedIn}
+          onClick={() => {
+            if (selected) void tools.start(selected, "ask_user");
+          }}
+        >
+          注册 ask_user
+        </Button>
         <Button disabled={!active} onClick={tools.stop}>
           注销 RemoteTool
         </Button>
       </Space>
-      {state.robotId ? (
-        <p>
-          工具机器人：
-          {directory.items.find((robot) => robot.id === state.robotId)?.name ??
-            state.robotId}
-        </p>
-      ) : null}
+      {toolRobotName ? <p>工具机器人：{toolRobotName}</p> : null}
+      {state.toolName ? <p>当前工具：{state.toolName}</p> : null}
       {state.error ? (
         <Alert
           type="error"
           showIcon
           message={
-            toolErrors[state.error] ?? "连接或工具调用失败，请注销后重试。"
+            state.status === "ready" && state.error === "timeout"
+              ? "工具调用已超时，可以在聊天中重新发起。"
+              : (toolErrors[state.error] ??
+                "连接或工具调用失败，请注销后重试。")
           }
         />
       ) : null}
@@ -162,8 +219,13 @@ function RemoteToolPanel({
           注册后，在该机器人的聊天中要求调用 add，例如「请调用 add 计算 12 +
           30」。下方仅显示服务端实际发起的调用。
         </p>
+        <strong>ask_user</strong>
+        <p>
+          为你控制的测试机器人注册后，向它发送「请用 ask_user
+          问我今天中午吃了什么」。该机器人发给本页的提问会在独立弹窗中显示。
+        </p>
       </div>
-      <h3>实际调用记录</h3>
+      <h3>add 调用记录</h3>
       <ol aria-label="add 调用记录">
         {state.calls.map(({ a, b, sum }, index) => (
           <li key={index}>
@@ -175,6 +237,9 @@ function RemoteToolPanel({
       </ol>
       {state.calls.length === 0 ? (
         <p className="playground-muted">尚未收到调用。</p>
+      ) : null}
+      {state.askUser && toolRobotName ? (
+        <AskUserDialog controller={state.askUser} robotName={toolRobotName} />
       ) : null}
     </section>
   );

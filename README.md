@@ -4,7 +4,7 @@ TFRobot 聊天能力的可复用模块。项目采用 Headless Runtime、宿主�
 
 ## 当前状态
 
-项目处于 V1 纵向切片建设阶段。八包 workspace（八包统一版本策略已落地，0.13.0 版本提交随后由 Changesets 生成）、统一构建测试配置和本地 tarball 验证已经建立；`@turingfocus/chat-kit` 通过 `headless`、`react`、`antd` 分层入口为不同宿主提供一个生产门面和实例安全的组合工厂。叶子包继续提供可裁剪的 Protocol、Runtime、Gateway、React、UI 与 Testing 能力，其中 Runtime、React 和 Ant Design UI 分别提供实例隔离的会话工作区编排、无样式订阅绑定和可直接挂载的成品工作区。真实 Gateway 与真实宿主 E2E 作为可选兼容观察记录；TFRobot `/remote-tool` 的多 Provider 与会话路由完成前，实时 Ask User 回答能力保持关闭。
+项目处于 V1 纵向切片建设阶段。八个公开包使用 Changesets 统一管理版本，仓库已建立统一构建测试配置和本地 tarball 验证。`@turingfocus/chat-kit` 通过 `headless`、`react`、`antd` 分层入口为不同宿主提供一个生产门面和实例安全的组合工厂。叶子包继续提供可裁剪的 Protocol、Runtime、Gateway、React、UI 与 Testing 能力，其中 Runtime、React 和 Ant Design UI 分别提供实例隔离的会话工作区编排、无样式订阅绑定和可直接挂载的成品工作区。真实 Gateway 与真实宿主 E2E 作为可选兼容观察记录。聊天工作区的实时问答需要宿主接入交互通道或提供可信会话路由。
 
 ## V1 承诺
 
@@ -280,9 +280,9 @@ pnpm pack:workspace
 页面仅保留两区：
 
 - **Chat Kit 连接**：在默认界面登录、选择组织与机器人，再选择真实平台开始聊天。可单独断开和重新打开。会话和消息直接来自真实服务，按默认宿主行为处理，不自动创建或删除测试会话。
-- **RemoteTool 连接**：共享本页身份，独立加载真实目录、选择机器人并注册 `add(a,b)`。无须先连接聊天或选择会话。注册后可要求同一机器人调用 add，页面仅记录真实 Server 调用及结果；注销工具不影响聊天，关闭聊天不影响工具。相同机器人复用同一底层 WebSocket。
+- **RemoteTool 连接**：共享本页身份，独立加载真实目录、选择机器人并注册 `add` 或 `ask_user`。注册后可要求同一机器人调用工具。`add` 显示调用记录。`ask_user` 在本页的机器人级弹窗接收和回答提问，适合在自己控制的测试机器人上验收。关闭聊天或切换会话时，工具保持独立连接。相同机器人复用同一底层 WebSocket。
 
-RemoteTool 专用 ManagerClient 显式配置 `robotSessionScopes: ["action:execute"]`；默认聊天仍申请 `chat:read chat:send`。权限不足或其他 Provider 已注册同名 add 时展示错误，不能绕过服务端授权。凭据仅在页面和 SDK 内存使用，不读取 `.debug`，不写入浏览器存储或日志。
+RemoteTool 专用 ManagerClient 显式配置 `robotSessionScopes: ["action:execute"]`；默认聊天仍申请 `chat:read chat:send`。如果同一机器人上的 TFRobotFront 页面已注册 `ask_user`，先关闭对应页面释放注册，再在 Playground 重试。凭据仅在页面和 SDK 内存使用，不读取 `.debug`，不写入浏览器存储或日志。
 
 Playground 不启动模拟后端，不包含 Mock 模式、演示消息或模拟调用入口。仓库中的受控 HTTP/Socket.IO 设施只用于自动化契约测试；真实集群验收步骤见 [Playground 验收说明](tests/e2e/acceptance.md)。
 

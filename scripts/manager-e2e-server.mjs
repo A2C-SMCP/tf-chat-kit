@@ -294,20 +294,21 @@ const server = createListener((req, res) => {
       return;
     }
     if (url.pathname === "/__test/remote-invoke") {
+      const toolName = url.searchParams.get("tool") ?? "add";
       const tool = sockets
         .flatMap((io) => [...io.of("/remote-tool").sockets.values()])
-        .find((socket) => socket.data.registered);
+        .find((socket) => socket.data.registeredToolNames?.includes(toolName));
       if (!tool) {
         reply({}, 409);
         return;
       }
       const params = JSON.parse(body);
       void tool
-        .timeout(2000)
+        .timeout(toolName === "ask_user" ? 10_000 : 2000)
         .emitWithAck("remote_tool_invoke", {
           providerId: tool.id,
           requestId: randomUUID(),
-          toolName: "add",
+          toolName,
           params,
         })
         .then((value) => reply(value))
@@ -900,16 +901,19 @@ const sockets = [
         return;
       }
       socket.data.registered = true;
+      const registeredToolNames = input.tools.map(
+        (/** @type {{toolName: string}} */ tool) => tool.toolName,
+      );
+      socket.data.registeredToolNames = registeredToolNames;
       reply({
         providerId: socket.id,
-        registeredToolNames: input.tools.map(
-          (/** @type {{toolName: string}} */ tool) => tool.toolName,
-        ),
+        registeredToolNames,
         error: null,
       });
     });
     socket.on("revoke", () => {
       socket.data.registered = false;
+      socket.data.registeredToolNames = [];
     });
   });
   return io;
