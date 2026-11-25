@@ -21,7 +21,7 @@ async function environment(page: Page) {
     chat(page).getByRole("button", { name: /legacy/ }),
   ).toBeVisible();
 }
-async function register(page: Page) {
+async function register(page: Page, toolName = "add") {
   await tools(page)
     .getByRole("button", { name: "加载机器人", exact: true })
     .click();
@@ -30,7 +30,7 @@ async function register(page: Page) {
     .press("ArrowDown");
   await page.getByTitle("legacy", { exact: true }).last().click();
   await tools(page)
-    .getByRole("button", { name: "注册 add", exact: true })
+    .getByRole("button", { name: `注册 ${toolName}`, exact: true })
     .click();
   await expect(tools(page).getByText("已注册", { exact: true })).toBeVisible();
 }
@@ -83,6 +83,55 @@ test("default host UI uses test Manager and exposes no Mock or local simulation"
       ),
     ).toBeLessThanOrEqual(1);
   }
+});
+test("ask_user opens a reply dialog from a registered RemoteTool invocation", async ({
+  page,
+}) => {
+  await environment(page);
+  await register(page, "ask_user");
+  const invocation = page.request.post(
+    `${MANAGER}/__test/remote-invoke?tool=ask_user`,
+    {
+      data: {
+        questions: [
+          {
+            question: "What did you have for lunch?",
+            header: "Lunch",
+            options: [{ label: "Noodles", description: "A bowl of noodles" }],
+          },
+        ],
+      },
+    },
+  );
+  const dialog = page.getByRole("dialog", { name: "ask_user · legacy" });
+  await expect(dialog.getByText("What did you have for lunch?")).toBeVisible();
+  await dialog.getByRole("radio", { name: /Noodles/ }).check();
+  await dialog.getByRole("button", { name: "提交回答", exact: true }).click();
+  expect(await (await invocation).json()).toMatchObject({
+    success: true,
+    done: true,
+    resultForLlm: "1. What did you have for lunch?: Noodles",
+  });
+  await expect(dialog).toHaveCount(0);
+  const cancelledInvocation = page.request.post(
+    `${MANAGER}/__test/remote-invoke?tool=ask_user`,
+    {
+      data: {
+        questions: [
+          { question: "Answer later?", header: "Follow-up", options: [] },
+        ],
+      },
+    },
+  );
+  await expect(dialog.getByText("Answer later?")).toBeVisible();
+  await dialog.getByRole("button", { name: /^取\s*消$/u }).click();
+  expect(await (await cancelledInvocation).json()).toMatchObject({
+    success: false,
+    done: true,
+    error: "cancelled",
+  });
+  await expect(dialog).toHaveCount(0);
+  await expect(tools(page).getByRole("alert")).toHaveCount(0);
 });
 test("tool first: real registration and add dispatch share one socket with default chat and survive independent disposal", async ({
   page,
