@@ -112,35 +112,25 @@ const InteractionQueueSubscriber = ({
   generation,
   children,
 }: {
-  readonly client: InteractionClient;
+  readonly client: InteractionClient | null;
   readonly scope: string | undefined;
   readonly generation: number;
   readonly children?: ReactNode | undefined;
 }) => {
   // Same identity + new client keeps drafts; a new identity or an unscoped
   // client replacement never exposes an old draft.
-  const draftKey: unknown = scope === undefined ? client : scope;
+  const draftKey: unknown = client === null ? null : (scope ?? client);
   const drafts = useRef(new Map<string, StoredDraft>());
-  const subscribe = useCallback(
-    (onStoreChange: () => void) => client.subscribe(onStoreChange),
-    [client],
-  );
-  const getSnapshot = useCallback(() => client.getSnapshot(), [client]);
-  const getServerSnapshot = useCallback(() => EMPTY_INTERACTION_SNAPSHOT, []);
-  const snapshot = useSyncExternalStore(
-    subscribe,
-    getSnapshot,
-    getServerSnapshot,
-  );
+  const snapshot = useInteractionSnapshot();
   const activate = useCallback(
     (interactionId: string): void => {
-      client.activate(interactionId);
+      client?.activate(interactionId);
     },
     [client],
   );
   const respond = useCallback(
     (interactionId: string, input: InteractionResponseInput): boolean =>
-      client.respond(interactionId, input),
+      client?.respond(interactionId, input) ?? false,
     [client],
   );
   useEffect(() => {
@@ -171,6 +161,7 @@ const InteractionQueueSubscriber = ({
     [draftKey],
   );
   const queue = useMemo<InteractionQueueState>(() => {
+    if (client === null) return EMPTY_QUEUE_STATE;
     const live = Object.values(snapshot.entries).filter(
       (entry) => entry.status !== "closed",
     );
@@ -195,7 +186,7 @@ const InteractionQueueSubscriber = ({
       getDraft,
       setDraft,
     };
-  }, [activate, generation, getDraft, respond, setDraft, snapshot]);
+  }, [activate, client, generation, getDraft, respond, setDraft, snapshot]);
 
   return (
     <InteractionQueueContext.Provider value={queue}>
@@ -237,21 +228,16 @@ export const InteractionProvider = ({
   // second store, or inline and modal cards would lose each other's drafts.
   if (client === undefined && parent !== null) return <>{children}</>;
 
+  // Keep the chat subtree mounted as the Interaction client becomes ready.
   return (
     <InteractionClientContext.Provider value={value}>
-      {resolved === null ? (
-        <InteractionQueueContext.Provider value={EMPTY_QUEUE_STATE}>
-          {children}
-        </InteractionQueueContext.Provider>
-      ) : (
-        <InteractionQueueSubscriber
-          client={resolved}
-          generation={clientKeyState.generation}
-          scope={scope}
-        >
-          {children}
-        </InteractionQueueSubscriber>
-      )}
+      <InteractionQueueSubscriber
+        client={resolved}
+        generation={clientKeyState.generation}
+        scope={scope}
+      >
+        {children}
+      </InteractionQueueSubscriber>
     </InteractionClientContext.Provider>
   );
 };
