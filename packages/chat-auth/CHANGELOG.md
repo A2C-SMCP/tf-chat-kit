@@ -1,5 +1,11 @@
 # @turingfocus/chat-auth
 
+## 0.13.0
+
+### Minor Changes
+
+- f535556: Allow hosts to request explicit Robot session scopes through Manager, including action:execute for RemoteTool providers. Existing chat-only defaults remain unchanged.
+
 ## 0.12.1
 
 ### Patch Changes
