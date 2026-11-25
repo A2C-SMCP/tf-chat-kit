@@ -1,5 +1,19 @@
 # @turingfocus/chat-ui-antd
 
+## 0.13.0
+
+### Minor Changes
+
+- 9f8ad7a: Add the optional Interaction channel UI for `ask_colleague`: an instance-scoped `InteractionProvider` and hooks over the Runtime `InteractionClient`, a single-active Ant Design queue that consumes the Runtime EDF/active state, an interaction card supporting single-select, multi-select and free text, inline/modal display, read-only interaction history, and coexistence rules with the legacy `AskUserRemoteTool` and Gateway `pendingInteraction` paths. Existing hosts that do not inject an interaction client keep their current behavior.
+
+### Patch Changes
+
+- Updated dependencies [9c81d5b]
+- Updated dependencies [f67cf28]
+- Updated dependencies [9f8ad7a]
+  - @turingfocus/chat-protocol@0.13.0
+  - @turingfocus/chat-react@0.13.0
+
 ## 0.11.0
 
 ### Minor Changes

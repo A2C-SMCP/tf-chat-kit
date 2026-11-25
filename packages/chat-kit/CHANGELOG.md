@@ -1,5 +1,30 @@
 # @turingfocus/chat-kit
 
+## 0.13.0
+
+### Minor Changes
+
+- 9c81d5b: Add the Interaction channel core for `ask_colleague`: protocol wire models and transport ports, a single-owner interaction sub-protocol on the shared `/remote-tool` transport, an instance-scoped Runtime `InteractionClient` with EDF queueing, snapshot reconciliation, ack handling and queue bounds, and explicit interaction-only/combined factories. RemoteTool behavior and `/chat` events are unchanged.
+- 9f8ad7a: Add the optional Interaction channel UI for `ask_colleague`: an instance-scoped `InteractionProvider` and hooks over the Runtime `InteractionClient`, a single-active Ant Design queue that consumes the Runtime EDF/active state, an interaction card supporting single-select, multi-select and free text, inline/modal display, read-only interaction history, and coexistence rules with the legacy `AskUserRemoteTool` and Gateway `pendingInteraction` paths. Existing hosts that do not inject an interaction client keep their current behavior.
+- fb4420b: Add createTFRobotSocketConnection for explicit instance-local sharing of one WebSocket by chat and RemoteTool namespaces. Each namespace retains its own authentication, recovery and disposal lifecycle; existing independent connection defaults remain compatible.
+
+### Patch Changes
+
+- 6caea4e: Fix mismatched account and password input heights in the Manager login screen.
+- f67cf28: Interaction core follow-ups: interaction-specific retry that re-handshakes the shared namespace and re-registers RemoteTool, namespace trailing-slash normalization, legacy `supportsAskUserAdapter` restricted to the Bundle, ack timeout aligned to the 60s transport budget, closed answered metadata backfill, shared tool-name normalization, and additional recovery/cleanup coverage.
+- f535556: Allow hosts to request explicit Robot session scopes through Manager, including action:execute for RemoteTool providers. Existing chat-only defaults remain unchanged.
+- Updated dependencies [9c81d5b]
+- Updated dependencies [f67cf28]
+- Updated dependencies [9f8ad7a]
+- Updated dependencies [f535556]
+- Updated dependencies [fb4420b]
+  - @turingfocus/chat-protocol@0.13.0
+  - @turingfocus/chat-gateway-tfrobot@0.13.0
+  - @turingfocus/chat-runtime@0.13.0
+  - @turingfocus/chat-react@0.13.0
+  - @turingfocus/chat-ui-antd@0.13.0
+  - @turingfocus/chat-auth@0.13.0
+
 ## 0.11.0
 
 ### Minor Changes
