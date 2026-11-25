@@ -287,6 +287,28 @@ afterEach(() => {
 });
 
 describe("InteractionProvider", () => {
+  it("preserves the mounted composer when the Interaction client becomes ready", async () => {
+    const { client } = setup();
+    const content = createElement("textarea");
+    const view = await render(
+      createElement(InteractionProvider, undefined, content),
+    );
+    try {
+      const composer = view.container.querySelector("textarea")!;
+      await setValue(composer, "An unsent chat message");
+      await act(async () => {
+        view.root.render(
+          createElement(InteractionProvider, { client }, content),
+        );
+      });
+      expect(view.container.querySelector("textarea")).toBe(composer);
+      expect(composer.value).toBe("An unsent chat message");
+    } finally {
+      await view.unmount();
+      client.dispose();
+    }
+  });
+
   it("renders without a provider, inherits an outer client and supports null disable", async () => {
     const empty = await render(createElement(Probe));
     expect(empty.container.textContent).toBe(

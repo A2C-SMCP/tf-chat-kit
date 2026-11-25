@@ -555,10 +555,21 @@ const changeEventDetailSplitRatio = useCallback((ratio: number) => {
 
 ### 6.4 Interaction 通道 UI（#170）
 
-Interaction 通道（`ask_colleague`）是 `/remote-tool` 上的通用人机交互信封。Kit 的 UI 只消费
-宿主创建的实例级 `InteractionClient`，不创建连接、不注册工具、不持有身份。
+Interaction 通道（`ask_colleague`）是 `/remote-tool` 上的通用人机交互协议。
 
-#### 创建与所有权
+#### ManagerChatApp 默认接入
+
+宿主按原有方式传入 `auth`、`manager` 和 `chat`。聊天就绪后，`ManagerChatApp` 通过传入的
+ManagerClient 为当前机器人获取独立的 `action:execute` 会话。服务端完成 Interaction 握手后，
+当前会话中的问询在聊天区内联显示。其他会话的问询沿用队列弹窗。权限不足或服务端未完成握手时，
+聊天可继续使用。组件会在身份或平台变化、聊天释放及卸载时关闭自己的连接。
+
+省略 `interactionClient` 时，已有的外层 InteractionProvider 优先由组件继承，队列仍由宿主管理。
+传入 `interactionClient={null}` 可关闭，或传入自管的 client 替换默认连接。默认连接
+有独立的 Socket.IO transport。已有 RemoteTool 的宿主如需共用一个 `/remote-tool` 通道，
+可传入下文 bundle 的 `interaction` 和对应的 `interactionIdentity`。
+
+#### 手动创建与所有权
 
 ```ts
 import { createTFRobotInteractionClient } from "@turingfocus/chat-kit/headless";

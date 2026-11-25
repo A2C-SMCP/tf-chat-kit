@@ -19,6 +19,7 @@ export {
   InteractionProvider,
   useInteractionClient,
   useHasInteractionClient,
+  useHasInteractionProvider,
   useInteractionQueue,
   useInteractionSnapshot,
   type InteractionDraft,

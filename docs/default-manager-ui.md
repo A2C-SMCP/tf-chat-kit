@@ -24,7 +24,7 @@ export function WordTaskPane() {
 }
 ```
 
-需要安装兼容的 React、React DOM、Ant Design peers；凭据存储与可信服务地址配置见 [Manager 集成指南](manager-integration.md)。每个独立宿主实例应持有自己的客户端。组件只释放内部创建的聊天控制器；宿主在最终卸载时释放 `auth` 和 `manager`。
+需要安装兼容的 React、React DOM、Ant Design peers；凭据存储与可信服务地址配置见 [Manager 集成指南](manager-integration.md)。每个独立宿主实例应持有自己的客户端。组件释放内部创建的聊天控制器和交互连接；宿主在最终卸载时释放 `auth` 和 `manager`。
 
 可选属性：
 
@@ -46,6 +46,14 @@ export function WordTaskPane() {
 验证命令：`pnpm test:manager-browser` 从 tarball 安装独立消费者，使用本地 HTTPS/Socket 服务运行浏览器测试。此项验证不等同于 test 集群或真实 Word WebView 的验收。
 
 认证原子组件新增 `AuthUiLabels.errors`（按安全错误码覆盖文案）与 `LoginPanel.showSessionError`（默认 true）；组合 UI 自己提示登录过期，避免重复错误。auth 与核心包统一版本发布（ADR-018）。
+
+使用这三个 props 接入即可启用默认 Interaction。登录并选定机器人和平台后，组件使用当前身份为
+机器人建立交互会话。服务端发往当前会话的 `ask_colleague` 问询会在聊天区显示并接收回答。
+该能力需要服务端支持 `interaction_v1`，并向当前账号授予 `action:execute`。
+
+传入 `interactionClient={null}` 可关闭自动连接。未传该属性时，已挂载的外层 InteractionProvider
+优先由组件继承，包含明确禁用的状态。需要显式自管连接时，传入宿主持有的
+`interactionClient` 及对应的 `interactionIdentity`。参见 [Interaction 接入指南](host-app-integration.md#64-interaction-通道-ui170)。
 
 ## 工作上下文与切换（#135）
 

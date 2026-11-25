@@ -9,11 +9,9 @@ import {
   type ManagerRobotConnection,
 } from "@turingfocus/chat-kit/auth/manager";
 import {
-  createAskUserRemoteTool,
   createTFRobotRemoteToolClient,
   createTFRobotSocketConnection,
   defineRemoteTool,
-  type AskUserRemoteTool,
   type RemoteToolClient,
   type RemoteToolClientState,
   type TFRobotSocketConnection,
@@ -31,15 +29,12 @@ export interface AdditionCall {
   readonly b: number;
   readonly sum: number;
 }
-type PlaygroundToolName = "add" | "ask_user";
 
 interface ToolSnapshot {
   readonly status: RemoteToolClientState["status"] | "resolving";
   readonly error?: string | undefined;
   readonly robotId?: string | undefined;
-  readonly toolName?: PlaygroundToolName | undefined;
   readonly calls: readonly AdditionCall[];
-  readonly askUser?: AskUserRemoteTool | undefined;
 }
 const IDLE: ToolSnapshot = Object.freeze({ status: "idle", calls: [] });
 
@@ -86,15 +81,11 @@ export class PlaygroundRemoteTools {
     this.#unsubscribe = undefined;
     this.#client?.dispose();
     this.#client = undefined;
-    this.#state.askUser?.dispose();
     this.#connection?.dispose();
     this.#connection = undefined;
     this.#update(IDLE);
   };
-  start = async (
-    robot: ManagerRobot,
-    toolName: PlaygroundToolName = "add",
-  ): Promise<void> => {
+  start = async (robot: ManagerRobot): Promise<void> => {
     if (this.#disposed) return;
     this.stop();
     const generation = this.#generation;
@@ -104,11 +95,9 @@ export class PlaygroundRemoteTools {
     this.#update({
       status: "resolving",
       robotId: robot.id,
-      toolName,
       calls: [],
     });
     let connection: ManagerRobotConnection | undefined;
-    let askUser: AskUserRemoteTool | undefined;
     try {
       connection = await this.#manager.connect(robot, { signal: abort.signal });
       if (!current()) {
@@ -116,58 +105,49 @@ export class PlaygroundRemoteTools {
         return;
       }
       this.#connection = connection;
-      if (toolName === "ask_user") {
-        askUser = createAskUserRemoteTool({
-          // The provider's own inbox is rendered separately from the chat timeline.
-          // Legacy invocations do not identify an originating chat conversation.
-          resolveConversationId: () => "playground-remote-tool-inbox",
-        });
-      }
-      const tool =
-        askUser?.tool ??
-        defineRemoteTool({
-          definition: {
-            toolName: "add",
-            description: "Add two numbers and return their sum.",
-            parameters: {
-              type: "object",
-              properties: {
-                a: { type: "number" },
-                b: { type: "number" },
-              },
-              required: ["a", "b"],
-              additionalProperties: false,
+      const tool = defineRemoteTool({
+        definition: {
+          toolName: "add",
+          description: "Add two numbers and return their sum.",
+          parameters: {
+            type: "object",
+            properties: {
+              a: { type: "number" },
+              b: { type: "number" },
             },
-            tags: ["Read"],
+            required: ["a", "b"],
+            additionalProperties: false,
           },
-          validate(params) {
-            const { a, b } = params;
-            if (
-              Object.keys(params).length !== 2 ||
-              typeof a !== "number" ||
-              !Number.isFinite(a) ||
-              typeof b !== "number" ||
-              !Number.isFinite(b) ||
-              !Number.isFinite(a + b)
-            )
-              throw new Error("Expected two finite numbers with a finite sum");
-            return { a, b };
-          },
-          execute: ({ a, b }, { signal }) => {
-            if (signal.aborted || !current())
-              return { ok: false, code: "cancelled" };
-            const sum = a + b;
-            this.#update({
-              ...this.#state,
-              calls: [...this.#state.calls, { a, b, sum }].slice(-20),
-            });
-            return {
-              ok: true,
-              resultForLlm: String(sum),
-              origin: { a, b, sum },
-            };
-          },
-        });
+          tags: ["Read"],
+        },
+        validate(params) {
+          const { a, b } = params;
+          if (
+            Object.keys(params).length !== 2 ||
+            typeof a !== "number" ||
+            !Number.isFinite(a) ||
+            typeof b !== "number" ||
+            !Number.isFinite(b) ||
+            !Number.isFinite(a + b)
+          )
+            throw new Error("Expected two finite numbers with a finite sum");
+          return { a, b };
+        },
+        execute: ({ a, b }, { signal }) => {
+          if (signal.aborted || !current())
+            return { ok: false, code: "cancelled" };
+          const sum = a + b;
+          this.#update({
+            ...this.#state,
+            calls: [...this.#state.calls, { a, b, sum }].slice(-20),
+          });
+          return {
+            ok: true,
+            resultForLlm: String(sum),
+            origin: { a, b, sum },
+          };
+        },
+      });
       const client = createTFRobotRemoteToolClient({
         baseUrl: connection.target.baseUrl,
         socketNamespaceUrl: `${new URL(connection.target.socketNamespaceUrl).origin}/remote-tool`,
@@ -180,29 +160,22 @@ export class PlaygroundRemoteTools {
       const update = () => {
         if (!current()) return;
         const state = client.getSnapshot();
-        const callError =
-          askUser && state.lastCallError === "cancelled"
-            ? undefined
-            : state.lastCallError;
         this.#update({
           ...this.#state,
           status: state.status,
-          error: state.error ?? callError,
-          askUser,
+          error: state.error ?? state.lastCallError,
         });
       };
       this.#unsubscribe = client.subscribe(update);
       client.start();
       update();
     } catch (error) {
-      askUser?.dispose();
       connection?.dispose();
       if (current()) {
         this.#connection = undefined;
         this.#update({
           status: "error",
           robotId: robot.id,
-          toolName,
           calls: [],
           error:
             error instanceof ManagerIntegrationError &&

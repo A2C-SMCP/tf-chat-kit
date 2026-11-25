@@ -47,7 +47,7 @@ Interaction 的宿主中存在，必须避免同一时刻渲染多套 pending �
    拥有 Modal 与 `inlineConversationId`，避免同一活跃项重复渲染和草稿分裂。子 Provider 在继承
    模式下忽略自己的 `scope`；需要独立 scope 时必须显式传 client。`null` 显式禁用该子树的
    Interaction UI（包括继承）。自定义 UI 可自行使用 `InteractionProvider` + `InteractionQueue`；
-   `ManagerChatApp` 只透传宿主持有的 client。
+   `ManagerChatApp` 当时只透传宿主持有的 client。这个组件的默认连接行为已由 [ADR-020](020-manager-default-interaction.md) 更新。
 6. **历史展示。** `InteractionHistory` 在现有 tool event renderer 内以只读视图展示
    direction、status、question、answer、answeredBy、answeredAt、error；未知 status 原样展示。
    `answeredAt` 使用仓库统一的 UTC 格式，越界/非法时间戳省略而不是抛错。不注册新的 timeline

@@ -9,16 +9,18 @@ import {
 import { createAuthClient } from "../packages/chat-auth/src/headless.js";
 import { createManagerClient } from "../packages/chat-auth/src/manager.js";
 import type { InteractionClient } from "../packages/chat-runtime/src/index.js";
+import { InteractionProvider } from "@turingfocus/chat-react";
 
+const interactionSnapshot = {
+  activeId: null,
+  connection: "disconnected" as const,
+  entries: {},
+  now: 0,
+};
 const interactionClient = {
   activate: () => undefined,
   dispose: () => undefined,
-  getSnapshot: () => ({
-    activeId: null,
-    connection: "disconnected" as const,
-    entries: {},
-    now: 0,
-  }),
+  getSnapshot: () => interactionSnapshot,
   respond: () => false,
   retry: () => false,
   subscribe: () => () => undefined,
@@ -330,6 +332,60 @@ it("emits Manager identity changes and scopes the Interaction client", async () 
     await auth.dispose();
   }
 });
+
+it.each(["inherited", "disabled by provider", "disabled by prop"] as const)(
+  "keeps the automatic Interaction connection off when %s",
+  async (mode) => {
+    const { auth, manager } = await createFixture();
+    vi.spyOn(manager, "connect").mockResolvedValue({
+      target: {
+        baseUrl: "https://fixture.invalid",
+        socketNamespaceUrl: "https://fixture.invalid/chat",
+        socketPath: "/socket.io/",
+        namespace: "fixture",
+        robotId: "robot-a",
+        robotType: "tfrobot",
+      },
+      sessionProvider: manager.createRobotSessionProvider("account-a"),
+      dispose: () => undefined,
+    });
+    const connectInteraction = vi.spyOn(manager, "connectForInteraction");
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const app = createElement(ManagerChatApp, {
+      auth,
+      manager,
+      chat: {
+        fetch: async () => Response.json({ code: 200, data: [] }),
+        messageCreatorProvider: () => ({ uid: "user", name: "Fixture" }),
+      },
+      ...(mode === "disabled by prop" ? { interactionClient: null } : {}),
+    });
+    try {
+      await act(async () => {
+        root.render(
+          mode === "disabled by prop"
+            ? app
+            : createElement(
+                InteractionProvider,
+                { client: mode === "inherited" ? interactionClient : null },
+                app,
+              ),
+        );
+        await manager.refresh();
+      });
+      act(() => findButton(container, "Robot A")?.click());
+      await act(async () => findButton(container, "使用这个机器人")?.click());
+      expect(findButton(container, "发送")).toBeDefined();
+      expect(connectInteraction).not.toHaveBeenCalled();
+    } finally {
+      act(() => root.unmount());
+      await manager.dispose();
+      await auth.dispose();
+    }
+  },
+);
 
 it("labels a missing robot name as a directory ID and shows the distinct robot ID", async () => {
   const account = {

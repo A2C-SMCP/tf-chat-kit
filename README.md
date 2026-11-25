@@ -232,7 +232,7 @@ const interaction = createTFRobotInteractionClient({
 ```
 
 `InteractionProvider` 不创建、不释放宿主传入的 client；切换环境、账号或机器人时，宿主应释放旧
-client 并创建新实例，不得跨身份共享。使用 `ManagerChatApp` 时同时传入 `interactionIdentity`
+client 并创建新实例，不得跨身份共享。向 `ManagerChatApp` 注入自定义 client 时同时传入 `interactionIdentity`
 并在 `onChatIdentityChange` 中替换 client；非 null client 缺少 identity 会直接报错，身份不匹配
 时默认 UI 会停用 Interaction（`allowUnscopedInteractionClient` / `allowWildcardInteractionIdentity`
 为显式逃生口）。作答草稿默认随 client 实例失效；传入稳定的 `interactionScope`
@@ -280,9 +280,10 @@ pnpm pack:workspace
 页面仅保留两区：
 
 - **Chat Kit 连接**：在默认界面登录、选择组织与机器人，再选择真实平台开始聊天。可单独断开和重新打开。会话和消息直接来自真实服务，按默认宿主行为处理，不自动创建或删除测试会话。
-- **RemoteTool 连接**：共享本页身份，独立加载真实目录、选择机器人并注册 `add` 或 `ask_user`。注册后可要求同一机器人调用工具。`add` 显示调用记录。`ask_user` 在本页的机器人级弹窗接收和回答提问，适合在自己控制的测试机器人上验收。关闭聊天或切换会话时，工具保持独立连接。相同机器人复用同一底层 WebSocket。
+- **会话内问询**：机器人启用 `ask_colleague` 后，可以发送「请用 ask_colleague 问我今天中午吃了什么，等我回答」。服务端向当前会话发出的问询会显示在聊天区。Chat Kit 自动建立 Interaction 连接并提交作答。
+- **RemoteTool 连接**：共享本页身份，可独立加载真实目录、选择机器人、注册 `add` 并查看调用记录。关闭聊天或切换会话时，`add` 保持独立。相同机器人上的聊天和 `add` 复用底层 WebSocket。
 
-RemoteTool 专用 ManagerClient 显式配置 `robotSessionScopes: ["action:execute"]`；默认聊天仍申请 `chat:read chat:send`。如果同一机器人上的 TFRobotFront 页面已注册 `ask_user`，先关闭对应页面释放注册，再在 Playground 重试。凭据仅在页面和 SDK 内存使用，不读取 `.debug`，不写入浏览器存储或日志。
+Interaction 和 `add` 分别获取 `action:execute` 会话。默认聊天仍申请 `chat:read chat:send`。凭据仅在页面和 SDK 内存使用。
 
 Playground 不启动模拟后端，不包含 Mock 模式、演示消息或模拟调用入口。仓库中的受控 HTTP/Socket.IO 设施只用于自动化契约测试；真实集群验收步骤见 [Playground 验收说明](tests/e2e/acceptance.md)。
 

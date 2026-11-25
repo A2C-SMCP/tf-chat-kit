@@ -27,8 +27,13 @@ import {
   managerIdentityScope,
   type ManagerClient,
   type ManagerRobot,
+  type ManagerRobotConnection,
 } from "@turingfocus/chat-auth/manager";
-import { ChatProvider, type InteractionClient } from "@turingfocus/chat-react";
+import {
+  ChatProvider,
+  useHasInteractionProvider,
+  type InteractionClient,
+} from "@turingfocus/chat-react";
 import {
   ChatCompactWorkspace,
   type ChatCompactDraft,
@@ -41,6 +46,7 @@ import {
 import { useManagerChat } from "./manager-react.js";
 import { managerUiCopy } from "./manager-ui-copy.js";
 import { managerUiStyle } from "./manager-ui-style.js";
+import { createTFRobotInteractionClient } from "./tfrobot-client.js";
 
 import {
   managerChatIdentityScope,
@@ -66,7 +72,7 @@ export interface ManagerChatAppProps {
   /** Host-owned clients; the app never disposes them or persists credentials. */
   readonly auth: AuthClient;
   readonly manager: ManagerClient;
-  /** Host-owned Interaction client; the app never creates or disposes it. */
+  /** Omit to inherit a host provider or use the managed connection. Pass null to disable. */
   readonly interactionClient?: InteractionClient | null | undefined;
   /**
    * Identity of the injected client. Required for a non-null client unless the
@@ -710,19 +716,104 @@ function ManagerAppBinding({
   useEffect(() => {
     onChatIdentityChangeRef.current?.(chatIdentityRef.current);
   }, [chatIdentityKey]);
-  const interactionClientForUi = resolveManagerInteractionClient(
-    interactionClient,
-    interactionIdentity,
-    chatIdentity,
-    {
-      allowUnscoped: allowUnscopedInteractionClient,
-      allowWildcards: allowWildcardInteractionIdentity,
-    },
+  const staleIdentity = lastScope.current !== scope;
+  const activeChatClient =
+    scope && !staleIdentity && !accessDenied && connection.status === "ready"
+      ? connection.client
+      : undefined;
+  const inheritsInteraction = useHasInteractionProvider();
+  const automaticInteraction = useMemo(
+    () =>
+      interactionClient === undefined &&
+      !inheritsInteraction &&
+      activeChatClient &&
+      robot?.robotId
+        ? { robot, robotId: robot.robotId, manager }
+        : undefined,
+    [
+      activeChatClient,
+      chatIdentityKey,
+      inheritsInteraction,
+      interactionClient,
+      manager,
+      robot,
+    ],
   );
+  const [managedInteraction, setManagedInteraction] = useState<{
+    binding: NonNullable<typeof automaticInteraction>;
+    client: InteractionClient;
+  }>();
+  useEffect(() => {
+    setManagedInteraction(undefined);
+    if (!automaticInteraction) return;
+    const { robot, robotId, manager } = automaticInteraction;
+    const abort = new AbortController();
+    let resource: ManagerRobotConnection | undefined;
+    let client: InteractionClient | undefined;
+    let unsubscribe: (() => void) | undefined;
+    const release = () => {
+      unsubscribe?.();
+      client?.dispose();
+      resource?.dispose();
+    };
+    const start = async () => {
+      const connection = await manager.connectForInteraction(robot, {
+        signal: abort.signal,
+        deadlineAt: deadline(),
+      });
+      if (abort.signal.aborted) {
+        connection.dispose();
+        return;
+      }
+      resource = connection;
+      const interaction = createTFRobotInteractionClient({
+        baseUrl: connection.target.baseUrl,
+        socketNamespaceUrl: new URL(
+          "/remote-tool",
+          connection.target.socketNamespaceUrl,
+        ).href,
+        socketPath: connection.target.socketPath,
+        sessionProvider: connection.sessionProvider,
+        robotId,
+      });
+      client = interaction;
+      // Retain the existing pending UI until the server enables Interaction.
+      const enable = () => {
+        if (interaction.getSnapshot().connection !== "connected") return;
+        unsubscribe?.();
+        unsubscribe = undefined;
+        setManagedInteraction({
+          binding: automaticInteraction,
+          client: interaction,
+        });
+      };
+      unsubscribe = interaction.subscribe(enable);
+      enable();
+    };
+    void start().catch(release);
+    return () => {
+      abort.abort();
+      release();
+    };
+  }, [automaticInteraction, deadline]);
+  const defaultInteraction =
+    managedInteraction?.binding === automaticInteraction
+      ? managedInteraction?.client
+      : undefined;
+  const interactionClientForUi =
+    interactionClient === undefined
+      ? defaultInteraction
+      : resolveManagerInteractionClient(
+          interactionClient,
+          interactionIdentity,
+          chatIdentity,
+          {
+            allowUnscoped: allowUnscopedInteractionClient,
+            allowWildcards: allowWildcardInteractionIdentity,
+          },
+        );
   const interactionScope =
-    chatIdentity === undefined
-      ? undefined
-      : managerChatIdentityScope(chatIdentity);
+    chatIdentity === undefined ? undefined : chatIdentityKey;
   const activePlatform = connection.platforms?.find(
     (p) => p.platformId === activePlatformId,
   );
@@ -916,13 +1007,7 @@ function ManagerAppBinding({
       </>
     );
   else {
-    const staleIdentity = lastScope.current !== scope;
-    const connected =
-      !staleIdentity &&
-      !accessDenied &&
-      connection.status === "ready" &&
-      connection.client &&
-      robot;
+    const connected = activeChatClient && robot;
     const platformNeeded = screen === "platform";
     const header = (
       <div className="tf-chat-context">
@@ -989,7 +1074,7 @@ function ManagerAppBinding({
       </div>
     );
     const chat = connected ? (
-      <ChatProvider client={connection.client!}>
+      <ChatProvider client={activeChatClient}>
         <ChatCompactWorkspace
           debug={debug}
           showEventDetailModeSelector={showEventDetailModeSelector}

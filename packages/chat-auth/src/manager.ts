@@ -776,6 +776,24 @@ export class ManagerClient {
     robot: ManagerRobot,
     options: ManagerRequestOptions = {},
   ): Promise<ManagerRobotConnection> {
+    return this.#connect(robot, options, (accountId) =>
+      this.createRobotSessionProvider(accountId),
+    );
+  }
+  /** Resolve the Robot and obtain the action-scoped session for Interaction. */
+  async connectForInteraction(
+    robot: ManagerRobot,
+    options: ManagerRequestOptions = {},
+  ): Promise<ManagerRobotConnection> {
+    return this.#connect(robot, options, (accountId) =>
+      this.#createRobotSessionProvider(accountId, "action:execute"),
+    );
+  }
+  async #connect(
+    robot: ManagerRobot,
+    options: ManagerRequestOptions,
+    createProvider: (accountId: string) => ManagerRobotSessionProvider,
+  ): Promise<ManagerRobotConnection> {
     this.#assert();
     const generation = this.#generation;
     if (managerRobotEligibility(robot) !== "ready")
@@ -789,7 +807,7 @@ export class ManagerClient {
       if (error instanceof ManagerIntegrationError) this.#report(error);
       throw error;
     }
-    const provider = this.createRobotSessionProvider(robot.robotAccountId!);
+    const provider = createProvider(robot.robotAccountId!);
     const abort = () => provider.dispose();
     options.signal?.addEventListener("abort", abort, { once: true });
     try {
@@ -814,6 +832,15 @@ export class ManagerClient {
   }
   createRobotSessionProvider(
     robotAccountId: string,
+  ): ManagerRobotSessionProvider {
+    return this.#createRobotSessionProvider(
+      robotAccountId,
+      this.#robotSessionScope,
+    );
+  }
+  #createRobotSessionProvider(
+    robotAccountId: string,
+    robotSessionScope: string,
   ): ManagerRobotSessionProvider {
     this.#assert();
     if (!robotAccountId.trim())
@@ -867,7 +894,7 @@ export class ManagerClient {
             ["subject_token", manager.token],
             ["subject_token_type", "urn:ietf:params:oauth:token-type:jwt"],
             ["audience", `robot:${robotAccountId}`],
-            ["scope", this.#robotSessionScope],
+            ["scope", robotSessionScope],
             ["token_profile", "session"],
           ]),
         },
