@@ -1,5 +1,23 @@
 # @turingfocus/chat-kit
 
+## 0.14.0
+
+### Minor Changes
+
+- 129c39f: ManagerChatApp now connects to the active Robot's Interaction channel and renders questions in the current conversation. ManagerClient exposes connectForInteraction to acquire an action-scoped Robot session. Pass interactionClient={null} to disable the default connection or provide a host-owned client with its existing identity binding.
+
+  Use the new useHasInteractionProvider hook to detect an existing Interaction boundary, including a disabled provider.
+
+### Patch Changes
+
+- Updated dependencies [129c39f]
+  - @turingfocus/chat-auth@0.14.0
+  - @turingfocus/chat-react@0.14.0
+  - @turingfocus/chat-ui-antd@0.14.0
+  - @turingfocus/chat-protocol@0.14.0
+  - @turingfocus/chat-runtime@0.14.0
+  - @turingfocus/chat-gateway-tfrobot@0.14.0
+
 ## 0.13.0
 
 ### Minor Changes
