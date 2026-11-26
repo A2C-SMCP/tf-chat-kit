@@ -48,8 +48,11 @@ const heldMessageEchoes = [];
 const messageHistory = new Map();
 let platforms = [{ platformId: 17, name: "Word fixture" }];
 let nextConversation = 43;
-/** @type {Map<number, {conversationId: number; title: string; updateTimestamp: number}>} */
+/** @typedef {{conversationId: number; title: string; updateTimestamp: number}} FixtureConversation */
+/** @type {Map<number, FixtureConversation>} */
 const createdConversations = new Map();
+/** @type {Map<number, FixtureConversation> | undefined} */
+let paginatedConversationHistory;
 /** @typedef {{ connections: number; disconnects: number; hellos: unknown[]; responses: unknown[]; closed: unknown[]; pending: unknown[]; earlyInteraction: Record<string, unknown> | null; pendingOnConnect: unknown[]; registerCalls: number; answered: Map<string, string> }} InteractionState */
 /** @type {InteractionState} */
 let interactionState = {
@@ -317,6 +320,27 @@ const server = createListener((req, res) => {
     }
     if (url.pathname === "/__test/ui-options") {
       const input = JSON.parse(body);
+      if (input.paginatedConversationHistory) {
+        paginatedConversationHistory = new Map(
+          [
+            {
+              conversationId: 91,
+              title: "Oldest history",
+              updateTimestamp: 1000,
+            },
+            {
+              conversationId: 93,
+              title: "Newest history",
+              updateTimestamp: 3000,
+            },
+            {
+              conversationId: 92,
+              title: "Middle history",
+              updateTimestamp: 2000,
+            },
+          ].map((item) => [item.conversationId, item]),
+        );
+      }
       if (input.generatedTextEvents !== undefined)
         generatedTextEvents = input.generatedTextEvents;
       if (input.platforms !== undefined) platforms = input.platforms;
@@ -395,6 +419,7 @@ const server = createListener((req, res) => {
       generatedTextEvents = false;
       generatedLive = false;
       historyStatus = 200;
+      paginatedConversationHistory = undefined;
       accountsStatus = 200;
       accountDisplayName = undefined;
       organizationDisplayName = undefined;
@@ -692,15 +717,18 @@ const server = createListener((req, res) => {
         else emit();
         return;
       }
-      if (req.method === "PATCH" && createdConversations.has(conversationId)) {
-        const item = createdConversations.get(conversationId);
-        if (!item) {
-          reply({}, 404);
+      if (req.method === "PATCH") {
+        const item =
+          paginatedConversationHistory?.get(conversationId) ??
+          createdConversations.get(conversationId);
+        if (item) {
+          Object.assign(item, {
+            title: JSON.parse(body).title,
+            updateTimestamp: Date.now(),
+          });
+          reply({ code: 200, message: "Success", data: item });
           return;
         }
-        Object.assign(item, { title: JSON.parse(body).title });
-        reply({ code: 200, message: "Success", data: item });
-        return;
       }
       if (req.method === "DELETE") {
         if (!createdConversations.delete(conversationId)) {
@@ -721,6 +749,32 @@ const server = createListener((req, res) => {
         historyStatus !== 200
       ) {
         reply({}, historyStatus);
+        return;
+      }
+      if (
+        req.method === "GET" &&
+        url.pathname.endsWith("/conversations") &&
+        paginatedConversationHistory
+      ) {
+        const count = Number(url.searchParams.get("count"));
+        const offset = Number(url.searchParams.get("cursor") ?? 0);
+        const conversations = [...paginatedConversationHistory.values()].sort(
+          (a, b) =>
+            count < 0
+              ? b.updateTimestamp - a.updateTimestamp
+              : a.updateTimestamp - b.updateTimestamp,
+        );
+        // Use a small page so all the rows from both pages fit in the test pane.
+        const end = offset + Math.min(Math.abs(count), 2);
+        const page = conversations.slice(offset, end);
+        reply({
+          code: 200,
+          message: "Success",
+          data: {
+            conversations: page,
+            cursor: page.length > 0 ? String(offset + page.length) : null,
+          },
+        });
         return;
       }
       const data = url.pathname.endsWith("/messages")

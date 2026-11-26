@@ -140,13 +140,17 @@ export class TFRobotChatGateway implements ChatGateway {
     const disposed = this.#disposedResult<ConversationPage>();
     if (disposed !== undefined) return disposed;
     const readRevision = this.#mutationRevision;
+    const limit = limitOf(input.limit);
+    // TFRobot uses the sign of count to choose the cursor direction.
+    const count =
+      this.#options.conversationListOrder === "newest-first" ? -limit : limit;
     const result = await this.#http.request({
       method: "GET",
       path: "v1/chat/conversations",
       operation: "read",
       options: input,
       query: {
-        count: limitOf(input.limit),
+        count,
         cursor: input.cursor,
         platformId: this.#options.platformId,
       },
