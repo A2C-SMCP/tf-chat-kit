@@ -1,5 +1,22 @@
 # @turingfocus/chat-ui-antd
 
+## 0.15.0
+
+### Minor Changes
+
+- d92fe36: Support newest-first conversation pagination in the TFRobot Gateway and custom list ordering in ChatCompactWorkspace. ManagerChatApp starts with the most recently updated conversations, appends older ones when loading more, and reorders loaded rows when their update timestamps change. Direct Gateway callers keep oldest-first pagination by default.
+
+### Patch Changes
+
+- 4dee65c: Connect Manager chat providers to a robot-scoped attachment uploader and dispose uploads when the connection changes. Support clipboard images, file selection and attachment-only first messages in the compact workspace, and explain unavailable image paste.
+
+  Manager uploads use the TFRobotServer chat attachment endpoint with the existing chat:send scope. Direct uploader callers keep the dashboard endpoint by default.
+
+- f8e3523: Measure long intermediate output before the browser paints it so scrolling past
+  remounted output keeps the chat timeline stable.
+  - @turingfocus/chat-protocol@0.15.0
+  - @turingfocus/chat-react@0.15.0
+
 ## 0.14.0
 
 ### Patch Changes
