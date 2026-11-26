@@ -1,0 +1,741 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chat Kit · 工作空间选择原型</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+        color: #1b2923;
+        background: #f3f5f0;
+        --ink: #1b2923;
+        --muted: #54645b;
+        --accent: #215a42;
+        --tint: #e9f2ea;
+        --line: #dce5dd;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      button {
+        cursor: pointer;
+        font: inherit;
+        color: inherit;
+      }
+      button:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 3px;
+      }
+      button:disabled {
+        cursor: default;
+      }
+      h1,
+      h2,
+      h3,
+      p,
+      dl,
+      dd {
+        margin: 0;
+      }
+      p {
+        line-height: 1.65;
+      }
+      .wrap {
+        width: min(1056px, calc(100% - 40px));
+        margin-inline: auto;
+      }
+      .masthead {
+        padding: 20px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .masthead .wrap,
+      .pane-header,
+      .section-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .brand {
+        font-weight: 750;
+        letter-spacing: -0.025em;
+      }
+      .masthead small,
+      .section-title small {
+        color: var(--muted);
+      }
+      main {
+        padding-block: 45px 48px;
+      }
+      h1 {
+        font-size: clamp(30px, 5vw, 47px);
+        letter-spacing: -0.065em;
+        line-height: 1.15;
+      }
+      .intro {
+        margin: 12px 0 30px;
+        color: var(--muted);
+        font-size: 15px;
+      }
+      .lab {
+        display: grid;
+        grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+        gap: 22px;
+        align-items: start;
+      }
+      .preview,
+      .scenarios {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+      }
+      .preview {
+        overflow: hidden;
+        min-height: 470px;
+        box-shadow: 0 12px 36px #233d2b0c;
+      }
+      .pane-header {
+        border-bottom: 1px solid var(--line);
+        padding: 13px 22px;
+        min-height: 60px;
+      }
+      .pane-brand {
+        display: flex;
+        gap: 9px;
+        align-items: center;
+        font-size: 14px;
+        font-weight: 700;
+      }
+      .mark,
+      .choice-icon {
+        display: grid;
+        place-items: center;
+        flex: none;
+        border-radius: 10px;
+        background: var(--tint);
+        color: var(--accent);
+      }
+      .mark {
+        width: 29px;
+        height: 29px;
+        font-size: 16px;
+      }
+      .pane-body {
+        padding: 19px 26px 27px;
+      }
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        padding: 0;
+        margin: 0 0 21px;
+        gap: 8px;
+        list-style: none;
+      }
+      .steps li {
+        border-top: 2px solid #e4ebe4;
+        padding-top: 7px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .steps .done {
+        border-color: #85ae9a;
+      }
+      .steps [aria-current] {
+        border-color: var(--accent);
+        color: var(--accent);
+        font-weight: 750;
+      }
+      .pane-body h2 {
+        font-size: 26px;
+        letter-spacing: -0.045em;
+        line-height: 1.2;
+        overflow-wrap: anywhere;
+      }
+      .pane-body h2:focus {
+        outline: none;
+      }
+      .hint,
+      .choice-copy small {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .hint {
+        margin-top: 8px;
+      }
+      .choices {
+        display: grid;
+        gap: 8px;
+        margin-top: 16px;
+      }
+      .choice {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        text-align: left;
+        width: 100%;
+        min-height: 64px;
+        padding: 9px 12px;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        background: #fff;
+      }
+      .choice:hover:enabled,
+      .plain:hover {
+        background: #f4f8f4;
+        border-color: #a5baa9;
+      }
+      .choice:disabled {
+        background: #f7f8f6;
+        color: var(--muted);
+      }
+      .choice-icon {
+        width: 35px;
+        height: 35px;
+      }
+      .choice-copy {
+        display: grid;
+        gap: 3px;
+        flex: 1;
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      .choice-copy strong {
+        font-size: 15px;
+      }
+      .arrow {
+        color: var(--accent);
+        font-size: 18px;
+      }
+      .plain {
+        min-height: 34px;
+        padding: 4px 8px;
+        border: 1px solid transparent;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--accent);
+        font-size: 13px;
+        font-weight: 650;
+      }
+      .context {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 12px 0 0;
+      }
+      .context span {
+        padding: 4px 8px;
+        max-width: 100%;
+        border-radius: 6px;
+        background: #eff4ef;
+        color: var(--accent);
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+      .context span[data-auto] {
+        background: #e6f1e9;
+      }
+      .scenarios {
+        padding: 19px;
+      }
+      .section-title h2,
+      .rules h2 {
+        font-size: 17px;
+      }
+      .case-list {
+        display: grid;
+        gap: 6px;
+        margin-top: 12px;
+      }
+      .case {
+        text-align: left;
+        border: 1px solid transparent;
+        border-radius: 10px;
+        padding: 10px 11px;
+        background: #f6f8f4;
+      }
+      .case strong {
+        font-size: 14px;
+      }
+      .case small {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 4px;
+        line-height: 1.55;
+      }
+      .case:hover,
+      .case[aria-pressed="true"] {
+        border-color: #aac6b2;
+      }
+      .case[aria-pressed="true"] {
+        background: var(--tint);
+        color: var(--accent);
+      }
+      .rules {
+        margin-top: 29px;
+      }
+      .rule-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 12px;
+      }
+      .rule {
+        border-top: 1px solid #cddacf;
+        padding: 12px 4px 0 0;
+      }
+      .rule h3 {
+        font-size: 14px;
+        margin-bottom: 5px;
+      }
+      .rule p,
+      details p {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .status-box {
+        margin-top: 18px;
+        padding: 13px 15px;
+        background: #f3f7f2;
+        border-radius: 10px;
+        font-size: 14px;
+      }
+      .status-box[role="alert"] {
+        background: #fcf2e8;
+        color: #713d22;
+      }
+      .status-box .plain {
+        margin-top: 5px;
+      }
+      .ready {
+        margin: 18px 0 4px;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        padding: 8px 13px;
+      }
+      .ready div {
+        display: flex;
+        gap: 12px;
+        justify-content: space-between;
+        padding: 9px 0;
+        font-size: 14px;
+      }
+      .ready div + div {
+        border-top: 1px solid var(--line);
+      }
+      .ready dt {
+        color: var(--muted);
+        flex: none;
+      }
+      .ready dd {
+        font-weight: 650;
+        text-align: right;
+        overflow-wrap: anywhere;
+      }
+      .ready small {
+        display: block;
+        margin-top: 2px;
+        color: var(--accent);
+        font-weight: 500;
+      }
+      details {
+        margin-top: 23px;
+        border-top: 1px solid #cddacf;
+        padding-top: 12px;
+      }
+      summary {
+        cursor: pointer;
+        color: var(--accent);
+        font-size: 14px;
+        font-weight: 650;
+      }
+      details p {
+        margin-top: 8px;
+      }
+      @media (max-width: 740px) {
+        .lab {
+          grid-template-columns: 1fr;
+        }
+        .preview {
+          min-height: 0;
+        }
+        main {
+          padding-top: 29px;
+        }
+      }
+      @media (max-width: 480px) {
+        .wrap {
+          width: calc(100% - 24px);
+        }
+        .pane-header,
+        .pane-body {
+          padding-inline: 13px;
+        }
+        .rule-grid {
+          grid-template-columns: 1fr;
+        }
+        .pane-header .plain {
+          flex: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="masthead">
+      <div class="wrap">
+        <span class="brand">Chat Kit</span><small>交互原型 · 示例数据</small>
+      </div>
+    </header>
+    <main class="wrap">
+      <h1>更快进入聊天</h1>
+      <p class="intro">
+        唯一选项自动通过。有多个选项时，点一下就生效，选错也能回来重选。
+      </p>
+      <div class="lab">
+        <section class="preview" aria-label="工作空间预览">
+          <header class="pane-header">
+            <span class="pane-brand"
+              ><span class="mark" aria-hidden="true">✦</span>工作空间</span
+            >
+            <button type="button" class="plain" id="back">← 返回</button>
+          </header>
+          <div id="pane" class="pane-body"></div>
+        </section>
+        <section class="scenarios" aria-labelledby="case-title">
+          <div class="section-title">
+            <h2 id="case-title">试用场景</h2>
+            <button type="button" class="plain" id="restart">重新体验</button>
+          </div>
+          <div class="case-list" id="cases"></div>
+        </section>
+      </div>
+      <section class="rules" aria-labelledby="rule-title">
+        <h2 id="rule-title">交互规则</h2>
+        <div class="rule-grid">
+          <div class="rule">
+            <h3>首次接入时自动通过</h3>
+            <p>
+              目录确认加载完整后，只剩一个可用机器人或平台就自动选中。搜索后只剩一项时仍由用户点选。
+            </p>
+          </div>
+          <div class="rule">
+            <h3>卡片点击即提交</h3>
+            <p>
+              选机器人后加载它的平台，选平台后进入聊天。已有草稿或生成中的回复时，切换仍提示影响。
+            </p>
+          </div>
+          <div class="rule">
+            <h3>返回后停在选择页</h3>
+            <p>
+              返回最近可改选的一步，加载中也可返回。全程自动通过时，返回机器人列表并停留，等用户操作。
+            </p>
+          </div>
+        </div>
+        <details>
+          <summary>正式接入时的边界</summary>
+          <p>
+            方案落在可选的 ManagerChatApp。组织沿用已登录身份或 AuthClient
+            的候选账户。机器人沿用目录资格和分页状态，平台沿用当前机器人的服务端目录。宿主指定的平台继续优先并校验有效性。
+          </p>
+          <p>
+            主动切换保留选择页，用户返回时继续使用原聊天。点当前项直接返回。提交新选择时沿用现有实例释放和身份隔离。返回取消当前候选请求，忽略迟到结果。目录为空时显示空态，加载失败时提供重试。
+          </p>
+          <p>
+            ADR-014 与 ADR-015 的平台选择规则已由 ADR-021
+            补充。首次接入可以自动选中唯一有效平台。
+          </p>
+        </details>
+      </section>
+    </main>
+    <script>
+      const daily = { name: "日常协作", id: "21" };
+      const project = { name: "项目空间", id: "38" };
+      const assistant = {
+        name: "办公助手",
+        description: "文档整理与日常问答",
+        platforms: [daily, project],
+      };
+      const knowledge = {
+        name: "知识库助手",
+        description: "检索团队资料和知识库",
+        platforms: [daily],
+      };
+      const disabled = {
+        name: "报表助手",
+        description: "暂未运行",
+        disabled: true,
+      };
+      const office = {
+        name: "产品研发部",
+        description: "研发协作组织",
+        robots: [assistant, knowledge, disabled],
+      };
+      const operations = {
+        name: "运营支持部",
+        description: "运营协作组织",
+        robots: [knowledge],
+      };
+      const cases = [
+        {
+          name: "机器人与平台点选",
+          hint: "试点「办公助手」查看多平台，或点「知识库助手」直达聊天。",
+          orgs: [office],
+        },
+        {
+          name: "全程唯一",
+          hint: "自动进入聊天，再用「返回选择」重新打开机器人列表。",
+          orgs: [operations],
+        },
+        {
+          name: "多个组织",
+          hint: "先点选组织，进入后可沿原路径返回改选。",
+          orgs: [office, operations],
+        },
+        {
+          name: "平台暂不可用",
+          hint: "体验空列表、加载失败和重试。",
+          orgs: [
+            {
+              ...office,
+              robots: [
+                {
+                  name: "新建助手",
+                  description: "尚未配置平台",
+                  platforms: [],
+                },
+                { ...knowledge, failOnce: true },
+              ],
+            },
+          ],
+        },
+      ];
+      const pane = document.querySelector("#pane");
+      const backButton = document.querySelector("#back");
+      const caseList = document.querySelector("#cases");
+      let state;
+      let request = 0;
+      let failures;
+
+      function start(index) {
+        request++;
+        state = { index, screen: "org", auto: new Set() };
+        failures = new Set();
+        caseList.querySelectorAll("button").forEach((button, i) => {
+          button.setAttribute("aria-pressed", String(i === index));
+        });
+        const options = cases[index].orgs;
+        if (options.length === 1) selectOrg(options[0], true);
+        else render();
+      }
+
+      function clear(keys) {
+        for (const key of keys) {
+          delete state[key];
+          state.auto.delete(key);
+        }
+      }
+
+      function selectOrg(org, automatic = false) {
+        state.org = org;
+        clear(["robot", "platform"]);
+        if (automatic) state.auto.add("org");
+        else state.auto.delete("org");
+        const eligible = org.robots.filter((robot) => !robot.disabled);
+        if (eligible.length === 1) selectRobot(eligible[0], true);
+        else show("robot");
+      }
+
+      function show(screen) {
+        state.screen = screen;
+        render();
+      }
+
+      function settle(callback, delay) {
+        const current = ++request;
+        window.setTimeout(() => {
+          if (current === request) callback();
+        }, delay);
+      }
+
+      function selectRobot(robot, automatic = false) {
+        state.robot = robot;
+        clear(["platform"]);
+        if (automatic) state.auto.add("robot");
+        else state.auto.delete("robot");
+        show("loading");
+        settle(() => {
+          if (robot.failOnce && !failures.has(robot)) {
+            failures.add(robot);
+            show("error");
+          } else if (robot.platforms.length === 1) {
+            selectPlatform(robot.platforms[0], true);
+          } else {
+            show("platform");
+          }
+        }, 450);
+      }
+
+      function selectPlatform(platform, automatic = false) {
+        state.platform = platform;
+        if (automatic) state.auto.add("platform");
+        else state.auto.delete("platform");
+        show("connecting");
+        settle(() => show("chat"), 400);
+      }
+
+      function goBack() {
+        request++;
+        const options = cases[state.index].orgs;
+        if (state.screen === "robot") {
+          clear(["org", "robot", "platform"]);
+          show("org");
+        } else if (
+          ["connecting", "chat"].includes(state.screen) &&
+          state.robot.platforms.length > 1
+        ) {
+          clear(["platform"]);
+          show("platform");
+        } else if (state.auto.has("robot") && options.length > 1) {
+          clear(["org", "robot", "platform"]);
+          show("org");
+        } else {
+          clear(["robot", "platform"]);
+          show("robot");
+        }
+      }
+
+      function choice(option, index, icon) {
+        return `<button type="button" class="choice" data-choice="${index}" ${option.disabled ? "disabled" : ""}>
+          <span class="choice-icon" aria-hidden="true">${icon}</span>
+          <span class="choice-copy"><strong>${option.name}</strong><small>${option.description ?? `平台 ID ${option.id}`}</small></span>
+          ${option.disabled ? "" : '<span class="arrow" aria-hidden="true">→</span>'}
+        </button>`;
+      }
+
+      function render() {
+        const { screen, org, robot, platform, auto } = state;
+        backButton.hidden = screen === "org";
+        backButton.textContent = screen === "chat" ? "← 返回选择" : "← 返回";
+        let title, hint, content, options, action, icon;
+        let step = 2;
+        switch (screen) {
+          case "org":
+            step = 0;
+            title = "选择组织";
+            hint = "点选组织，查看可用机器人。";
+            options = cases[state.index].orgs;
+            action = selectOrg;
+            icon = "▦";
+            break;
+          case "robot":
+            step = 1;
+            title = "选择机器人";
+            hint = "点选机器人后继续。";
+            options = org.robots;
+            action = selectRobot;
+            icon = "✦";
+            if (!options.some((item) => !item.disabled))
+              content =
+                '<p class="status-box" role="status">当前组织暂无可用机器人。</p>';
+            break;
+          case "loading":
+            title = "正在加载平台";
+            content =
+              '<p class="status-box" role="status">正在获取该机器人的可用平台。</p>';
+            break;
+          case "error":
+            title = "平台加载失败";
+            content =
+              '<div class="status-box"><p role="alert">暂时无法获取平台，请重试。</p><button type="button" class="plain" id="retry">重试</button></div>';
+            break;
+          case "platform":
+            title = "选择平台";
+            hint = robot.platforms.length ? "点选平台，进入聊天。" : "";
+            options = robot.platforms;
+            action = selectPlatform;
+            icon = "▤";
+            if (!options.length)
+              content =
+                '<p class="status-box" role="status">这个机器人暂无可用平台。可以返回选择其他机器人。</p>';
+            break;
+          case "connecting":
+            title = "正在进入聊天";
+            content =
+              '<p class="status-box" role="status">正在打开当前工作空间。</p>';
+            break;
+          case "chat":
+            step = 3;
+            title = "已进入聊天";
+            content = `<dl class="ready">${[
+              ["org", "组织", org.name],
+              ["robot", "机器人", robot.name],
+              ["platform", "平台", platform.name],
+            ]
+              .map(
+                ([key, label, value]) =>
+                  `<div><dt>${label}</dt><dd>${value}${auto.has(key) ? "<small>自动选中</small>" : ""}</dd></div>`,
+              )
+              .join("")}</dl>`;
+            break;
+        }
+
+        const steps = ["组织", "机器人", "平台"]
+          .map(
+            (label, index) =>
+              `<li ${index === step ? 'aria-current="step"' : index < step ? 'class="done"' : ""}>${label}</li>`,
+          )
+          .join("");
+        const context = Object.entries({ org, robot, platform })
+          .filter(([, value]) => value && screen !== "chat")
+          .map(
+            ([key, value]) =>
+              `<span ${auto.has(key) ? "data-auto" : ""}>${value.name}${auto.has(key) ? " · 自动选中" : ""}</span>`,
+          )
+          .join("");
+        pane.innerHTML = `
+          <ol class="steps" aria-label="接入步骤">${steps}</ol>
+          <h2 tabindex="-1">${title}</h2>
+          ${context ? `<div class="context" aria-label="已选工作上下文">${context}</div>` : ""}
+          ${hint ? `<p class="hint">${hint}</p>` : ""}
+          ${options?.length ? `<div class="choices">${options.map((option, index) => choice(option, index, icon)).join("")}</div>` : ""}
+          ${content ?? ""}
+        `;
+        pane.querySelectorAll("[data-choice]").forEach((button) => {
+          button.addEventListener("click", () =>
+            action(options[Number(button.dataset.choice)]),
+          );
+        });
+        pane
+          .querySelector("#retry")
+          ?.addEventListener("click", () =>
+            selectRobot(robot, auto.has("robot")),
+          );
+        pane.querySelector("h2").focus({ preventScroll: true });
+      }
+
+      caseList.innerHTML = cases
+        .map(
+          ({ name, hint }, index) =>
+            `<button type="button" class="case" data-case="${index}" aria-pressed="false"><strong>${name}</strong><small>${hint}</small></button>`,
+        )
+        .join("");
+      caseList.querySelectorAll(".case").forEach((button) => {
+        button.addEventListener("click", () => {
+          start(Number(button.dataset.case));
+          pane.closest(".preview").scrollIntoView({ block: "nearest" });
+        });
+      });
+      document.querySelector("#restart").addEventListener("click", () => {
+        start(state.index);
+        pane.closest(".preview").scrollIntoView({ block: "nearest" });
+      });
+      backButton.addEventListener("click", goBack);
+      start(0);
+    </script>
+  </body>
+</html>

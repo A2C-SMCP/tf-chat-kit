@@ -34,6 +34,8 @@ let organizationDisplayName;
 /** @type {string | undefined} */
 let robotDisplayName;
 let platformsStatus = 200;
+let platformsDelayMs = 0;
+let singleReadyRobot = false;
 let switchAccountStatus = 200;
 let authorMismatch = false;
 let serverMessageIds = false;
@@ -346,6 +348,10 @@ const server = createListener((req, res) => {
       if (input.platforms !== undefined) platforms = input.platforms;
       if (input.platformsStatus !== undefined)
         platformsStatus = input.platformsStatus;
+      if (input.platformsDelayMs !== undefined)
+        platformsDelayMs = input.platformsDelayMs;
+      if (input.singleReadyRobot !== undefined)
+        singleReadyRobot = input.singleReadyRobot;
       if (input.accountsStatus !== undefined)
         accountsStatus = input.accountsStatus;
       if (input.switchAccountStatus !== undefined)
@@ -425,6 +431,7 @@ const server = createListener((req, res) => {
       organizationDisplayName = undefined;
       robotDisplayName = undefined;
       platformsStatus = 200;
+      platformsDelayMs = 0;
       switchAccountStatus = 200;
       authorMismatch = false;
       serverMessageIds = false;
@@ -434,11 +441,12 @@ const server = createListener((req, res) => {
       platforms = [{ platformId: 17, name: "Word fixture" }];
       activeAccount = account;
       const input = JSON.parse(body);
+      singleReadyRobot = input.phone === "ui-single";
       if (input.password === "invalid") {
         reply({ message: "private-fixture-detail" }, 401);
         return;
       }
-      if (input.phone === "ui")
+      if (input.phone === "ui" || input.phone === "ui-single")
         reply({
           tempToken: "ui-selection",
           accounts: [
@@ -448,12 +456,16 @@ const server = createListener((req, res) => {
               organizationName: "Word 测试组织",
               accountName: "测试账户",
             },
-            {
-              accountId: "other",
-              organizationId: "other-org",
-              organizationName: "另一个组织",
-              accountName: "其他账户",
-            },
+            ...(input.phone === "ui"
+              ? [
+                  {
+                    accountId: "other",
+                    organizationId: "other-org",
+                    organizationName: "另一个组织",
+                    accountName: "其他账户",
+                  },
+                ]
+              : []),
           ],
         });
       else reply({ token: "manager-browser", account });
@@ -551,7 +563,8 @@ const server = createListener((req, res) => {
             .map((r) => ({
               ...r,
               name: r.id === "legacy" ? (robotDisplayName ?? r.id) : r.id,
-              status: "running",
+              status:
+                singleReadyRobot && r.id === "alias" ? "stopped" : "running",
               templateType: "tfrserver",
             })),
           page,
@@ -607,15 +620,16 @@ const server = createListener((req, res) => {
         return;
       }
       if (req.method === "GET" && url.pathname.endsWith("/platforms")) {
-        if (platformsStatus !== 200) {
-          reply({}, platformsStatus);
-          return;
-        }
-        reply({
-          code: 200,
-          message: "Success",
-          data: platforms,
-        });
+        const status = platformsStatus;
+        const payload =
+          status === 200
+            ? { code: 200, message: "Success", data: platforms }
+            : {};
+        const send = () => {
+          if (!res.destroyed) reply(payload, status);
+        };
+        if (platformsDelayMs > 0) setTimeout(send, platformsDelayMs);
+        else send();
         return;
       }
       const conversationId = Number(
