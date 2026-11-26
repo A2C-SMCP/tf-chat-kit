@@ -1,5 +1,28 @@
 # @turingfocus/chat-kit
 
+## 0.15.0
+
+### Minor Changes
+
+- 5bc8b94: ManagerChatApp advances automatically during initial setup when there is a single eligible organization, assistant, or platform. Selecting an option applies it immediately. Users can return to the previous choice, including while a platform is loading. Existing draft and active reply confirmations still apply when replacing a workspace.
+
+### Patch Changes
+
+- 4dee65c: Connect Manager chat providers to a robot-scoped attachment uploader and dispose uploads when the connection changes. Support clipboard images, file selection and attachment-only first messages in the compact workspace, and explain unavailable image paste.
+
+  Manager uploads use the TFRobotServer chat attachment endpoint with the existing chat:send scope. Direct uploader callers keep the dashboard endpoint by default.
+
+- d92fe36: Support newest-first conversation pagination in the TFRobot Gateway and custom list ordering in ChatCompactWorkspace. ManagerChatApp starts with the most recently updated conversations, appends older ones when loading more, and reorders loaded rows when their update timestamps change. Direct Gateway callers keep oldest-first pagination by default.
+- Updated dependencies [4dee65c]
+- Updated dependencies [d92fe36]
+- Updated dependencies [f8e3523]
+  - @turingfocus/chat-gateway-tfrobot@0.15.0
+  - @turingfocus/chat-ui-antd@0.15.0
+  - @turingfocus/chat-protocol@0.15.0
+  - @turingfocus/chat-runtime@0.15.0
+  - @turingfocus/chat-react@0.15.0
+  - @turingfocus/chat-auth@0.15.0
+
 ## 0.14.0
 
 ### Minor Changes

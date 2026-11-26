@@ -1,5 +1,11 @@
 # @turingfocus/chat-react
 
+## 0.15.0
+
+### Patch Changes
+
+- @turingfocus/chat-runtime@0.15.0
+
 ## 0.14.0
 
 ### Minor Changes
