@@ -291,14 +291,8 @@ it("emits Manager identity changes and scopes the Interaction client", async () 
     await vi.waitFor(() => {
       expect(container.querySelectorAll(".tf-choice")).toHaveLength(2);
     });
-    act(() => {
-      container.querySelectorAll<HTMLButtonElement>(".tf-choice")[0]?.click();
-    });
-    const useA = findButton(container, "使用这个机器人");
-    expect(useA).toBeDefined();
     await act(async () => {
-      useA?.click();
-      await Promise.resolve();
+      container.querySelectorAll<HTMLButtonElement>(".tf-choice")[0]?.click();
     });
     expect(changes.at(-1)).toMatchObject({
       accountId: "account",
@@ -316,14 +310,8 @@ it("emits Manager identity changes and scopes the Interaction client", async () 
     await vi.waitFor(() => {
       expect(container.querySelectorAll(".tf-choice")).toHaveLength(2);
     });
-    act(() => {
-      container.querySelectorAll<HTMLButtonElement>(".tf-choice")[1]?.click();
-    });
-    const useB = findButton(container, "使用这个机器人");
-    expect(useB).toBeDefined();
     await act(async () => {
-      useB?.click();
-      await Promise.resolve();
+      container.querySelectorAll<HTMLButtonElement>(".tf-choice")[1]?.click();
     });
     expect(changes.at(-1)).toMatchObject({ robotId: "robot-b" });
   } finally {
@@ -375,8 +363,7 @@ it.each(["inherited", "disabled by provider", "disabled by prop"] as const)(
         );
         await manager.refresh();
       });
-      act(() => findButton(container, "Robot A")?.click());
-      await act(async () => findButton(container, "使用这个机器人")?.click());
+      await act(async () => findButton(container, "Robot A")?.click());
       expect(findButton(container, "发送")).toBeDefined();
       expect(connectInteraction).not.toHaveBeenCalled();
     } finally {
@@ -451,9 +438,71 @@ it("labels a missing robot name as a directory ID and shows the distinct robot I
       );
       await manager.refresh();
     });
+    await act(async () => findButton(container, "返回")?.click());
     const choice = container.querySelector(".tf-choice");
     expect(choice?.textContent).toContain("目录 ID: directory-x");
     expect(choice?.textContent).toContain("机器人 ID: robot-x");
+  } finally {
+    act(() => root.unmount());
+    await manager.dispose();
+    await auth.dispose();
+  }
+});
+
+it("automatically selects a sole account only once when a host requires further selection", async () => {
+  const account = {
+    accountId: "account",
+    userId: "user",
+    organizationName: "选择中的组织",
+  };
+  const challenge = () => ({
+    kind: "account-selection-required" as const,
+    accounts: [{ ...account }],
+  });
+  const selectAccount = vi
+    .fn()
+    .mockImplementationOnce(async () => challenge())
+    .mockRejectedValue(new Error("Account selection was repeated"));
+  const auth = createAuthClient({
+    environment: "staging",
+    transport: {
+      login: async () => challenge(),
+      selectAccount,
+      getCurrentAccount: async () => account,
+      listAccounts: async () => [account],
+      switchAccount: async () => account,
+      getSession: async () => ({ kind: "bearer", token: "fixture-only" }),
+      logout: async () => {},
+    },
+  });
+  await auth.login({ identifier: "fixture", password: "fixture" });
+  const manager = createManagerClient({
+    auth,
+    baseUrl: "https://fixture.invalid",
+    routing: { allowedOrigins: [], http: { kind: "routed-server" } },
+  });
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => {
+      root.render(
+        createElement(
+          StrictMode,
+          null,
+          createElement(ManagerChatApp, {
+            auth,
+            manager,
+            chat: {
+              messageCreatorProvider: () => ({ uid: "user", name: "Fixture" }),
+            },
+          }),
+        ),
+      );
+    });
+    expect(selectAccount).toHaveBeenCalledExactlyOnceWith("account");
+    expect(findButton(container, "选择中的组织")?.disabled).toBe(false);
+    expect(auth.getSnapshot().status).toBe("account_selection_required");
   } finally {
     act(() => root.unmount());
     await manager.dispose();

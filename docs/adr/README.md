@@ -24,6 +24,7 @@
 | [018](018-unified-version-and-release.md)                    | 八包统一版本与发布治理                     | Accepted   |
 | [019](019-interaction-channel-ui.md)                         | Interaction 通道 UI 接入与单一 pending 源  | Accepted   |
 | [020](020-manager-default-interaction.md)                    | ManagerChatApp 默认接入 Interaction        | Accepted   |
+| [021](021-manager-single-choice-setup.md)                    | ManagerChatApp 唯一选项、点选和返回        | Accepted   |
 
 ## 状态规则
 

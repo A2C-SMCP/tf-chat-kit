@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Request } from "@playwright/test";
 
 const readyDialog = async (page: Page, name?: string) => {
   const dialog = page.getByRole("dialog", name ? { name } : {});
@@ -76,19 +76,22 @@ const mount = async (
     },
   );
 };
-const login = async (page: Page, beforeSelect?: () => Promise<void>) => {
+const chooseInitialOrganization = async (
+  page: Page,
+  beforeSelect?: () => Promise<void>,
+) => {
   await page.getByLabel("账号", { exact: true }).fill("ui");
   await page.getByLabel("密码", { exact: true }).fill("transient");
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "选择工作组织" }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "进入组织" })).toBeDisabled();
   await beforeSelect?.();
   await page.getByRole("button", { name: /Word 测试组织/ }).click();
-  await page.getByRole("button", { name: "进入组织" }).click();
+};
+const login = async (page: Page, beforeSelect?: () => Promise<void>) => {
+  await chooseInitialOrganization(page, beforeSelect);
   await page.getByRole("button", { name: /legacy/ }).click();
-  await page.getByRole("button", { name: "使用这个机器人" }).click();
 };
 
 export function registerManagerUiTests() {
@@ -426,8 +429,6 @@ export function registerManagerUiTests() {
   }) => {
     await mount(page);
     await login(page);
-    await page.getByRole("button", { name: /Word fixture/ }).click();
-    await page.getByRole("button", { name: "开始对话" }).click();
     const input = page.locator("textarea:not([aria-hidden])");
     await input.fill("保留菜单走查草稿");
     await expect(page.locator(".tf-top")).not.toContainText("当前工作组织");
@@ -531,7 +532,6 @@ export function registerManagerUiTests() {
       ).uiTest.render({ platformId: 17 }),
     );
     await page.getByRole("button", { name: /legacy/ }).click();
-    await page.getByRole("button", { name: "使用这个机器人" }).click();
     await expect(page.getByText("从一个想法开始。")).toBeVisible();
     await more.click();
     await expect(
@@ -554,6 +554,180 @@ export function registerManagerUiTests() {
       },
     );
   };
+  test("unique organization, eligible assistant and platform open chat automatically and can be reviewed", async ({
+    page,
+  }) => {
+    await mount(page);
+    const accounts: string[] = [];
+    page.on("request", (request) => {
+      if (request.url().endsWith("/auth/select-account"))
+        accounts.push(request.postDataJSON().accountId);
+    });
+    await page.getByLabel("账号", { exact: true }).fill("ui-single");
+    await page.getByLabel("密码", { exact: true }).fill("transient");
+    await page.getByRole("button", { name: "登录", exact: true }).click();
+    const input = page.locator("textarea:not([aria-hidden])");
+    await expect(input).toBeEnabled();
+    expect(accounts).toEqual(["account"]);
+    await expect(
+      page.getByRole("group", { name: "当前平台: Word fixture", exact: true }),
+    ).toBeVisible();
+    await input.fill("返回时保留的草稿");
+    await page.getByRole("button", { name: /返回选择/ }).click();
+    await expect(page.getByRole("button", { name: /alias/ })).toBeDisabled();
+    await expect(page.getByRole("button", { name: /legacy/ })).toBeEnabled();
+    await page.getByRole("button", { name: /legacy/ }).click();
+    await expect(input).toHaveValue("返回时保留的草稿");
+    await page.getByRole("button", { name: "更多操作", exact: true }).click();
+    await page.getByRole("menuitem", { name: "切换平台", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: /Word fixture/ }),
+    ).toContainText("当前使用");
+    await page.getByRole("button", { name: /Word fixture/ }).click();
+    await expect(input).toHaveValue("返回时保留的草稿");
+    await expect(page.getByRole("dialog")).toBeHidden();
+  });
+
+  test("return during platform loading cancels the candidate and keeps the robot picker open", async ({
+    page,
+  }) => {
+    await mount(page);
+    const isPlatformCatalog = (request: Request) =>
+      request.method() === "GET" && request.url().endsWith("/platforms");
+    const requested = page.waitForRequest(isPlatformCatalog);
+    await login(page, () => configureUi(page, { platformsDelayMs: 1000 }));
+    const firstCatalog = await requested;
+    const cancelled = page.waitForEvent(
+      "requestfailed",
+      (request) => request === firstCatalog,
+    );
+    await page.getByRole("button", { name: "← 返回", exact: true }).click();
+    await cancelled;
+    await expect(
+      page.getByRole("heading", { name: "今天和谁一起工作？" }),
+    ).toBeVisible();
+    await page
+      .getByRole("textbox", { name: "搜索已加载的机器人" })
+      .fill("alias");
+    await expect(page.getByRole("button", { name: /alias/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /legacy/ })).toBeHidden();
+    await configureUi(page, { platformsDelayMs: 0, platforms: [] });
+    await page.getByRole("button", { name: /alias/ }).click();
+    await expect(page.getByText("暂无可用平台，请联系管理员。")).toBeVisible();
+    await page.getByRole("button", { name: "← 返回", exact: true }).click();
+    await expect(page.getByRole("button", { name: /alias/ })).toBeVisible();
+
+    await configureUi(page, {
+      platforms: [
+        { platformId: 17, name: "Word fixture" },
+        { platformId: 18, name: "备选平台" },
+      ],
+    });
+    await page.getByRole("button", { name: /alias/ }).click();
+    const platform = page.getByRole("button", { name: /备选平台/ });
+    await expect(platform).toBeVisible();
+    await configureUi(page, { platformsDelayMs: 1000 });
+    const committing = page.waitForRequest(isPlatformCatalog);
+    await platform.click();
+    const commitRequest = await committing;
+    const commitCancelled = page.waitForEvent(
+      "requestfailed",
+      (request) => request === commitRequest,
+    );
+    await expect(page.getByText("正在连接助手…")).toBeVisible();
+    await page.getByRole("button", { name: "← 返回", exact: true }).click();
+    await commitCancelled;
+    await expect(platform).toBeVisible();
+    await expect(page.locator("textarea:not([aria-hidden])")).toHaveCount(0);
+  });
+
+  test("return from platform to organization keeps chat cancellable and drops a late account list after 403", async ({
+    page,
+  }) => {
+    await mount(page);
+    await chooseInitialOrganization(page, () =>
+      configureUi(page, {
+        singleReadyRobot: true,
+        platforms: [
+          { platformId: 17, name: "Word fixture" },
+          { platformId: 18, name: "备选平台" },
+        ],
+      }),
+    );
+    await page.getByRole("button", { name: /Word fixture/ }).click();
+    const input = page.locator("textarea:not([aria-hidden])");
+    await input.fill("保留草稿");
+    const backToOrganization = async () => {
+      await page.getByRole("button", { name: /返回选择/ }).click();
+      await expect(
+        page.getByRole("heading", { name: "选择对话平台" }),
+      ).toBeVisible();
+      await page.getByRole("button", { name: "← 返回", exact: true }).click();
+    };
+    await backToOrganization();
+    await page.getByRole("button", { name: "返回对话", exact: false }).click();
+    await expect(input).toHaveValue("保留草稿");
+
+    await page.getByRole("button", { name: "历史对话", exact: true }).click();
+    await page
+      .getByRole("button", { name: /Manager browser fixture/ })
+      .first()
+      .click();
+    await expect(
+      page.getByText("Persisted private reply", { exact: true }),
+    ).toBeVisible();
+    await page.evaluate(async (origin) => {
+      await fetch(`${origin}/__test/chat-status`, {
+        method: "POST",
+        body: JSON.stringify({ status: 403 }),
+      });
+    }, process.env["TF_CHAT_MANAGER_ORIGIN"] ?? "https://localhost:4312");
+    let releaseMessage!: () => void;
+    const holdMessage = new Promise<void>((resolve) => {
+      releaseMessage = resolve;
+    });
+    let releaseAccounts!: () => void;
+    const holdAccounts = new Promise<void>((resolve) => {
+      releaseAccounts = resolve;
+    });
+    await page.route("**/messages", async (route) => {
+      if (route.request().method() === "POST") await holdMessage;
+      await route.continue();
+    });
+    await page.route("**/api/v1/accounts/my", async (route) => {
+      await holdAccounts;
+      await route.continue();
+    });
+    try {
+      const posting = page.waitForRequest(
+        (request) =>
+          request.method() === "POST" && request.url().endsWith("/messages"),
+      );
+      await input.fill("Browser round trip");
+      await page.getByRole("button", { name: "发送", exact: true }).click();
+      await posting;
+      const listingAccounts = page.waitForRequest("**/api/v1/accounts/my");
+      await backToOrganization();
+      await listingAccounts;
+      releaseMessage();
+      await expect(
+        page.getByText("你暂时没有访问权限，请联系管理员。"),
+      ).toBeVisible();
+      const robot = page.getByRole("button", { name: /legacy/ });
+      await expect(robot).toBeEnabled();
+      const loadedAccounts = page.waitForResponse("**/api/v1/accounts/my");
+      releaseAccounts();
+      await loadedAccounts;
+      await expect(robot).toBeEnabled();
+      await expect(
+        page.getByText("Persisted private reply", { exact: true }),
+      ).toHaveCount(0);
+    } finally {
+      releaseMessage();
+      releaseAccounts();
+    }
+  });
+
   test("conversation failure cards show real reasons and safely restore original text in a narrow host", async ({
     page,
   }) => {
@@ -796,8 +970,6 @@ export function registerManagerUiTests() {
   }) => {
     await mount(page);
     await login(page);
-    await page.getByRole("button", { name: /Word fixture/ }).click();
-    await page.getByRole("button", { name: "开始对话" }).click();
     const input = page.locator("textarea:not([aria-hidden])");
     await input.fill("保留的工作空间草稿");
     await page.getByRole("button", { name: "账号与设置", exact: true }).click();
@@ -826,12 +998,10 @@ export function registerManagerUiTests() {
     });
     await robotSwitch.focus();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("button", { name: /legacy/ })).toHaveAttribute(
-      "aria-pressed",
-      "true",
+    await expect(page.getByRole("button", { name: /legacy/ })).toContainText(
+      "当前使用",
     );
     await page.getByRole("button", { name: /alias/ }).click();
-    await page.getByRole("button", { name: "使用这个机器人" }).click();
     await expect(
       page.getByRole("heading", { name: "选择对话平台" }),
     ).toBeVisible();
@@ -839,14 +1009,18 @@ export function registerManagerUiTests() {
     await expect(
       page.getByText("当前机器人: 目录 ID: alias"),
     ).not.toBeVisible();
+    await page.getByRole("button", { name: "← 返回", exact: true }).click();
+    await expect(page.getByRole("button", { name: /legacy/ })).toContainText(
+      "当前使用",
+    );
+    await page.getByRole("button", { name: /alias/ }).click();
     await page.getByRole("button", { name: "返回账号与设置" }).click();
     await expect(workspace).toContainText("legacy");
 
     await page.getByRole("button", { name: "切换组织", exact: true }).click();
     await expect(
       page.getByRole("button", { name: /Word 测试组织/ }),
-    ).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByText("当前使用", { exact: true })).toBeVisible();
+    ).toContainText("当前使用");
     await page.getByRole("button", { name: "返回账号与设置" }).click();
     await configureUi(page, {
       platforms: [
@@ -864,7 +1038,6 @@ export function registerManagerUiTests() {
     await configureUi(page, { platformsStatus: 200 });
     await page.getByRole("button", { name: "切换平台", exact: true }).click();
     await page.getByRole("button", { name: /备选平台/ }).click();
-    await page.getByRole("button", { name: "开始对话" }).click();
     await (
       await readyDialog(page)
     )
@@ -891,8 +1064,6 @@ export function registerManagerUiTests() {
     await page.getByRole("menuitem", { name: "切换平台", exact: true }).click();
     const alternativePlatform = page.getByRole("button", { name: /备选平台/ });
     await alternativePlatform.click();
-    await expect(alternativePlatform).toHaveAttribute("aria-pressed", "true");
-    await page.getByRole("button", { name: "开始对话" }).click();
     const confirmation = await readyDialog(page);
     await confirmation
       .getByRole("button", { name: "确认", exact: true })
@@ -919,7 +1090,6 @@ export function registerManagerUiTests() {
     await page.getByRole("button", { name: "切换组织", exact: true }).click();
     await configureUi(page, { switchAccountStatus: 500 });
     await page.getByRole("button", { name: /另一个组织/ }).click();
-    await page.getByRole("button", { name: "进入组织" }).click();
     await expect(
       page.getByRole("button", { name: "登录", exact: true }),
     ).toBeVisible();
@@ -992,8 +1162,6 @@ export function registerManagerUiTests() {
         ],
       }),
     );
-    await page.getByRole("button", { name: /Word fixture/ }).click();
-    await page.getByRole("button", { name: "开始对话" }).click();
     await page
       .locator("#word-pane")
       .evaluate((el) => ((el as HTMLElement).style.width = "320px"));
@@ -1067,7 +1235,7 @@ export function registerManagerUiTests() {
     await page.getByRole("menuitem", { name: "切换平台", exact: true }).click();
     await noOverflow();
     await expect(
-      page.getByRole("button", { name: "开始对话" }),
+      page.getByRole("button", { name: /Word fixture/ }),
     ).toBeInViewport();
     await page.getByRole("button", { name: /返回对话/ }).click();
     await expect(platformTrigger).toBeFocused();
@@ -1115,8 +1283,6 @@ export function registerManagerUiTests() {
         platforms: [{ platformId: 17, name: "" }],
       }),
     );
-    await page.getByRole("button", { name: /平台 ID: 17/ }).click();
-    await page.getByRole("button", { name: "开始对话" }).click();
     await expect(
       page.getByLabel("当前机器人: 目录 ID: legacy", { exact: true }),
     ).toBeVisible();
@@ -1137,7 +1303,7 @@ export function registerManagerUiTests() {
     ).toBeVisible();
   });
 
-  test("default Word UI: actual login, explicit account/platform, first send, Socket reply, history, drafts and logout", async ({
+  test("default Word UI: actual login, single-click account/assistant/platform, first send, Socket reply, history, drafts and logout", async ({
     page,
   }) => {
     const errors: string[] = [];
@@ -1151,13 +1317,25 @@ export function registerManagerUiTests() {
       }
     });
     await mount(page);
-    await login(page);
+    await login(page, () =>
+      configureUi(page, {
+        platforms: [
+          { platformId: 17, name: "Word fixture" },
+          { platformId: 18, name: "备选平台" },
+        ],
+      }),
+    );
     await expect(
       page.getByRole("heading", { name: "选择对话平台" }),
     ).toBeVisible();
-    await expect(page.getByRole("button", { name: "开始对话" })).toBeDisabled();
+    await expect(page.locator(".tf-footer")).toHaveCount(0);
     await page.getByRole("button", { name: /Word fixture/ }).click();
-    await page.getByRole("button", { name: "开始对话" }).click();
+    await expect(page.getByText("从一个想法开始。")).toBeVisible();
+    await page.getByRole("button", { name: /返回选择/ }).click();
+    await expect(
+      page.getByRole("heading", { name: "选择对话平台" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: /Word fixture/ }).click();
     await expect(page.getByText("从一个想法开始。")).toBeVisible();
     await page.screenshot({
       path: test.info().outputPath("default-ui-welcome.png"),
@@ -1287,7 +1465,6 @@ export function registerManagerUiTests() {
       api.render({ restoring: false });
     });
     await page.getByRole("button", { name: /legacy/ }).click();
-    await page.getByRole("button", { name: "Use this assistant" }).click();
     await expect(page.getByText("Start with an idea.")).toBeVisible();
     await expect(page.getByText("Word fixture", { exact: true })).toBeVisible();
     await page.locator("textarea:not([aria-hidden])").fill("private draft");
@@ -1348,7 +1525,6 @@ export function registerManagerUiTests() {
     await page.getByLabel("密码", { exact: true }).fill("transient");
     await page.getByRole("button", { name: "登录", exact: true }).click();
     await page.getByRole("button", { name: /Word 测试组织/ }).click();
-    await page.getByRole("button", { name: "进入组织" }).click();
     await expect(page.locator("textarea:not([aria-hidden])")).toHaveValue(
       "同身份临时草稿",
     );
@@ -1367,14 +1543,12 @@ export function registerManagerUiTests() {
       page.getByRole("heading", { name: "选择工作组织" }),
     ).toBeVisible();
     await page.getByRole("button", { name: /另一个组织/ }).click();
-    await page.getByRole("button", { name: "进入组织" }).click();
     const confirmation = await readyDialog(page);
     await confirmation
       .getByRole("button", { name: "确认", exact: true })
       .click();
     await expect(confirmation).toBeHidden();
     await page.getByRole("button", { name: /legacy/ }).click();
-    await page.getByRole("button", { name: "使用这个机器人" }).click();
     await expect(page.locator("textarea:not([aria-hidden])")).toHaveValue("");
     await page.getByRole("button", { name: "更多操作", exact: true }).click();
     await page

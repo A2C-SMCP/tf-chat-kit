@@ -33,3 +33,6 @@ https://user.test.turingfocus.cn 的真实部署完成创建、发送、回复�
 > **2026-11-10 决策更新**：独立发布/独立版本策略条款由
 > [ADR-018](018-unified-version-and-release.md) 替代；门面依赖 auth、显式认证入口与 Server
 > 会话契约决策继续有效。
+
+> 2026-11-26：可选 ManagerChatApp 首次接入可自动选中唯一有效平台，见
+> [ADR-021](021-manager-single-choice-setup.md)。
