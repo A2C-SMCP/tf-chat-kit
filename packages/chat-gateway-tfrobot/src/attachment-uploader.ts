@@ -29,9 +29,14 @@ export interface TFRobotAttachmentUploader {
 
 class DefaultTFRobotAttachmentUploader implements TFRobotAttachmentUploader {
   readonly #http: TFRobotHttpClient;
+  readonly #path: string;
 
-  constructor(options: TFRobotGatewayOptions) {
+  constructor(options: TFRobotGatewayOptions, endpoint: "chat" | "dashboard") {
     this.#http = new TFRobotHttpClient(options);
+    this.#path =
+      endpoint === "chat"
+        ? "v1/chat/attachments"
+        : "v1/dashboard/remote/source/cos/upload";
   }
 
   async upload(
@@ -58,7 +63,7 @@ class DefaultTFRobotAttachmentUploader implements TFRobotAttachmentUploader {
     try {
       result = await this.#http.request({
         method: "POST",
-        path: "v1/dashboard/remote/source/cos/upload",
+        path: this.#path,
         operation: "send",
         diagnosticOperation: "uploadAttachment",
         options: input,
@@ -90,7 +95,9 @@ class DefaultTFRobotAttachmentUploader implements TFRobotAttachmentUploader {
   }
 }
 
-/** Creates the zero-extra-config uploader used by the default Chat Kit facade. */
+/** Creates a Robot-scoped uploader. The legacy dashboard route is the default for direct callers. */
 export const createTFRobotAttachmentUploader = (
   options: TFRobotGatewayOptions,
-): TFRobotAttachmentUploader => new DefaultTFRobotAttachmentUploader(options);
+  endpoint: "chat" | "dashboard" = "dashboard",
+): TFRobotAttachmentUploader =>
+  new DefaultTFRobotAttachmentUploader(options, endpoint);

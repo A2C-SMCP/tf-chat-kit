@@ -24,15 +24,20 @@ import {
   type InteractionClient,
   type UseConversationWorkspaceOptions,
   useChatClient,
+  useChatAttachmentUploader,
   useChatSnapshot,
   useComposerDraft,
   useConversationWorkspace,
 } from "@turingfocus/chat-react";
-import type { ChatError, Conversation } from "@turingfocus/chat-protocol";
+import type {
+  ChatError,
+  Conversation,
+  UploadedAttachment,
+} from "@turingfocus/chat-protocol";
 import { ChatConversationView } from "./chat-conversation-view.js";
 import { ChatComposer } from "./chat-composer.js";
 import { ChatConversationList } from "./conversation-list.js";
-import { ChatDiagnostics } from "./chat-diagnostics.js";
+import { ChatDiagnostics, ChatErrorNotice } from "./chat-diagnostics.js";
 import { InteractionQueue } from "./interaction-queue.js";
 import { compactChatZhCN } from "./compact-labels.js";
 import { resolveChatUiLabels } from "./labels.js";
@@ -70,6 +75,7 @@ export interface ChatCompactWorkspaceProps {
   readonly onActivityChange?:
     | ((activity: {
         readonly running: boolean;
+        readonly hasAttachments: boolean;
         readonly draft: ChatCompactDraft;
       }) => void)
     | undefined;
@@ -121,6 +127,7 @@ export function ChatCompactWorkspace({
   const zh = locale === "zh-CN";
   const labels = resolveChatUiLabels(zh ? compactChatZhCN : undefined);
   const client = useChatClient();
+  const attachmentUploader = useChatAttachmentUploader();
   const snapshot = useChatSnapshot();
   const workspace = useConversationWorkspace({
     getDeadlineAt,
@@ -168,6 +175,8 @@ export function ChatCompactWorkspace({
   useEffect(() => {
     onActivityChange?.({
       running,
+      hasAttachments:
+        (fresh ? welcomeDraft : composer.draft).attachments.length > 0,
       draft: fresh
         ? { text }
         : {
@@ -181,6 +190,7 @@ export function ChatCompactWorkspace({
     text,
     snapshot?.conversation.id,
     composer.draft,
+    welcomeDraft.attachments,
     onActivityChange,
   ]);
   useEffect(() => {
@@ -200,7 +210,10 @@ export function ChatCompactWorkspace({
     else action();
   };
   const firstSend = useCallback(
-    async (message: string): Promise<boolean> => {
+    async (
+      message: string,
+      attachments: readonly UploadedAttachment[] = [],
+    ): Promise<boolean> => {
       if (busyRef.current || !workspace.ready) return false;
       busyRef.current = true;
       setBusy(true);
@@ -210,7 +223,11 @@ export function ChatCompactWorkspace({
         let id = creatingId.current;
         if (!id) {
           const created = await workspace.createConversation({
-            title: message.slice(0, 60),
+            title: (
+              message.trim() ||
+              attachments[0]?.name ||
+              (zh ? "附件对话" : "Attachment conversation")
+            ).slice(0, 60),
             select: false,
           });
           if (revision !== generation.current) return false;
@@ -221,7 +238,11 @@ export function ChatCompactWorkspace({
           id = created.value.id;
           creatingId.current = id;
         }
-        client.setComposerDraft({ conversationId: id, text: message });
+        client.setComposerDraft({
+          conversationId: id,
+          text: message,
+          attachments,
+        });
         const selected = await workspace.selectConversation(id);
         if (revision !== generation.current) return false;
         if (!selected?.ok) {
@@ -229,16 +250,21 @@ export function ChatCompactWorkspace({
           return false;
         }
         // A creation/load failure must never trigger a second automatic send.
-        const result = await client.sendText({
+        const result = await client.sendMessage({
           conversationId: id,
           text: message,
+          attachments,
           deadlineAt: getDeadlineAt(),
         });
         if (revision !== generation.current) return false;
         setFresh(false);
         creatingId.current = undefined;
         if (result.ok) {
-          client.setComposerDraft({ conversationId: id, text: "" });
+          client.setComposerDraft({
+            conversationId: id,
+            text: "",
+            attachments: [],
+          });
           setText("");
         } else setError(result.error);
         return result.ok;
@@ -257,7 +283,7 @@ export function ChatCompactWorkspace({
         }
       }
     },
-    [workspace, client, getDeadlineAt],
+    [workspace, client, getDeadlineAt, zh],
   );
   const mutate = async (kind: "rename" | "delete") => {
     if (busyRef.current) return;
@@ -622,6 +648,23 @@ export function ChatCompactWorkspace({
                   onDismiss={(id) => client.dismissOutgoingMessage(id)}
                 />
                 <ChatComposer
+                  attachmentUploader={attachmentUploader}
+                  onUploadError={(uploadError) =>
+                    client.recordDiagnostic({
+                      ...uploadError,
+                      diagnostic: {
+                        ...uploadError.diagnostic,
+                        operation: "uploadAttachment",
+                      },
+                    })
+                  }
+                  renderUploadError={(uploadError) => (
+                    <ChatErrorNotice
+                      error={uploadError}
+                      operation="uploadAttachment"
+                      labels={labels}
+                    />
+                  )}
                   labels={labels}
                   disabled={!workspace.ready || busy}
                   textInputDisabled={busy}

@@ -9,8 +9,6 @@ import {
   collectSourceFiles,
   FIXED_PACKAGE_NAMES,
   PACKAGE_POLICY,
-  UNIFIED_VERSION_MIGRATION,
-  isUnifiedVersionMigrationState,
   loadWorkspaceSnapshot,
   validateFixedGroupPolicy,
   validateWorkspaceSnapshot,
@@ -70,67 +68,55 @@ describe("workspace governance", () => {
     ).toEqual([expect.stringContaining("FIXED_PACKAGE_NAMES must equal")]);
   });
 
-  it("accepts only the exact one-time unified version migration state", async () => {
+  it("rejects the retired 0.11.0/0.12.1 migration state", async () => {
     const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
     for (const entry of snapshot.packages) {
-      const version =
-        UNIFIED_VERSION_MIGRATION.versions[entry.manifest.name ?? ""];
-      if (version !== undefined) entry.manifest.version = version;
+      entry.manifest.version =
+        entry.manifest.name === "@turingfocus/chat-auth" ? "0.12.1" : "0.11.0";
     }
 
-    expect(validateWorkspaceSnapshot(snapshot)).toEqual([]);
-    expect(
-      isUnifiedVersionMigrationState(UNIFIED_VERSION_MIGRATION.versions),
-    ).toBe(true);
-    expect(
-      isUnifiedVersionMigrationState(
-        Object.fromEntries(
-          Object.entries(UNIFIED_VERSION_MIGRATION.versions).filter(
-            ([name]) => name !== "@turingfocus/chat-auth",
-          ),
-        ),
+    expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
+      expect.stringContaining(
+        "workspace package versions must match within the fixed group",
       ),
-    ).toBe(false);
+    );
   });
 
   it("accepts the versioned unified eight-package state", async () => {
     const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
-    for (const entry of snapshot.packages) entry.manifest.version = "0.13.0";
+    for (const entry of snapshot.packages) entry.manifest.version = "0.14.0";
 
     expect(validateWorkspaceSnapshot(snapshot)).toEqual([]);
   });
 
   it.each([
-    ["auth patch", "@turingfocus/chat-auth", "0.12.0"],
-    ["auth premature unification", "@turingfocus/chat-auth", "0.13.0"],
-    ["single core patch", "@turingfocus/chat-protocol", "0.11.1"],
-    ["core catches up to auth", "@turingfocus/chat-kit", "0.12.1"],
-  ])("rejects near-miss migration state: %s", async (_label, name, version) => {
-    const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
-    for (const entry of snapshot.packages) {
-      const migrationVersion =
-        UNIFIED_VERSION_MIGRATION.versions[entry.manifest.name ?? ""];
-      if (migrationVersion !== undefined)
-        entry.manifest.version = migrationVersion;
-    }
-    const entry = snapshot.packages.find(
-      ({ manifest }) => manifest.name === name,
-    );
-    if (!entry) throw new Error(`Missing package fixture ${name}`);
-    entry.manifest.version = version;
+    ["auth patch", "@turingfocus/chat-auth", "0.14.1"],
+    ["single core patch", "@turingfocus/chat-protocol", "0.13.9"],
+    ["core ahead of auth", "@turingfocus/chat-kit", "0.15.0"],
+  ])(
+    "rejects mixed fixed-group versions: %s",
+    async (_label, name, version) => {
+      const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
+      for (const entry of snapshot.packages) entry.manifest.version = "0.14.0";
+      const entry = snapshot.packages.find(
+        ({ manifest }) => manifest.name === name,
+      );
+      if (!entry) throw new Error(`Missing package fixture ${name}`);
+      entry.manifest.version = version;
 
-    expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
-      expect.stringContaining(
-        "workspace package versions must match within the fixed group",
-      ),
-    );
-  });
+      expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
+        expect.stringContaining(
+          "workspace package versions must match within the fixed group",
+        ),
+      );
+    },
+  );
 
   it("rejects a core/auth version role swap", async () => {
     const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
     for (const entry of snapshot.packages) {
       entry.manifest.version =
-        entry.manifest.name === "@turingfocus/chat-auth" ? "0.11.0" : "0.12.1";
+        entry.manifest.name === "@turingfocus/chat-auth" ? "0.14.0" : "0.15.0";
     }
 
     expect(validateWorkspaceSnapshot(snapshot)).toContainEqual(
@@ -140,7 +126,7 @@ describe("workspace governance", () => {
     );
   });
 
-  it("rejects a non-0.x unified version even in the migration shape", async () => {
+  it("rejects a non-0.x unified version", async () => {
     const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
     for (const entry of snapshot.packages) entry.manifest.version = "1.0.0";
 
@@ -149,13 +135,9 @@ describe("workspace governance", () => {
     );
   });
 
-  it("rejects a seven-package workspace even with the migration versions", async () => {
+  it("rejects a seven-package workspace", async () => {
     const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
-    for (const entry of snapshot.packages) {
-      const version =
-        UNIFIED_VERSION_MIGRATION.versions[entry.manifest.name ?? ""];
-      if (version !== undefined) entry.manifest.version = version;
-    }
+    for (const entry of snapshot.packages) entry.manifest.version = "0.14.0";
     snapshot.packages = snapshot.packages.filter(
       ({ manifest }) => manifest.name !== "@turingfocus/chat-auth",
     );

@@ -107,6 +107,7 @@ export const ChatComposer = ({
   const composing = useRef(false);
   const submissionInFlight = useRef(false);
   const [draft, setDraft] = useState("");
+  const [attachmentUnavailable, setAttachmentUnavailable] = useState(false);
   const [uploading, setUploading] = useState<
     readonly {
       readonly file: File;
@@ -346,6 +347,12 @@ export const ChatComposer = ({
   const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>): void => {
     pendingTextEdit.current = undefined;
     const files = Array.from(event.clipboardData.files);
+    if (files.length > 0 && attachmentUploader === undefined) {
+      event.preventDefault();
+      setAttachmentUnavailable(true);
+      return;
+    }
+    setAttachmentUnavailable(false);
     if (files.length > 0 && attachmentUploader !== undefined) {
       event.preventDefault();
       const remaining = Math.max(
@@ -438,7 +445,12 @@ export const ChatComposer = ({
     >
       <div
         data-chat-composer=""
-        style={{ alignItems: "flex-end", display: "flex", gap: token.marginXS }}
+        style={{
+          alignItems: "flex-end",
+          display: "flex",
+          flexWrap: "wrap",
+          gap: token.marginXS,
+        }}
       >
         <Input.TextArea
           aria-label={labels.composerLabel}
@@ -496,69 +508,90 @@ export const ChatComposer = ({
               : labels.composerPlaceholder
           }
           ref={textarea}
+          style={{
+            flex: attachmentUploader === undefined ? "1 1 12rem" : "1 1 100%",
+            minWidth: 0,
+          }}
           value={text}
         />
-        {documentSource !== undefined &&
-          controlledDraft !== undefined &&
-          onDraftChange !== undefined && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: token.marginXS,
+            justifyContent: "flex-end",
+            marginInlineStart: "auto",
+            maxWidth: "100%",
+          }}
+        >
+          {documentSource !== undefined &&
+            controlledDraft !== undefined &&
+            onDraftChange !== undefined && (
+              <Button
+                disabled={disabled || textInputDisabled}
+                onClick={() => setReferencePickerOpen(true)}
+              >
+                References
+              </Button>
+            )}
+          {attachmentUploader === undefined ? null : (
             <Button
-              disabled={disabled || textInputDisabled}
-              onClick={() => setReferencePickerOpen(true)}
+              disabled={
+                disabled ||
+                attachments.length + uploading.length >= maxAttachments
+              }
+              onClick={() => fileInput.current?.click()}
             >
-              References
+              {labels.attach}
             </Button>
           )}
-        {attachmentUploader === undefined ? null : (
+          {attachmentUploader === undefined ? null : (
+            <input
+              hidden
+              multiple
+              onChange={selectFiles}
+              ref={fileInput}
+              type="file"
+            />
+          )}
+          {interruptAction === undefined ? null : (
+            <Button
+              danger
+              disabled={interruptAction.disabled === true}
+              loading={interrupting}
+              onClick={() => {
+                void interrupt();
+              }}
+            >
+              {interrupting
+                ? labels.interrupting
+                : interruptAction.disabled === true
+                  ? labels.interruptUnavailable
+                  : labels.interrupt}
+            </Button>
+          )}
           <Button
             disabled={
               disabled ||
-              attachments.length + uploading.length >= maxAttachments
+              uploading.some((item) => item.error === undefined) ||
+              (text.trim().length === 0 && attachments.length === 0)
             }
-            onClick={() => fileInput.current?.click()}
-          >
-            {labels.attach}
-          </Button>
-        )}
-        {attachmentUploader === undefined ? null : (
-          <input
-            hidden
-            multiple
-            onChange={selectFiles}
-            ref={fileInput}
-            type="file"
-          />
-        )}
-        {interruptAction === undefined ? null : (
-          <Button
-            danger
-            disabled={interruptAction.disabled === true}
-            loading={interrupting}
+            loading={submitting}
             onClick={() => {
-              void interrupt();
+              void submit();
             }}
+            type="primary"
           >
-            {interrupting
-              ? labels.interrupting
-              : interruptAction.disabled === true
-                ? labels.interruptUnavailable
-                : labels.interrupt}
+            {submitting ? labels.sending : labels.send}
           </Button>
-        )}
-        <Button
-          disabled={
-            disabled ||
-            uploading.some((item) => item.error === undefined) ||
-            (text.trim().length === 0 && attachments.length === 0)
-          }
-          loading={submitting}
-          onClick={() => {
-            void submit();
-          }}
-          type="primary"
-        >
-          {submitting ? labels.sending : labels.send}
-        </Button>
+        </div>
       </div>
+      {attachmentUnavailable && (
+        <div role="status">
+          {labels.capabilityUnavailableTitle}:{" "}
+          {labels.capabilityUnavailableDescription}
+        </div>
+      )}
       <Typography.Text
         id={shortcutHintId}
         type="secondary"

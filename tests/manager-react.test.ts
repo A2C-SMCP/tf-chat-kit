@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, createElement, StrictMode, useCallback } from "react";
 import { createRoot } from "react-dom/client";
+import { useChatAttachmentUploader } from "../packages/chat-react/src/hooks.js";
 import { describe, expect, it, vi } from "vitest";
 import { ManagerChatProvider } from "../packages/chat-kit/src/manager-react.js";
 import {
@@ -44,6 +45,12 @@ describe("Manager optional React and headless ownership", () => {
     await owned.dispose();
   });
   it("StrictMode, robot switching and unmount release each instance", async () => {
+    const uploaders: unknown[] = [];
+    function Content() {
+      const uploader = useChatAttachmentUploader();
+      uploaders.push(uploader);
+      return uploader ? "Chat ready" : "Uploader missing";
+    }
     const releases: ReturnType<typeof vi.fn>[] = [];
     const source = {
       subscribe: () => () => {},
@@ -76,7 +83,7 @@ describe("Manager optional React and headless ownership", () => {
       return createElement(
         ManagerChatProvider<string>,
         { create, robot },
-        "Chat ready",
+        createElement(Content),
       );
     }
     const container = document.createElement("div");
@@ -103,6 +110,8 @@ describe("Manager optional React and headless ownership", () => {
       await act(async () => {
         root.unmount();
       });
+      expect(new Set(uploaders).size).toBeGreaterThan(1);
+      expect(uploaders.every(Boolean)).toBe(true);
       expect(releases.length).toBeGreaterThan(1);
       expect(releases.every((release) => release.mock.calls.length === 1)).toBe(
         true,
