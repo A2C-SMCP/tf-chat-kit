@@ -383,6 +383,7 @@ function ManagerAppBinding({
   }, [screen, scope, authState.status]);
   const activity = useRef({
     running: false,
+    hasAttachments: false,
     draft: { text: "" } as ChatCompactDraft,
   });
   const retained = useRef<{
@@ -399,7 +400,11 @@ function ManagerAppBinding({
     setConfirm(undefined);
   }, []);
   const onActivityChange = useCallback(
-    (value: { running: boolean; draft: ChatCompactDraft }) => {
+    (value: {
+      running: boolean;
+      hasAttachments: boolean;
+      draft: ChatCompactDraft;
+    }) => {
       activity.current = value;
     },
     [],
@@ -486,7 +491,11 @@ function ManagerAppBinding({
     invalidateSelection();
     autoSelectRobot.current = false;
     retained.current = undefined;
-    activity.current = { running: false, draft: { text: "" } };
+    activity.current = {
+      running: false,
+      hasAttachments: false,
+      draft: { text: "" },
+    };
     setRestoredDraft(undefined);
     setRobot(undefined);
     setPlatformChoice(undefined);
@@ -517,7 +526,9 @@ function ManagerAppBinding({
     if (pendingAction.current) return;
     if (
       identity &&
-      (activity.current.running || activity.current.draft.text.trim())
+      (activity.current.running ||
+        activity.current.hasAttachments ||
+        activity.current.draft.text.trim())
     ) {
       setConfirmLogout(false);
       setConfirm(() => action);
@@ -528,7 +539,11 @@ function ManagerAppBinding({
     setRobot(undefined);
     setRestoredDraft(undefined);
     setChosenPlatform(undefined);
-    activity.current = { running: false, draft: { text: "" } };
+    activity.current = {
+      running: false,
+      hasAttachments: false,
+      draft: { text: "" },
+    };
     retained.current = undefined;
     void controller.select(undefined);
   };
@@ -547,7 +562,11 @@ function ManagerAppBinding({
     invalidateSelection();
     autoSelectRobot.current = false;
     retained.current = undefined;
-    activity.current = { running: false, draft: { text: "" } };
+    activity.current = {
+      running: false,
+      hasAttachments: false,
+      draft: { text: "" },
+    };
     setRestoredDraft(undefined);
     setRobot(undefined);
     setPlatformChoice(undefined);
@@ -1205,7 +1224,10 @@ function ManagerAppBinding({
       </div>
     );
     const chat = connected ? (
-      <ChatProvider client={activeChatClient}>
+      <ChatProvider
+        client={activeChatClient}
+        attachmentUploader={connection.attachmentUploader}
+      >
         <ChatCompactWorkspace
           debug={debug}
           showEventDetailModeSelector={showEventDetailModeSelector}

@@ -51,10 +51,10 @@ chat-auth (门面显式 auth 子入口；react/antd 为可选 peer UI；与核�
 
 ## 登录、Chat Token 与会话接入
 
-以下接入示例面向目标版本 `0.13.0`（需本次变更发布后使用）；认证叶子包与核心包统一版本发布，由门面声明兼容依赖。已经有登录系统的宿主可以只使用核心包，并注入自己的 `SessionProvider`。
+以下接入示例面向当前统一版本 `0.14.0`；认证叶子包与核心包统一版本发布，由门面声明兼容依赖。已经有登录系统的宿主可以只使用核心包，并注入自己的 `SessionProvider`。
 
 ```bash
-pnpm add @turingfocus/chat-kit@0.13.0
+pnpm add @turingfocus/chat-kit@0.14.0
 # 使用下面的 React / Ant Design UI 时还需要：
 pnpm add react@^18.2.0 react-dom@^18.2.0 antd@^5.23.4
 ```

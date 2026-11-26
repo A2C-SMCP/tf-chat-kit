@@ -75,6 +75,13 @@ function ManagerChatBinding<Robot>({
     };
   }, [controller, robot, platformId]);
   return snapshot.status === "ready" && snapshot.client
-    ? createElement(ChatProvider, { client: snapshot.client }, children)
+    ? createElement(
+        ChatProvider,
+        {
+          client: snapshot.client,
+          attachmentUploader: snapshot.attachmentUploader,
+        },
+        children,
+      )
     : (fallback?.(snapshot) ?? null);
 }

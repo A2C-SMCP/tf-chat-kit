@@ -4,6 +4,8 @@ import {
 } from "./tfrobot-client.js";
 import type { ChatClient } from "@turingfocus/chat-runtime";
 import {
+  createTFRobotAttachmentUploader,
+  type TFRobotAttachmentUploader,
   createTFRobotPlatformClient,
   type TFRobotConversationPlatform,
   type TFRobotSession,
@@ -57,6 +59,7 @@ export interface ManagerChatSnapshot {
     | "error"
     | "disposed";
   readonly client?: ChatClient | undefined;
+  readonly attachmentUploader?: TFRobotAttachmentUploader | undefined;
   readonly platforms?: readonly TFRobotConversationPlatform[] | undefined;
   readonly platformId?: number | string | undefined;
   readonly error?:
@@ -130,6 +133,7 @@ export class ManagerChatController<Robot> {
   #release(): void {
     this.#abort?.abort();
     this.#abort = undefined;
+    this.#snapshot.attachmentUploader?.dispose();
     this.#connection?.dispose();
     this.#connection = undefined;
     const client = this.#snapshot.client;
@@ -234,14 +238,25 @@ export class ManagerChatController<Robot> {
           return;
         }
       }
-      const client = createTFRobotChatClient({
+      const chatOptions = {
         ...this.#options.chat,
         platformId,
         ...connection.target,
         sessionProvider: connection.sessionProvider,
-      });
+      };
+      const client = createTFRobotChatClient(chatOptions);
+      const attachmentUploader = createTFRobotAttachmentUploader(
+        chatOptions,
+        "chat",
+      );
       this.#connection = connection;
-      this.#update({ status: "ready", client, platforms, platformId });
+      this.#update({
+        status: "ready",
+        client,
+        attachmentUploader,
+        platforms,
+        platformId,
+      });
     } catch {
       connection?.dispose();
       if (!this.#disposed && generation === this.#generation)

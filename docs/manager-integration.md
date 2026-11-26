@@ -139,6 +139,23 @@ Kit 保留可选 `generatedTexts` 的兼容读取，但它不是接入前提。
 原事件 ID、宿主 renderer 和 `role="assistant"` 消息通道保持，详细边界见
 [LLM 中间消息契约](design/issue-162-assistant-progress-contract.md)。
 
+## Manager 附件与剪贴板图片
+
+`ManagerChatController` 为每个已就绪的机器人连接提供 `attachmentUploader`，复用该连接的
+Robot SessionProvider、REST 地址和 chat 的 fetch/诊断配置。`ManagerChatProvider` 与
+`ManagerChatApp` 自动把它交给 ChatProvider；宿主无需另配 COS 或传入上传路径。
+机器人、平台或身份切换以及卸载会释放旧上传器，取消在途请求。
+
+紧凑工作区的欢迎页和已有会话均支持粘贴图片与选择文件，包括纯附件首条消息。
+上传完成的附件保留在当前草稿中；发送时才创建新会话，失败不自动重发。切换身份不会
+恢复附件草稿。已有会话继续遵守 `sendAttachments` capability；未提供上传器时粘贴图片会
+提示能力不可用，上传失败时展示错误与重试入口。
+
+上传使用机器人 REST 地址下的 `POST /v1/chat/attachments`，
+携带具备 `chat:send` 的 Robot Bearer Token 和 multipart `file`。部署入口与 Server 必须允许此路径、CORS 和
+对应用户权限。请使用提供聊天附件端点且配置了对象存储的 TFRobotServer 版本。
+真实 Excel/Word/PPT WebView 剪贴板与 staging 上传链路需分别验收。
+
 ## Issue #116：Word 直连验收边界
 
 Playground Manager 模式现在直接使用公共 `routed-server`，不经过 `/__tfrobot_proxy`。

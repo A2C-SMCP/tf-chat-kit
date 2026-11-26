@@ -107,6 +107,7 @@ export const ChatComposer = ({
   const composing = useRef(false);
   const submissionInFlight = useRef(false);
   const [draft, setDraft] = useState("");
+  const [attachmentUnavailable, setAttachmentUnavailable] = useState(false);
   const [uploading, setUploading] = useState<
     readonly {
       readonly file: File;
@@ -346,6 +347,12 @@ export const ChatComposer = ({
   const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>): void => {
     pendingTextEdit.current = undefined;
     const files = Array.from(event.clipboardData.files);
+    if (files.length > 0 && attachmentUploader === undefined) {
+      event.preventDefault();
+      setAttachmentUnavailable(true);
+      return;
+    }
+    setAttachmentUnavailable(false);
     if (files.length > 0 && attachmentUploader !== undefined) {
       event.preventDefault();
       const remaining = Math.max(
@@ -559,6 +566,12 @@ export const ChatComposer = ({
           {submitting ? labels.sending : labels.send}
         </Button>
       </div>
+      {attachmentUnavailable && (
+        <div role="status">
+          {labels.capabilityUnavailableTitle}:{" "}
+          {labels.capabilityUnavailableDescription}
+        </div>
+      )}
       <Typography.Text
         id={shortcutHintId}
         type="secondary"
