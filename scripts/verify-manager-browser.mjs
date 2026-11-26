@@ -92,6 +92,7 @@ try {
       'export { createManagerClient } from "@turingfocus/chat-kit/auth/manager";',
       'export { createManagerChatController } from "@turingfocus/chat-kit/manager";',
       'export { ManagerChatApp } from "@turingfocus/chat-kit/manager-antd";',
+      'export { ChatTimeline } from "@turingfocus/chat-kit/antd";',
       'export { createElement, StrictMode } from "react";',
       'export { createRoot } from "react-dom/client";',
     ].join("\n"),

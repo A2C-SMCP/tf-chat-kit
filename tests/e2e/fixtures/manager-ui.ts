@@ -92,6 +92,123 @@ const login = async (page: Page, beforeSelect?: () => Promise<void>) => {
 };
 
 export function registerManagerUiTests() {
+  test("Timeline keeps long intermediate output collapsed when it scrolls back into view", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 353, height: 759 });
+    await page.goto("/");
+    await page.evaluate(async () => {
+      const entry = "/consumer.js";
+      const { ChatTimeline, createElement, createRoot } = await import(entry);
+      const host = document.createElement("div");
+      host.style.height = "469px";
+      document.body.style.margin = "0";
+      document.body.append(host);
+      const conversationId = "scroll-history";
+      const longMarkdown = (lines: number) =>
+        "## Long Markdown\n\n" +
+        "- **Layout measurement** and mixed text with words that can wrap.\n".repeat(
+          lines,
+        );
+      const message = (index: number, text: string) => ({
+        kind: "message",
+        id: `message-${index}`,
+        conversationId,
+        role: index % 2 === 0 ? "user" : "assistant",
+        content: { kind: "text", text },
+        createdAt: index,
+      });
+      const intermediate = {
+        kind: "agent-event",
+        id: "intermediate",
+        conversationId,
+        eventType: "LLM",
+        eventCategory: "generic",
+        status: "success",
+        createdAt: 18,
+        transitions: [
+          {
+            id: "output",
+            status: "success",
+            occurredAt: 18,
+            generatedTexts: [longMarkdown(38)],
+          },
+        ],
+      };
+      createRoot(host).render(
+        createElement(ChatTimeline, {
+          conversationId,
+          items: [
+            ...Array.from({ length: 18 }, (_, index) =>
+              message(
+                index,
+                index === 4 ? longMarkdown(7) : `Short message ${index}`,
+              ),
+            ),
+            intermediate,
+            message(19, longMarkdown(18)),
+          ],
+          onEventSelect: () => undefined,
+        }),
+      );
+    });
+
+    const timeline = page.getByRole("log");
+    const output = timeline.locator("[data-chat-progress-collapsed]");
+    await expect(timeline).toBeVisible();
+    const samples = await timeline.evaluate(async (scroller) => {
+      const frame = () => new Promise(requestAnimationFrame);
+      const settle = async () => {
+        for (let index = 0; index < 12; index++) await frame();
+      };
+      const findOutput = () =>
+        scroller.querySelector("[data-chat-progress-collapsed]");
+      for (let index = 0; index < 4; index++) {
+        scroller.scrollTop = scroller.scrollHeight;
+        await settle();
+      }
+      const nearOutput = scroller.scrollHeight - scroller.clientHeight - 730;
+      const cycles = [];
+      for (let cycle = 0; cycle < 6; cycle++) {
+        scroller.scrollTop = 0;
+        await settle();
+        const unmounted = findOutput() === null;
+        scroller.scrollTop = nearOutput;
+        const layouts = [];
+        for (let index = 0; index < 12; index++) {
+          await frame();
+          const output = findOutput();
+          if (output !== null) {
+            layouts.push({
+              collapsed: output.getAttribute("data-chat-progress-collapsed"),
+              height: output.getBoundingClientRect().height,
+            });
+          }
+        }
+        cycles.push({ unmounted, layouts });
+      }
+      return cycles;
+    });
+
+    for (const { unmounted, layouts } of samples) {
+      expect(unmounted).toBe(true);
+      expect(layouts.length).toBeGreaterThan(1);
+      expect(layouts.map(({ collapsed }) => collapsed)).not.toContain("false");
+      expect(new Set(layouts.map(({ height }) => height)).size).toBe(1);
+    }
+
+    await timeline.getByRole("button", { name: "Show more" }).click();
+    await expect(output).toHaveAttribute(
+      "data-chat-progress-collapsed",
+      "false",
+    );
+    await timeline.getByRole("button", { name: "Show less" }).click();
+    await expect(output).toHaveAttribute(
+      "data-chat-progress-collapsed",
+      "true",
+    );
+  });
+
   test("Manager generated text: expands only model text and preserves history/live identity", async ({
     page,
   }) => {
