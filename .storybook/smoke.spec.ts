@@ -56,10 +56,12 @@ test("Manager demo connects through public clients and opens history", async ({
   await page.locator("input").first().fill("demo");
   await page.locator("input[type=password]").fill("demo");
   await page.getByRole("button", { name: "登录", exact: true }).click();
-  await page.getByText("项目助理", { exact: true }).click();
-  await page.getByRole("button", { name: "使用这个机器人" }).click();
-  await page.getByText("组件展示", { exact: true }).click();
-  await page.getByRole("button", { name: "开始对话", exact: true }).click();
+  await expect(
+    page.getByRole("group", { name: "当前机器人: 项目助理" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("group", { name: "当前平台: 组件展示" }),
+  ).toBeVisible();
   const composer = page.getByRole("textbox", { name: "消息", exact: true });
   await composer.fill("Storybook 首次发送验收");
   await page.getByRole("button", { name: "发送", exact: true }).click();
