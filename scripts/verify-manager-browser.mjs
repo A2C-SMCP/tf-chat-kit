@@ -33,6 +33,11 @@ try {
       "utf8",
     ),
   );
+  if (process.env["TF_CHAT_AUTH_FROM_REGISTRY"] !== undefined) {
+    throw new Error(
+      "TF_CHAT_AUTH_FROM_REGISTRY is retired; use TF_CHAT_PACKAGES_FROM_REGISTRY=1 to verify the published unified package set.",
+    );
+  }
   const fromRegistry = process.env["TF_CHAT_PACKAGES_FROM_REGISTRY"] === "1";
   const expectedVersions = Object.fromEntries(
     manifest.packages.map((item) => [item.name, item.version]),
@@ -50,11 +55,11 @@ try {
   if (unifiedVersion === undefined) {
     throw new Error("Packed release is missing package versions");
   }
-  // Default: install every package from the local tarballs to verify the
-  // workspace state; during migration this intentionally observes the
-  // pre-unification versions. TF_CHAT_PACKAGES_FROM_REGISTRY=1 resolves all
-  // eight packages from the public Registry; only use it after the unified
-  // version has been published.
+  // Default tarball mode verifies the current workspace state. The migration
+  // is complete: all eight packages now share the unified 0.14.0 version, so
+  // this mode checks the packed unified version. TF_CHAT_PACKAGES_FROM_REGISTRY=1
+  // additionally verifies that the published unified version resolves from the
+  // public Registry; use it after that version is published.
   const packages = Object.fromEntries(
     manifest.packages.map((item) => [
       item.name,
@@ -143,6 +148,11 @@ try {
       "utf8",
     ),
   );
+  // Registry mode resolves the facade's production leaf packages through
+  // chat-kit (chat-testing is not part of the facade install) and asserts the
+  // facade and auth share the published unified version. Tarball mode compares
+  // each dependency with its packed version; the workspace is unified at 0.14.0
+  // after the completed migration.
   if (fromRegistry) {
     if (installedChatKit.version !== unifiedVersion)
       throw new Error("Wrong unified chat-kit dependency version");
