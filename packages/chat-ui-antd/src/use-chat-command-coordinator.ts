@@ -1,12 +1,6 @@
 import { safeDiagnosticError } from "@turingfocus/chat-protocol";
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCommitEffect } from "./use-commit-effect.js";
 
 import type {
   AskUserInteractionAnswer,
@@ -120,9 +114,6 @@ const getClientIdentity = (client: ChatClient): number => {
   clientIdentityByInstance.set(client, nextClientIdentity);
   return nextClientIdentity;
 };
-
-const useCommitEffect =
-  typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 const unexpectedCommandError = (conversationId: string): ChatError => ({
   code: "unknown",
