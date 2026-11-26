@@ -97,6 +97,7 @@ describe("workspace governance", () => {
     "rejects mixed fixed-group versions: %s",
     async (_label, name, version) => {
       const snapshot = clone(await loadWorkspaceSnapshot(process.cwd()));
+      for (const entry of snapshot.packages) entry.manifest.version = "0.14.0";
       const entry = snapshot.packages.find(
         ({ manifest }) => manifest.name === name,
       );
