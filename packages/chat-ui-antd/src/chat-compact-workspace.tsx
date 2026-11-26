@@ -22,6 +22,7 @@ import {
   resolveComposerDraftText,
   type ComposerDraft,
   type InteractionClient,
+  type UseConversationWorkspaceOptions,
   useChatClient,
   useChatSnapshot,
   useComposerDraft,
@@ -53,6 +54,7 @@ export interface ChatCompactWorkspaceProps {
   readonly showEventDetailModeSelector?: boolean | undefined;
   readonly locale?: "zh-CN" | "en-US" | undefined;
   readonly getDeadlineAt: () => number;
+  readonly orderConversations?: UseConversationWorkspaceOptions["orderConversations"];
   /** Host-owned Interaction client; appears in the inline card and global queue. */
   readonly interactionClient?: InteractionClient | null | undefined;
   /** Draft scope; drafts are discarded when this changes. */
@@ -104,6 +106,7 @@ export function ChatCompactWorkspace({
   showEventDetailModeSelector = true,
   locale = "zh-CN",
   getDeadlineAt,
+  orderConversations,
   interactionClient,
   interactionScope,
   interactionInlineVisible = true,
@@ -122,6 +125,7 @@ export function ChatCompactWorkspace({
   const workspace = useConversationWorkspace({
     getDeadlineAt,
     initialSelection: "none",
+    orderConversations,
   });
   const [page, setPage] = useState<"chat" | "history" | "help">("chat");
   const [fresh, setFresh] = useState(true);

@@ -92,6 +92,49 @@ const login = async (page: Page, beforeSelect?: () => Promise<void>) => {
 };
 
 export function registerManagerUiTests() {
+  test("history follows update time across pages and after a rename", async ({
+    page,
+    request,
+  }) => {
+    await mount(page, { platformId: 17 });
+    await login(page, async () => {
+      const origin =
+        process.env["TF_CHAT_MANAGER_ORIGIN"] ?? "https://localhost:4312";
+      const response = await request.post(`${origin}/__test/ui-options`, {
+        data: { paginatedConversationHistory: true },
+      });
+      expect(response.ok()).toBe(true);
+    });
+    await page.getByRole("button", { name: "历史对话", exact: true }).click();
+    const rows = page.getByRole("list").getByRole("listitem");
+    await expect(rows).toHaveCount(2);
+    await expect(rows).toContainText(["Newest history", "Middle history"]);
+    const loadMore = page.getByRole("button", { name: /加载更多$/ });
+    await loadMore.click();
+    await expect(rows).toHaveCount(3);
+    await expect(rows).toContainText([
+      "Newest history",
+      "Middle history",
+      "Oldest history",
+    ]);
+    await expect(loadMore).not.toHaveClass(/ant-btn-loading/);
+    await loadMore.click();
+    await expect(loadMore).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Oldest history actions" }).click();
+    await page.getByRole("menuitem", { name: "重命名" }).click();
+    const dialog = await readyDialog(page);
+    await dialog
+      .getByRole("textbox", { name: "对话名称" })
+      .fill("Updated history");
+    await dialog.getByRole("button", { name: "保存", exact: true }).click();
+    await expect(rows).toContainText([
+      "Updated history",
+      "Newest history",
+      "Middle history",
+    ]);
+  });
+
   test("Timeline keeps long intermediate output collapsed when it scrolls back into view", async ({
     page,
   }) => {

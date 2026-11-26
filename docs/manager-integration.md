@@ -85,6 +85,12 @@ AuthClient 环境/用户/账户/组织的身份变化会取消请求、清空目
 默认缓存为实例内存；若宿主配置持久化缓存，仍需按 ADR-011 自行隔离 scope。
 ManagerChatController 不拥有 AuthClient 或 ManagerClient，宿主最后分别释放它们。
 
+`ManagerChatApp` 默认按更新时间从新到旧分页展示历史会话，「加载更多」获取更早的会话。
+该顺序使用 TFRobot 服务的负数 `count` 分页契约。
+需要沿用正向分页的宿主可传入 `chat.conversationListOrder: "oldest-first"`。
+直接使用 `createManagerChatController` 时，在 `chat` 中设置 `conversationListOrder`。
+直接使用 TFRobot Gateway 时，在 Gateway 选项中设置。两者默认使用正向分页。
+
 `useManagerChat(controller)` 订阅宿主持有的实例，适合隐藏窗格仍保留聊天的策略。
 `ManagerChatProvider` 使用稳定 create factory 在 React effect 内创建编排实例，卸载时释放；
 提供 `robot`、children 和可选 fallback(snapshot)。其中可直接挂载 ChatWorkspace。
