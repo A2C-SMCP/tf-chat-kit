@@ -9,7 +9,7 @@ import {
   Typography,
   theme,
 } from "antd";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import { resolveChatUiLabels } from "./labels.js";
 import type { ChatUiLabelOverrides } from "./types.js";
 
@@ -33,6 +33,7 @@ import { ToolPresentationView } from "./tool-presentation.js";
 
 import { ValueInspector } from "./value-inspector.js";
 import { ChatMarkdownContent } from "./markdown-content.js";
+import { useCommitEffect } from "./use-commit-effect.js";
 
 export const EventTime = ({
   timestamp,
@@ -66,7 +67,8 @@ const IntermediateMessage = ({
   const [long, setLong] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const lineHeight = token.fontSize * token.lineHeight;
-  useEffect(() => {
+  // Measure before the virtual list can observe the expanded height on remount.
+  useCommitEffect(() => {
     const element = content.current;
     if (!element) return;
     const measure = () => {
