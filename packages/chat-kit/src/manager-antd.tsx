@@ -134,6 +134,9 @@ const defaultTheme: ThemeConfig = {
   },
 };
 
+type WorkspaceChoice = "robot" | "accounts" | "platform";
+type ChoiceBack = Exclude<WorkspaceChoice, "platform"> | "chat" | "settings";
+
 /** Opt-in complete interface. Owns only its connection controller and local UI. */
 export function ManagerChatApp(props: ManagerChatAppProps) {
   if (
@@ -322,21 +325,35 @@ function ManagerAppBinding({
     "chat" | "robot" | "accounts" | "settings" | "platform" | "help"
   >("robot");
   const [robot, setRobot] = useState<ManagerRobot>();
-  const [pickedRobot, setPickedRobot] = useState<ManagerRobot>();
-  const [pickedPlatform, setPickedPlatform] = useState<number>();
+  const [platformChoice, setPlatformChoice] = useState<{
+    robot: ManagerRobot;
+    back: ChoiceBack;
+    autoSelect: boolean;
+  }>();
   const [chosenPlatform, setChosenPlatform] = useState<number>();
   const [accounts, setAccounts] = useState<readonly AccountOption[]>([]);
-  const [pickedAccount, setPickedAccount] = useState<string>();
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const [chatAccessDenied, setChatAccessDenied] = useState(false);
   const [confirm, setConfirm] = useState<() => void>();
   const [confirmLogout, setConfirmLogout] = useState(false);
-  const selectionReturn = useRef<"settings" | "chat" | "robot">("settings");
+  const selectionReturn = useRef<"settings" | "chat" | "robot">("robot");
+  const chatReturn = useRef<{
+    target: WorkspaceChoice;
+    platformBack: "robot" | "accounts";
+  }>({ target: "robot", platformBack: "robot" });
+  const autoSelectRobot = useRef(true);
+  const attemptedInitialAccount = useRef(false);
+  const manuallySelectedAccount = useRef<string>();
   const [restoredDraft, setRestoredDraft] = useState<ChatCompactDraft>();
   const generation = useRef(0);
   const lastScope = useRef(scope);
+  const staleIdentity = lastScope.current !== scope;
+  const activeChatClient =
+    scope && !staleIdentity && !accessDenied && connection.status === "ready"
+      ? connection.client
+      : undefined;
   const wasExpired = useRef(false);
   const alive = useRef(true);
   const root = useRef<HTMLDivElement>(null);
@@ -374,7 +391,13 @@ function ManagerAppBinding({
     platformId?: number | undefined;
     draft: ChatCompactDraft;
   }>();
-  const busyRef = useRef(false);
+  const pendingAction = useRef<object>();
+  const invalidateSelection = useCallback(() => {
+    generation.current++;
+    pendingAction.current = undefined;
+    setBusy(false);
+    setConfirm(undefined);
+  }, []);
   const onActivityChange = useCallback(
     (value: { running: boolean; draft: ChatCompactDraft }) => {
       activity.current = value;
@@ -396,22 +419,20 @@ function ManagerAppBinding({
       ) {
         retained.current = undefined;
         wasExpired.current = false;
+        manuallySelectedAccount.current = undefined;
       }
       return;
     }
     const previous = lastScope.current;
     lastScope.current = scope;
-    generation.current++;
-    busyRef.current = false;
-    setBusy(false);
+    invalidateSelection();
     setFailed(false);
     setChatAccessDenied(false);
-    setConfirm(undefined);
     void picker.select(undefined);
-    setPickedPlatform(undefined);
+    setPlatformChoice(undefined);
     setAccounts([]);
-    setPickedAccount(undefined);
     setQuery("");
+    selectionReturn.current = "robot";
     if (!scope) {
       wasExpired.current = authState.status === "auth_required";
       if (wasExpired.current && previous && robot)
@@ -423,9 +444,7 @@ function ManagerAppBinding({
         };
       else retained.current = undefined;
       setRobot(undefined);
-      setPickedRobot(undefined);
       setChosenPlatform(undefined);
-      setPickedPlatform(undefined);
       setRestoredDraft(undefined);
       setScreen("robot");
       return;
@@ -434,14 +453,14 @@ function ManagerAppBinding({
     retained.current = undefined;
     if (wasExpired.current && resume?.scope === scope) {
       setRobot(resume.robot);
-      setPickedRobot(resume.robot);
       setChosenPlatform(resume.platformId);
       setRestoredDraft(resume.draft);
       setScreen("chat");
       void controller.select(resume.robot, { platformId: resume.platformId });
     } else {
+      autoSelectRobot.current = true;
+      chatReturn.current = { target: "robot", platformBack: "robot" };
       setRobot(undefined);
-      setPickedRobot(undefined);
       setChosenPlatform(undefined);
       setRestoredDraft(undefined);
       setScreen("robot");
@@ -454,6 +473,7 @@ function ManagerAppBinding({
     robot,
     chosenPlatform,
     controller,
+    invalidateSelection,
     manager,
     picker,
   ]);
@@ -463,22 +483,22 @@ function ManagerAppBinding({
   }, [scope, manager, directory.status]);
   useEffect(() => {
     if (!accessDenied) return;
-    generation.current++;
-    busyRef.current = false;
-    setBusy(false);
+    invalidateSelection();
+    autoSelectRobot.current = false;
     retained.current = undefined;
     activity.current = { running: false, draft: { text: "" } };
     setRestoredDraft(undefined);
     setRobot(undefined);
-    setPickedRobot(undefined);
-    setPickedPlatform(undefined);
+    setPlatformChoice(undefined);
     setChosenPlatform(undefined);
     setScreen("robot");
+    void picker.select(undefined);
     void controller.select(undefined);
-  }, [accessDenied, controller]);
+  }, [accessDenied, controller, invalidateSelection, picker]);
   const run = async (action: () => Promise<unknown>) => {
-    if (busyRef.current) return;
-    busyRef.current = true;
+    if (pendingAction.current) return;
+    const operation = {};
+    pendingAction.current = operation;
     setBusy(true);
     setFailed(false);
     const revision = generation.current;
@@ -487,14 +507,14 @@ function ManagerAppBinding({
     } catch {
       if (alive.current && revision === generation.current) setFailed(true);
     } finally {
-      if (alive.current && revision === generation.current) {
-        busyRef.current = false;
+      if (alive.current && pendingAction.current === operation) {
+        pendingAction.current = undefined;
         setBusy(false);
       }
     }
   };
   const navigate = (action: () => void, identity = false) => {
-    if (busyRef.current) return;
+    if (pendingAction.current) return;
     if (
       identity &&
       (activity.current.running || activity.current.draft.text.trim())
@@ -508,13 +528,12 @@ function ManagerAppBinding({
     setRobot(undefined);
     setRestoredDraft(undefined);
     setChosenPlatform(undefined);
-    setPickedPlatform(undefined);
     activity.current = { running: false, draft: { text: "" } };
     retained.current = undefined;
     void controller.select(undefined);
   };
   const logout = (alwaysConfirm = false) => {
-    if (busyRef.current) return;
+    if (pendingAction.current) return;
     const action = () => {
       clearChat();
       void run(() => auth.logout());
@@ -525,26 +544,35 @@ function ManagerAppBinding({
     } else navigate(action, true);
   };
   const onAccessDenied = useCallback(() => {
-    generation.current++;
+    invalidateSelection();
+    autoSelectRobot.current = false;
     retained.current = undefined;
     activity.current = { running: false, draft: { text: "" } };
     setRestoredDraft(undefined);
     setRobot(undefined);
-    setPickedRobot(undefined);
+    setPlatformChoice(undefined);
     setChosenPlatform(undefined);
-    setPickedPlatform(undefined);
     setChatAccessDenied(true);
     setScreen("robot");
+    void picker.select(undefined);
     void controller.select(undefined);
-  }, [controller]);
-  const commitSelection = (value: ManagerRobot, id: number | undefined) => {
+  }, [controller, invalidateSelection, picker]);
+  const cancelPlatformChoice = () => {
+    void picker.select(undefined);
+    setPlatformChoice(undefined);
+  };
+  const commitSelection = (
+    value: ManagerRobot,
+    id: number | undefined,
+    returnTo: WorkspaceChoice,
+  ) => {
     if (
       robot?.id === value.id &&
       connection.status === "ready" &&
       connection.platformId === id
     ) {
       setScreen("chat");
-      void picker.select(undefined);
+      cancelPlatformChoice();
       return;
     }
     navigate(() => {
@@ -552,63 +580,178 @@ function ManagerAppBinding({
       setChatAccessDenied(false);
       setRobot(value);
       setChosenPlatform(id);
+      chatReturn.current = {
+        target: returnTo,
+        platformBack:
+          platformChoice?.back === "accounts" ? "accounts" : "robot",
+      };
       setScreen("chat");
-      void picker.select(undefined);
+      cancelPlatformChoice();
       void controller.select(value, { platformId: id });
     }, true);
   };
-  const chooseRobot = (value: ManagerRobot) => {
-    if (robot?.id === value.id && connection.status === "ready") {
+  const openPlatformChoice = (
+    value: ManagerRobot,
+    back: ChoiceBack,
+    autoSelect: boolean,
+    trigger?: HTMLElement,
+  ) => {
+    setPlatformChoice({ robot: value, back, autoSelect });
+    openScreen("platform", trigger);
+    void picker.select(value);
+  };
+  const chooseRobot = (value: ManagerRobot, automatic = false) => {
+    if (pendingAction.current) return;
+    autoSelectRobot.current = false;
+    if (robot?.id === value.id && activeChatClient) {
       setScreen("chat");
       return;
     }
+    const robotReturn =
+      automatic &&
+      manuallySelectedAccount.current !== undefined &&
+      manuallySelectedAccount.current === authState.account?.accountId
+        ? "accounts"
+        : "robot";
     if (
       chatConfig.conversationContract === "json-v2" &&
       platformId === undefined
     ) {
-      setPickedRobot(value);
-      setPickedPlatform(undefined);
-      setScreen("platform");
-      void picker.select(value);
-    } else commitSelection(value, platformId);
+      openPlatformChoice(value, robotReturn, !activeChatClient);
+    } else commitSelection(value, platformId, robotReturn);
+  };
+  const choosePlatform = (id: number, automatic = false) => {
+    if (
+      !platformChoice ||
+      picker.getSnapshot() !== candidate ||
+      candidate.status !== "platform-selection-required" ||
+      !candidate.platforms?.some((platform) => platform.platformId === id)
+    )
+      return;
+    const back = platformChoice.back;
+    commitSelection(
+      platformChoice.robot,
+      id,
+      automatic && (back === "robot" || back === "accounts")
+        ? back
+        : "platform",
+    );
   };
   const openRobot = (trigger?: HTMLElement) => {
+    autoSelectRobot.current = false;
     selectionReturn.current = screen === "settings" ? "settings" : "chat";
-    setPickedRobot(robot);
     setFailed(false);
     openScreen("robot", trigger);
   };
   const openPlatform = (trigger?: HTMLElement) => {
     if (!robot || platformId !== undefined) return;
-    selectionReturn.current = screen === "settings" ? "settings" : "chat";
-    setPickedRobot(robot);
-    setPickedPlatform(
-      typeof connection.platformId === "number"
-        ? connection.platformId
-        : undefined,
+    openPlatformChoice(
+      robot,
+      screen === "settings" ? "settings" : "chat",
+      false,
+      trigger,
     );
-    openScreen("platform", trigger);
-    void picker.select(robot);
   };
-  const openAccounts = (trigger?: HTMLElement) => {
-    selectionReturn.current = screen === "settings" ? "settings" : "chat";
+  const openAccounts = (
+    trigger?: HTMLElement,
+    returnTo: "settings" | "chat" | "robot" = screen === "settings"
+      ? "settings"
+      : activeChatClient
+        ? "chat"
+        : "robot",
+  ) => {
+    if (pendingAction.current) return;
+    autoSelectRobot.current = false;
+    selectionReturn.current = returnTo;
     const rev = generation.current;
     void run(async () => {
       const result = await auth.listAccounts();
       if (rev !== generation.current || !alive.current) return;
       setAccounts(result);
-      setPickedAccount(authState.account?.accountId);
       openScreen("accounts", trigger);
     });
   };
-  const back = (target?: "settings" | "chat" | "robot") => (
+  const chooseAccount = (id: string, switching: boolean, automatic = false) => {
+    if (pendingAction.current) return;
+    if (switching && id === authState.account?.accountId) {
+      setScreen(selectionReturn.current);
+      return;
+    }
+    navigate(() => {
+      manuallySelectedAccount.current = automatic ? undefined : id;
+      if (!switching) attemptedInitialAccount.current = true;
+      if (switching) clearChat();
+      void run(async () => {
+        try {
+          if (switching) await auth.switchAccount(id);
+          else await auth.selectAccount(id);
+        } catch (error) {
+          if (manuallySelectedAccount.current === id)
+            manuallySelectedAccount.current = undefined;
+          throw error;
+        }
+      });
+    }, switching);
+  };
+  // Evaluate each transition against the latest committed UI and client snapshots.
+  useEffect(() => {
+    if (restoring || pendingAction.current || staleIdentity) return;
+    if (authState.status === "account_selection_required") {
+      const only =
+        authState.accounts.length === 1 ? authState.accounts[0] : undefined;
+      if (only && !attemptedInitialAccount.current)
+        chooseAccount(only.accountId, false, true);
+      return;
+    }
+    attemptedInitialAccount.current = false;
+    if (!scope || accessDenied || chatAccessDenied || activeChatClient) return;
+    if (
+      screen === "robot" &&
+      autoSelectRobot.current &&
+      directory.status === "ready" &&
+      directory.pagination?.hasMore === false &&
+      directory.pagination.total === directory.items.length
+    ) {
+      const eligible = directory.items.filter((item) => item.canAutoConnect);
+      if (eligible.length === 1) chooseRobot(eligible[0]!, true);
+    }
+    if (
+      screen === "platform" &&
+      platformChoice?.autoSelect &&
+      candidate.status === "platform-selection-required" &&
+      candidate.platforms?.length === 1
+    ) {
+      choosePlatform(candidate.platforms[0]!.platformId, true);
+    }
+  });
+  const reopenChoice = (trigger?: HTMLElement) => {
+    if (pendingAction.current) return;
+    const { target, platformBack } = chatReturn.current;
+    autoSelectRobot.current = false;
+    selectionReturn.current = activeChatClient ? "chat" : "robot";
+    if (!activeChatClient) clearChat();
+    setFailed(false);
+    if (target === "platform" && robot) {
+      openPlatformChoice(robot, platformBack, false, trigger);
+    } else if (target === "accounts") {
+      if (!activeChatClient) setScreen("robot");
+      openAccounts(trigger);
+    } else openScreen("robot", trigger);
+  };
+  const back = (target?: ChoiceBack) => (
     <Button
       className="tf-back"
       type="text"
+      disabled={busy}
       onClick={() => {
-        void picker.select(undefined);
+        autoSelectRobot.current = false;
+        cancelPlatformChoice();
         setFailed(false);
-        setScreen(target ?? (connection.status === "ready" ? "chat" : "robot"));
+        if (target === "accounts") {
+          const returnTo = activeChatClient ? selectionReturn.current : "robot";
+          setScreen(returnTo);
+          openAccounts(undefined, returnTo);
+        } else setScreen(target ?? (activeChatClient ? "chat" : "robot"));
       }}
     >
       ←{" "}
@@ -683,7 +826,7 @@ function ManagerAppBinding({
     typeof activePlatformId === "number" ? activePlatformId : chosenPlatform;
   const chatIdentity = useMemo<ManagerChatIdentity | undefined>(
     () =>
-      robot?.robotId === undefined
+      !scope || staleIdentity || robot?.robotId === undefined
         ? undefined
         : {
             ...(authState.account?.accountId === undefined
@@ -710,6 +853,8 @@ function ManagerAppBinding({
       authState.user?.userId,
       chatIdentityPlatformId,
       robot?.robotId,
+      scope,
+      staleIdentity,
     ],
   );
   const chatIdentityKey =
@@ -721,11 +866,6 @@ function ManagerAppBinding({
   useEffect(() => {
     onChatIdentityChangeRef.current?.(chatIdentityRef.current);
   }, [chatIdentityKey]);
-  const staleIdentity = lastScope.current !== scope;
-  const activeChatClient =
-    scope && !staleIdentity && !accessDenied && connection.status === "ready"
-      ? connection.client
-      : undefined;
   const inheritsInteraction = useHasInteractionProvider();
   const automaticInteraction = useMemo(
     () =>
@@ -876,9 +1016,8 @@ function ManagerAppBinding({
               type="button"
               className="tf-choice"
               key={a.accountId}
-              aria-pressed={pickedAccount === a.accountId}
               disabled={busy}
-              onClick={() => setPickedAccount(a.accountId)}
+              onClick={() => chooseAccount(a.accountId, switching)}
             >
               <span className="tf-symbol">▦</span>
               <span className="tf-choice-copy">
@@ -888,38 +1027,13 @@ function ManagerAppBinding({
               {switching && authState.account?.accountId === a.accountId && (
                 <span className="tf-current">{copy.current}</span>
               )}
-              <span className="tf-check" aria-hidden="true">
-                {pickedAccount === a.accountId ? "✓" : "○"}
+              <span className="tf-choice-arrow" aria-hidden="true">
+                →
               </span>
             </button>
           ))}
         </div>
         {!options.length && <p>{copy.emptyAccounts}</p>}
-      </div>
-      <div className="tf-footer">
-        <Button
-          block
-          type="primary"
-          disabled={!pickedAccount}
-          loading={busy}
-          onClick={() => {
-            if (!pickedAccount) return;
-            const id = pickedAccount;
-            if (switching && id === authState.account?.accountId) {
-              setScreen(selectionReturn.current);
-              return;
-            }
-            navigate(() => {
-              if (switching) clearChat();
-              void run(async () => {
-                if (switching) await auth.switchAccount(id);
-                else await auth.selectAccount(id);
-              });
-            }, switching);
-          }}
-        >
-          {copy.enterAccount}
-        </Button>
         <Button
           type="link"
           onClick={() => {
@@ -967,7 +1081,10 @@ function ManagerAppBinding({
         </div>
       </>
     );
-  else if (authState.status === "switching")
+  else if (
+    authState.status === "switching" ||
+    (busy && authState.status === "authenticating")
+  )
     body = (
       <>
         {top}
@@ -1032,6 +1149,14 @@ function ManagerAppBinding({
             {auth.environment === "staging" ? copy.test : copy.production}
           </span>
           <Button
+            className="tf-return-choice"
+            type="text"
+            disabled={busy}
+            onClick={(event) => reopenChoice(event.currentTarget)}
+          >
+            ← {copy.backSelection}
+          </Button>
+          <Button
             type="text"
             aria-label={copy.settings}
             onClick={(event) => openScreen("settings", event.currentTarget)}
@@ -1076,6 +1201,7 @@ function ManagerAppBinding({
             </div>
           </Tooltip>
         </div>
+        {screen === "chat" && failed && feedback}
       </div>
     );
     const chat = connected ? (
@@ -1237,7 +1363,21 @@ function ManagerAppBinding({
         <>
           {top}
           <div className="tf-body">
-            {connected ? back(selectionReturn.current) : steps(1)}
+            {connected ? (
+              back(selectionReturn.current)
+            ) : (
+              <>
+                <Button
+                  className="tf-back"
+                  type="text"
+                  disabled={busy}
+                  onClick={(event) => openAccounts(event.currentTarget)}
+                >
+                  ← {copy.backOrganization}
+                </Button>
+                {steps(1)}
+              </>
+            )}
             {title(copy.robot, copy.robotHint)}
             <p className="tf-identity-hint">
               {copy.currentOrganization}: {accountName}
@@ -1247,7 +1387,10 @@ function ManagerAppBinding({
               aria-label={copy.search}
               placeholder={copy.search}
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                autoSelectRobot.current = false;
+                setQuery(e.target.value);
+              }}
             />
             {directory.status === "error" ? (
               <Alert
@@ -1282,9 +1425,10 @@ function ManagerAppBinding({
                     className="tf-choice"
                     type="button"
                     key={r.id}
-                    disabled={!r.canAutoConnect}
-                    aria-pressed={pickedRobot?.id === r.id}
-                    onClick={() => setPickedRobot(r)}
+                    disabled={
+                      !r.canAutoConnect || directory.status !== "ready" || busy
+                    }
+                    onClick={() => chooseRobot(r)}
                   >
                     <span className="tf-symbol">✧</span>
                     <span className="tf-choice-copy">
@@ -1304,13 +1448,17 @@ function ManagerAppBinding({
                     {robot?.id === r.id && connected && (
                       <span className="tf-current">{copy.current}</span>
                     )}
-                    <span className="tf-check" aria-hidden="true">
-                      {pickedRobot?.id === r.id ? "✓" : "○"}
-                    </span>
+                    {r.canAutoConnect && (
+                      <span className="tf-choice-arrow" aria-hidden="true">
+                        →
+                      </span>
+                    )}
                   </button>
                 ))}
             </div>
-            {directory.status === "ready" && !directory.items.length ? (
+            {directory.status === "ready" &&
+            directory.pagination?.hasMore !== true &&
+            !directory.items.some((item) => item.canAutoConnect) ? (
               <p className="tf-empty">{copy.noRobots}</p>
             ) : null}
             {query &&
@@ -1322,6 +1470,7 @@ function ManagerAppBinding({
               <Button
                 loading={directory.status === "loading"}
                 onClick={() => {
+                  autoSelectRobot.current = false;
                   void manager
                     .loadPage((directory.pagination?.page ?? 1) + 1, 20, {
                       deadlineAt: deadline(),
@@ -1339,20 +1488,6 @@ function ManagerAppBinding({
               {copy.settings}
             </Button>
           </div>
-          <div className="tf-footer">
-            <Button
-              type="primary"
-              block
-              disabled={
-                !pickedRobot?.canAutoConnect || directory.status !== "ready"
-              }
-              onClick={() => {
-                if (pickedRobot) chooseRobot(pickedRobot);
-              }}
-            >
-              {copy.useRobot}
-            </Button>
-          </div>
         </>
       );
     else if (platformNeeded)
@@ -1360,19 +1495,18 @@ function ManagerAppBinding({
         <>
           {top}
           <div className="tf-body">
-            {connected ? (
-              back(selectionReturn.current)
-            ) : (
-              <>
-                {back("robot")}
-                {steps(2)}
-              </>
-            )}
+            {back(platformChoice?.back ?? "robot")}
+            {connected &&
+              (platformChoice?.back === "robot" ||
+                platformChoice?.back === "accounts") &&
+              selectionReturn.current !== "robot" &&
+              back(selectionReturn.current)}
+            {!connected && steps(2)}
             {title(copy.platform, copy.platformHint)}
             <p className="tf-identity-hint">
               {copy.currentOrganization}: {accountName}
               <br />
-              {copy.selectedRobot}: {robotName(pickedRobot)}
+              {copy.selectedRobot}: {robotName(platformChoice?.robot)}
             </p>
             {connected && <p className="tf-description">{copy.switchHint}</p>}
             {candidate.status === "connecting" && (
@@ -1393,7 +1527,8 @@ function ManagerAppBinding({
                 action={
                   <Button
                     onClick={() => {
-                      if (pickedRobot) void picker.select(pickedRobot);
+                      if (platformChoice)
+                        void picker.select(platformChoice.robot);
                     }}
                   >
                     {copy.retry}
@@ -1407,8 +1542,8 @@ function ManagerAppBinding({
                   type="button"
                   className="tf-choice"
                   key={p.platformId}
-                  aria-pressed={pickedPlatform === p.platformId}
-                  onClick={() => setPickedPlatform(p.platformId)}
+                  disabled={busy}
+                  onClick={() => choosePlatform(p.platformId)}
                 >
                   <span className="tf-choice-copy">
                     <strong>
@@ -1419,12 +1554,12 @@ function ManagerAppBinding({
                     </small>
                   </span>
                   {connected &&
-                    robot?.id === pickedRobot?.id &&
+                    robot?.id === platformChoice?.robot.id &&
                     activePlatformId === p.platformId && (
                       <span className="tf-current">{copy.current}</span>
                     )}
-                  <span className="tf-check" aria-hidden="true">
-                    {pickedPlatform === p.platformId ? "✓" : "○"}
+                  <span className="tf-choice-arrow" aria-hidden="true">
+                    →
                   </span>
                 </button>
               ))}
@@ -1434,25 +1569,6 @@ function ManagerAppBinding({
                 <p className="tf-empty">{copy.noPlatforms}</p>
               )}
           </div>
-          <div className="tf-footer">
-            <Button
-              type="primary"
-              block
-              disabled={
-                candidate.status !== "platform-selection-required" ||
-                pickedPlatform === undefined ||
-                !candidate.platforms?.some(
-                  (p) => p.platformId === pickedPlatform,
-                )
-              }
-              onClick={() => {
-                if (pickedRobot && pickedPlatform !== undefined)
-                  commitSelection(pickedRobot, pickedPlatform);
-              }}
-            >
-              {copy.start}
-            </Button>
-          </div>
         </>
       );
     else if (!connected)
@@ -1460,13 +1576,7 @@ function ManagerAppBinding({
         <>
           {top}
           <div className="tf-body">
-            <Button
-              type="text"
-              onClick={() => {
-                void controller.select(undefined);
-                setScreen("robot");
-              }}
-            >
+            <Button type="text" onClick={() => reopenChoice()}>
               ← {copy.back}
             </Button>
             {connection.status === "error" ? (
