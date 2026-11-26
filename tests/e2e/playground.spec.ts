@@ -43,15 +43,6 @@ async function connectChat(page: Page) {
   await chat(page)
     .getByRole("button", { name: /legacy/ })
     .click();
-  await chat(page)
-    .getByRole("button", { name: "使用这个机器人", exact: true })
-    .click();
-  await chat(page)
-    .getByRole("button", { name: /Word fixture/ })
-    .click();
-  await chat(page)
-    .getByRole("button", { name: "开始对话", exact: true })
-    .click();
   await expect(
     chat(page).getByRole("button", { name: "发送", exact: true }),
   ).toBeVisible();
