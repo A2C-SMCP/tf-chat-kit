@@ -34,6 +34,7 @@ import {
   useHasInteractionProvider,
   type InteractionClient,
 } from "@turingfocus/chat-react";
+import { orderConversationsByUpdatedAt } from "@turingfocus/chat-runtime";
 import {
   ChatCompactWorkspace,
   type ChatCompactDraft,
@@ -178,16 +179,20 @@ export function ManagerChatApp(props: ManagerChatAppProps) {
   const report = useRef(props.onDisposeError);
   report.current = props.onDisposeError;
   useEffect(() => {
+    const chat: ManagerChatAppProps["chat"] = {
+      ...props.chat,
+      conversationListOrder: props.chat.conversationListOrder ?? "newest-first",
+    };
     const controller = createManagerChatController({
       manager: props.manager,
-      chat: props.chat,
+      chat,
       getDeadlineAt,
       onDisposeError: (error) => report.current?.(error),
     });
     // Candidate catalog loading never releases the active chat client.
     const picker = createManagerChatController({
       manager: props.manager,
-      chat: { ...props.chat, platformId: undefined },
+      chat: { ...chat, platformId: undefined },
       getDeadlineAt,
       onDisposeError: (error) => report.current?.(error),
     });
@@ -1093,6 +1098,11 @@ function ManagerAppBinding({
           ]}
           locale={locale}
           getDeadlineAt={deadline}
+          orderConversations={
+            chatConfig.conversationListOrder === "oldest-first"
+              ? undefined
+              : orderConversationsByUpdatedAt
+          }
           interactionClient={interactionClientForUi}
           interactionScope={interactionScope}
           interactionInlineVisible={managerChatInlineVisible(

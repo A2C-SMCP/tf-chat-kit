@@ -205,6 +205,8 @@ export interface TFRobotGatewayOptions {
   readonly serverProfile?: TFRobotServerProfile | undefined;
   /** Explicit REST contract. Defaults to legacy query-v1; never auto-retries another contract. */
   readonly conversationContract?: TFRobotConversationContract | undefined;
+  /** Server-side conversation pagination order. Defaults to oldest-first. */
+  readonly conversationListOrder?: "oldest-first" | "newest-first" | undefined;
   /** Optional fixed platform filter for conversation discovery. Required positive integer for json-v2 creation. */
   readonly platformId?: number | string | undefined;
   /** Defaults to the origin of baseUrl plus the `/chat` namespace. */
