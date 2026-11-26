@@ -55,11 +55,11 @@ try {
   if (unifiedVersion === undefined) {
     throw new Error("Packed release is missing package versions");
   }
-  // Default tarball mode verifies the current workspace state, which during
-  // the migration is intentionally mixed (core 0.11.0 / auth 0.12.1). Only
-  // TF_CHAT_PACKAGES_FROM_REGISTRY=1 requires the published unified version
-  // and resolves the facade's production leaf packages from the public
-  // Registry; do not use it until that unified version is published.
+  // Default tarball mode verifies the current workspace state. The migration
+  // is complete: all eight packages now share the unified 0.14.0 version, so
+  // this mode checks the packed unified version. TF_CHAT_PACKAGES_FROM_REGISTRY=1
+  // additionally verifies that the published unified version resolves from the
+  // public Registry; use it after that version is published.
   const packages = Object.fromEntries(
     manifest.packages.map((item) => [
       item.name,
@@ -151,8 +151,8 @@ try {
   // Registry mode resolves the facade's production leaf packages through
   // chat-kit (chat-testing is not part of the facade install) and asserts the
   // facade and auth share the published unified version. Tarball mode compares
-  // each dependency with its packed version, which is the migration state
-  // until the 0.13.0 version commit lands.
+  // each dependency with its packed version; the workspace is unified at 0.14.0
+  // after the completed migration.
   if (fromRegistry) {
     if (installedChatKit.version !== unifiedVersion)
       throw new Error("Wrong unified chat-kit dependency version");

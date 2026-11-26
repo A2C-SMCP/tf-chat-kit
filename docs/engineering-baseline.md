@@ -23,8 +23,8 @@ DOM lib；React/UI 才启用 DOM 和 JSX。这样可以在工程层阻止浏览�
 
 2026-11-10 起，`@turingfocus/chat-auth` 纳入同一 fixed group：八个公开包统一 `0.x` 版本、同一
 发布组与 `v<version>` 标签，见 [ADR-018](adr/018-unified-version-and-release.md)。迁移期的
-`check:workspace` 只放行精确的 core 七包 `0.11.0` / auth `0.12.1` 旧状态；0.13.0 版本提交在
-`main` 生成后必须移除该过渡分支（GitHub #172）。
+`check:workspace` 精确过渡放行已在 0.13.0/0.14.0 版本提交生成后移除；现在只保留八包同版本
+规则（GitHub #172）。
 
 ## Peer dependency 基线
 
