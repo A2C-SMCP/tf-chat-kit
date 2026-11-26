@@ -294,6 +294,32 @@ it.each(["view", "workspace"] as const)(
   },
 );
 
+it("explains unavailable image paste without changing the text draft", async () => {
+  const view = await mount(
+    createElement(ChatComposer, { onSend: () => false }),
+  );
+  try {
+    const input = inputOf(view.element);
+    await type(input, "keep text");
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        files: [new File(["image"], "image.png", { type: "image/png" })],
+      },
+    });
+    await act(async () => {
+      input.dispatchEvent(event);
+    });
+    expect(event.defaultPrevented).toBe(true);
+    expect(
+      view.element.querySelector('[role="status"]')?.textContent,
+    ).toContain("Capability unavailable");
+    expect(input.value).toBe("keep text");
+  } finally {
+    await view.close();
+  }
+});
+
 it("keeps keyboard sending blocked while an attachment is uploading", async () => {
   type UploadResult = Awaited<
     ReturnType<NonNullable<ChatComposerProps["attachmentUploader"]>["upload"]>

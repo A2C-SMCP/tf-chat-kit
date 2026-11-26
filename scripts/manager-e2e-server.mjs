@@ -25,6 +25,7 @@ const account = {
 let activeAccount = account;
 let directoryStatus = 200;
 let chatStatus = 200;
+let uploadStatus = 200;
 let historyStatus = 200;
 let accountsStatus = 200;
 /** @type {string | undefined} */
@@ -412,6 +413,11 @@ const server = createListener((req, res) => {
       reply({});
       return;
     }
+    if (url.pathname === "/__test/upload-status") {
+      uploadStatus = Number(JSON.parse(body).status);
+      reply({});
+      return;
+    }
     if (url.pathname === "/__test/directory-status") {
       directoryStatus = Number(JSON.parse(body).status);
       reply({});
@@ -424,6 +430,7 @@ const server = createListener((req, res) => {
       chatStatus = 200;
       generatedTextEvents = false;
       generatedLive = false;
+      uploadStatus = 200;
       historyStatus = 200;
       paginatedConversationHistory = undefined;
       accountsStatus = 200;
@@ -488,6 +495,10 @@ const server = createListener((req, res) => {
       return;
     }
     const isExchange = url.pathname === "/api/v1/oauth/token";
+    const isUpload =
+      /^\/c\/tfrobot\/(?:tenant\/)?robot-[ab]\/v1\/chat\/attachments$/u.test(
+        url.pathname,
+      );
     const isChat =
       /^(?:\/api|\/c\/tfrobot\/(?:tenant\/)?robot-[ab])?\/v1\/chat\//u.test(
         url.pathname,
@@ -495,9 +506,33 @@ const server = createListener((req, res) => {
     if (
       !isExchange &&
       req.headers.authorization !==
-        `Bearer ${isChat ? "robot-browser" : "manager-browser"}`
+        `Bearer ${isChat || isUpload ? "robot-browser" : "manager-browser"}`
     ) {
       reply({ message: "Unauthorized" }, 401);
+      return;
+    }
+    if (isUpload) {
+      if (uploadStatus !== 200) {
+        reply({ message: "Attachment upload unavailable" }, uploadStatus);
+        return;
+      }
+      if (
+        req.method !== "POST" ||
+        req.headers.cookie ||
+        !req.headers["content-type"]?.startsWith(
+          "multipart/form-data; boundary=",
+        ) ||
+        !body.includes('name="file"') ||
+        !body.includes('filename="')
+      ) {
+        reply({}, 422);
+        return;
+      }
+      reply({
+        code: 200,
+        message: "Success",
+        data: { uri: "s3://manager-fixture/image.png" },
+      });
       return;
     }
     if (url.pathname === "/api/v1/accounts/my") {
@@ -668,7 +703,13 @@ const server = createListener((req, res) => {
         if (
           !createdConversations.has(conversationId) ||
           (message.content !== "Browser round trip" &&
-            !String(message.content).startsWith("UI long text:")) ||
+            !String(message.content).startsWith("UI long text:") &&
+            !(
+              ["image", "multipart", "history"].includes(message.msgType) &&
+              JSON.stringify(message.content).includes(
+                "s3://manager-fixture/image.png",
+              )
+            )) ||
           message.creator?.uid !== "manager-user"
         ) {
           reply({}, 422);

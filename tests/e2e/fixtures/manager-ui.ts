@@ -95,6 +95,152 @@ const login = async (page: Page, beforeSelect?: () => Promise<void>) => {
 };
 
 export function registerManagerUiTests() {
+  test("Manager attachments: clipboard image first turn and file selection in an existing conversation", async ({
+    page,
+  }) => {
+    await mount(page, { platformId: 17 });
+    await login(page);
+    const input = page.locator("textarea:not([aria-hidden])");
+    const uploaded = page.waitForResponse(
+      (r) =>
+        r.url().endsWith("/v1/chat/attachments") &&
+        r.request().method() === "POST",
+    );
+    await input.evaluate((element) => {
+      const data = new DataTransfer();
+      data.items.add(
+        new File([new Uint8Array([137, 80, 78, 71])], "clipboard.png", {
+          type: "image/png",
+        }),
+      );
+      element.dispatchEvent(
+        new ClipboardEvent("paste", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: data,
+        }),
+      );
+    });
+    const response = await uploaded;
+    expect(response.status()).toBe(200);
+    expect(response.request().headers()["authorization"]).toBe(
+      "Bearer robot-browser",
+    );
+    expect(response.url()).toContain("/c/tfrobot/tenant/robot-a/");
+    await expect(
+      page.getByRole("button", {
+        name: "移除附件 clipboard.png",
+        exact: true,
+      }),
+    ).toBeVisible();
+    // Moving to history must preserve the completed welcome attachment.
+    await page.getByRole("button", { name: "历史对话", exact: true }).click();
+    await page.getByRole("button", { name: "返回对话", exact: false }).click();
+    await page.getByRole("button", { name: "更多操作", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "切换机器人", exact: true })
+      .click();
+    await page.getByRole("button", { name: /alias/ }).click();
+    const switching = await readyDialog(page);
+    await switching.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(switching).toBeHidden();
+    await page.getByRole("button", { name: "返回对话", exact: false }).click();
+    await expect(
+      page.getByRole("button", { name: "移除附件 clipboard.png", exact: true }),
+    ).toBeVisible();
+    const sent = page.waitForRequest(
+      (r) => r.url().endsWith("/messages") && r.method() === "POST",
+    );
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    const message = (await sent).postDataJSON();
+    expect(message.msgType).toBe("image");
+    expect(JSON.stringify(message.content)).toContain(
+      "s3://manager-fixture/image.png",
+    );
+    await expect(
+      page.getByText("Direct browser reply", { exact: true }),
+    ).toBeVisible();
+    const secondUpload = page.waitForResponse(
+      (r) =>
+        r.url().endsWith("/v1/chat/attachments") &&
+        r.request().method() === "POST",
+    );
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "selected.png",
+      mimeType: "image/png",
+      buffer: Buffer.from([137, 80, 78, 71]),
+    });
+    expect((await secondUpload).status()).toBe(200);
+    await expect(
+      page
+        .getByRole("button", {
+          name: "移除附件 selected.png",
+          exact: true,
+        })
+        .first(),
+    ).toBeVisible();
+    await input.fill("Browser round trip");
+    const secondSend = page.waitForRequest(
+      (r) => r.url().endsWith("/messages") && r.method() === "POST",
+    );
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    expect(JSON.stringify((await secondSend).postDataJSON().content)).toContain(
+      "Browser round trip",
+    );
+    await expect(
+      page
+        .getByRole("button", {
+          name: "移除附件 selected.png",
+          exact: true,
+        })
+        .first(),
+    ).toHaveCount(0);
+  });
+  test("Manager attachments: unavailable upload is visible and can be retried without sending a broken draft", async ({
+    page,
+  }) => {
+    await mount(page, { platformId: 17 });
+    await login(page);
+    const origin =
+      process.env["TF_CHAT_MANAGER_ORIGIN"] ?? "https://localhost:4312";
+    await page.evaluate(async (origin) => {
+      await fetch(`${origin}/__test/upload-status`, {
+        method: "POST",
+        body: JSON.stringify({ status: 404 }),
+      });
+    }, origin);
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "retry.png",
+      mimeType: "image/png",
+      buffer: Buffer.from([137, 80, 78, 71]),
+    });
+    await expect(
+      page.getByRole("button", { name: "重试上传 retry.png", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("alert")).toContainText("上传附件未完成");
+    await expect(
+      page.getByRole("button", { name: "发送", exact: true }),
+    ).toBeDisabled();
+    await page.evaluate(async (origin) => {
+      await fetch(`${origin}/__test/upload-status`, {
+        method: "POST",
+        body: JSON.stringify({ status: 200 }),
+      });
+    }, origin);
+    await page
+      .getByRole("button", { name: /retry.png/ })
+      .first()
+      .click();
+    await expect(
+      page.getByRole("button", {
+        name: "移除附件 retry.png",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "发送", exact: true }),
+    ).toBeEnabled();
+  });
   test("history follows update time across pages and after a rename", async ({
     page,
     request,
